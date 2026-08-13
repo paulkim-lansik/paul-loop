@@ -64,7 +64,7 @@ but `by_category: engineering=N domain=M` in its output is always the full, unfi
 `record`/`recall` take the failure from a Verdict block's `FAIL:` lines (Phase 0 contract), so the
 memory composes with everything else.
 
-`recall` is **signature recall** (서명 회상) — an exact match on the normalized failure signature, no
+`recall` is **signature recall** — an exact match on the normalized failure signature, no
 similarity, no ranking (see CONTEXT.md and ADR-0062). Both stay silent on stdout with exit 0 (`loop-fix`
 pipes this through `2>/dev/null`), but write one stderr line each:
 
@@ -108,6 +108,6 @@ domain lesson graduates to pgvector and gets recalled exactly like a verified en
 - A *separate skeptical evaluator* agent can be added to challenge a promotion candidate before it
   becomes a skill; the verified-only + recurrence rules are the deterministic floor it builds on.
 - Once codified, `lessons retire --id <id> --ref "<where>"` marks it TERMINAL so it stops re-surfacing
-  (`promote` listing / `--codify` / loop-doctor's "승격 후보"). Three gates in all: verified+recurring
+  (`promote` listing / `--codify` / loop-doctor's "promotion candidates"). Three gates in all: verified+recurring
   floor gates ENTRY, a recorded `accept` gates codification, and `retire` gates removal from the pool —
   so the candidate backlog reflects real open work, not a monotonic pile of already-done lessons.
