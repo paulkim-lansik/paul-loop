@@ -17,10 +17,22 @@
 // decision rule itself is not reimplemented here: this tool computes dimensions and then execs
 // gate.mjs, so there is exactly one place that decides AUTO vs REQUIRE.
 //
+// Rule table = externalized (BAC-698 / BAC-563 C5). This file ships NO product-specific rules — the
+// dimension-raising rows (which paths are a migration, which are auth, etc.) are domain knowledge
+// that belongs to each consumer repo, not to the portable plugin. Point `--rules` at a JSON file (or
+// set CLASSIFY_RISK_RULES, or drop `risk-rules.json` at the CWD) shaped like:
+//   { "pathRules": [{ "id", "startsWith"?, "endsWith"?, "exact"?, "excludeStartsWith"?,
+//                      "dims": {"blast"|"revers"|"cost": <level>}, "deep"?: [<gate>...], "why" }],
+//     "commandRules": [{ "id", "patterns": [<regex source>...], "dims", "why" }] }
+// With no rules file present, only the structural baselines below apply (docs-only, app-code-low-risk,
+// many-files, human-only-stage) — everything else that isn't a human-only stage or an oversized sweep
+// resolves to the low-risk baseline, and unmatched *commands* still fail closed to REQUIRE.
+//
 // Usage:
 //   classify-risk.mjs [--from-git [<base>]] [--path <p>]... [--command "<cmd>"]... [--stage <name>]
-//                     [--agent-blast-radius <l|m|h>] [--agent-reversibility <full|partial|none>]
-//                     [--agent-cost <l|m|h>] [--action "<desc>"] [--no-gate] [--json] [--render-md]
+//                     [--rules <path>]
+//                     [--agent-blast-radius <l|m|h> --agent-reversibility <full|partial|none>
+//                      --agent-cost <l|m|h>] [--action "<desc>"] [--no-gate] [--json] [--render-md]
 //
 // Output: a `=== RISK ===` block (rule vs agent vs final, matched rules, track, deep gates) followed
 // by gate.mjs's own `=== GATE ===` block. `--render-md` instead renders the verdict as one
@@ -30,6 +42,7 @@
 // `--no-gate` classifies only (0).
 
 import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -48,121 +61,23 @@ function usage(msg) {
   if (msg) process.stderr.write(`classify-risk: ${msg}\n`)
   process.stderr.write(
     'Usage: classify-risk.mjs [--from-git [<base>]] [--path <p>]... [--command "<cmd>"]... [--stage <name>]\n' +
+      '                        [--rules <path>]\n' +
       '                        [--agent-blast-radius <v>] [--agent-reversibility <v>] [--agent-cost <v>]\n' +
       '                        [--action "<desc>"] [--no-gate] [--json] [--render-md]\n',
   )
   process.exit(2)
 }
 
-// ── The rule table ────────────────────────────────────────────────────────────────────────────────
-// One row = one reason a change is risky, with the dimension(s) it forces and the deep gates the
-// change makes mandatory. Rows are additive: every match contributes, the strictest value wins.
-// Keep this list SHORT and tied to the surfaces ADR-0061 §3 names (마이그레이션·인증·RLS·하네스·배포)
-// — a sprawling table stops being auditable, which is the whole point of being deterministic.
-
-const PATH_RULES = [
-  {
-    id: 'db-migration',
-    match: (p) => p.startsWith('packages/db/drizzle/'),
-    dims: { revers: 'none' },
-    deep: ['verify:rls'],
-    why: '적용된 마이그레이션은 되돌릴 수 없다',
-  },
-  {
-    id: 'db-schema',
-    // packages/db/test/** 포함 — RLS 격리 *증명* 테스트의 희석은 스키마 변경만큼 게이트를 약화한다
-    // (require-tests.sh는 삭제만 막고 희석은 못 본다).
-    match: (p) => p.startsWith('packages/db/src/') || p.startsWith('packages/db/test/'),
-    dims: { blast: 'high' },
-    deep: ['verify:rls'],
-    why: 'RLS·테넌트 격리 표면 (ADR-0001/0003)',
-  },
-  {
-    id: 'auth',
-    match: (p) =>
-      p.startsWith('apps/api/src/auth/') ||
-      p.startsWith('apps/api/src/partner-auth/') ||
-      p.startsWith('apps/api/src/impersonation/') ||
-      p.endsWith('.guard.ts'),
-    dims: { blast: 'high' },
-    deep: ['verify:auth', 'verify:e2e'],
-    why: '인증·인가 불변식 (ADR-0026/0027/0032)',
-  },
-  {
-    id: 'outbound',
-    match: (p) =>
-      p.startsWith('apps/api/src/alimtalk-send/') || p.startsWith('apps/api/src/revisit-calls/'),
-    dims: { blast: 'high' },
-    deep: [],
-    why: '실제 환자에게 나가는 발송·통화 표면',
-  },
-  {
-    id: 'harness',
-    // .loop/lessons/**는 제외 — 교훈 데이터 파일은 검증기를 좌우하지 않는다(guard-off·protect.globs·
-    // looping 센티넬 등 .loop/의 나머지는 가드 설정 그 자체다). tools/**·.husky/**는 검증기·게이트
-    // 스크립트의 집이라 전부 하네스다(BAC-584 리뷰: 베이스라인 도입으로 규칙 표의 완전성이
-    // load-bearing이 됐다 — 가드 자기설정이 AUTO로 새면 안 된다).
-    match: (p) =>
-      p.startsWith('.claude/') ||
-      p === 'CLAUDE.md' ||
-      p.startsWith('tools/') ||
-      p.startsWith('.husky/') ||
-      (p.startsWith('.loop/') && !p.startsWith('.loop/lessons/')) ||
-      p.startsWith('docs/adr/'),
-    dims: { blast: 'high' },
-    deep: [],
-    why: '하네스·헌법 층 — 이후 모든 작업에 영향',
-  },
-  {
-    id: 'ci-deploy-infra',
-    // infra/**(Terraform·secret_keys 스키마)와 apps/api/src/env.ts(부팅 env zod)는 배포 시점에야
-    // 터지는 표면이다(CLAUDE.md §7 — 2회 재발 실측). 베이스라인 도입 후 여기 없으면 AUTO로 샌다.
-    match: (p) =>
-      p.startsWith('.github/') ||
-      p.startsWith('tools/deploy/') ||
-      p.startsWith('infra/') ||
-      p === 'apps/api/src/env.ts',
-    dims: { blast: 'high' },
-    deep: [],
-    why: 'CI·배포·인프라 파이프라인 자체',
-  },
-  {
-    id: 'workspace-root',
-    match: (p) =>
-      p === 'package.json' ||
-      p === 'pnpm-workspace.yaml' ||
-      p === 'pnpm-lock.yaml' ||
-      p === 'turbo.json' ||
-      p === 'biome.json',
-    dims: { blast: 'high' },
-    deep: [],
-    why: '워크스페이스 루트 설정 — 전 패키지 영향',
-  },
-]
-
-// Deploy / merge / send: irreversible when RUN (editing the script is `ci-deploy-infra` above).
-const COMMAND_RULES = [
-  {
-    id: 'cmd-irreversible',
-    match: (c) =>
-      /\bgh\s+pr\s+merge\b/.test(c) ||
-      /\bgit\s+push\b[^|;&]*\b(main|develop)\b/.test(c) ||
-      // `pnpm run deploy`/`pnpm run redeploy`가 레포 정본 별칭(루트 package.json scripts)이다 —
-      // bare-`pnpm deploy`만 매칭하면 그 별칭이 AUTO로 샌다(BAC-563에서 실측, BAC-616 ask 규칙과 정합).
-      /\bpnpm\s+(run\s+)?(deploy|redeploy)\b/.test(c) ||
-      /tools\/deploy\//.test(c) ||
-      /\b(vercel|flyctl)\s+deploy\b/.test(c),
-    dims: { revers: 'none' },
-    why: '배포·머지 명령 — 실행 즉시 공유 상태를 바꾼다',
-  },
-]
-
-// ADR-0061 §5: merge/deploy/release/send are NEVER a classification question. Always a human.
+// Deploy / merge / send: irreversible when RUN (editing the script is a repo-specific "ci-deploy"
+// path rule, supplied via --rules).
 const HUMAN_ONLY_STAGES = new Set(['merge', 'deploy', 'release', 'send'])
 
 // Docs that are neither the constitution (CLAUDE.md) nor decisions (docs/adr/**) carry no runtime
 // risk. Giving them a deterministic LOW baseline is what makes the abbreviated track (§3) real —
 // otherwise every doc typo would fail closed to REQUIRE and the gate would be pure noise.
+// `docs/adr/**` is excluded here because it is a structural constant, not a consumer-supplied rule —
+// a repo without ADRs still gets this exemption tightened correctly if it names a different decisions
+// directory in its own path rules (a match there simply out-prioritizes this baseline).
 const isDocPath = (p) =>
   (p.startsWith('docs/') && !p.startsWith('docs/adr/')) ||
   (p.endsWith('.md') && !p.includes('/') && p !== 'CLAUDE.md')
@@ -178,6 +93,7 @@ const opt = {
   action: '',
   agent: { blast: null, revers: null, cost: null },
   fromGit: null,
+  rulesPath: null,
   gate: true,
   json: false,
   renderMd: false,
@@ -201,6 +117,9 @@ for (let i = 0; i < argv.length; i++) {
       break
     case '--action':
       opt.action = val()
+      break
+    case '--rules':
+      opt.rulesPath = val()
       break
     case '--agent-blast-radius':
       opt.agent.blast = val()
@@ -231,6 +150,65 @@ for (let i = 0; i < argv.length; i++) {
       usage(`unknown arg ${a}`)
   }
 }
+
+// ── rule table — loaded from JSON, compiled into the same {id, match, dims, deep, why} shape the
+// classifier below expects. No file present (and no --rules/CLASSIFY_RISK_RULES) is not an error —
+// it just means this consumer hasn't injected any domain rules yet, so only the structural baselines
+// apply. A file that fails to parse IS an error (usage exit 2): a rules file the tool silently
+// ignored would under-report risk the same way an unresolvable --from-git base would.
+function resolveRulesPath() {
+  if (opt.rulesPath) return opt.rulesPath
+  if (process.env.CLASSIFY_RISK_RULES) return process.env.CLASSIFY_RISK_RULES
+  const cwdDefault = join(process.cwd(), 'risk-rules.json')
+  return existsSync(cwdDefault) ? cwdDefault : null
+}
+
+function loadRulesFile() {
+  const path = resolveRulesPath()
+  if (!path) return { pathRules: [], commandRules: [] }
+  if (!existsSync(path)) usage(`--rules file not found: ${path}`)
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (e) {
+    usage(`--rules file is not valid JSON (${path}): ${String(e.message || e).split('\n')[0]}`)
+  }
+  return { pathRules: parsed.pathRules || [], commandRules: parsed.commandRules || [] }
+}
+
+function compilePathRule(r) {
+  const starts = r.startsWith || []
+  const ends = r.endsWith || []
+  const exact = r.exact || []
+  const exclude = r.excludeStartsWith || []
+  return {
+    id: r.id,
+    match: (p) => {
+      if (exclude.some((pre) => p.startsWith(pre))) return false
+      if (exact.includes(p)) return true
+      if (starts.some((pre) => p.startsWith(pre))) return true
+      if (ends.some((suf) => p.endsWith(suf))) return true
+      return false
+    },
+    dims: r.dims || {},
+    deep: r.deep || [],
+    why: r.why || r.id,
+  }
+}
+
+function compileCommandRule(r) {
+  const regexes = (r.patterns || []).map((p) => new RegExp(p))
+  return {
+    id: r.id,
+    match: (c) => regexes.some((re) => re.test(c)),
+    dims: r.dims || {},
+    why: r.why || r.id,
+  }
+}
+
+const rulesFile = loadRulesFile()
+const PATH_RULES = rulesFile.pathRules.map(compilePathRule)
+const COMMAND_RULES = rulesFile.commandRules.map(compileCommandRule)
 
 if (opt.fromGit) {
   const git = (args) => {
@@ -309,25 +287,26 @@ for (const c of opt.commands) {
 }
 if (opt.stage && HUMAN_ONLY_STAGES.has(opt.stage)) {
   applyDims({ revers: 'none' })
-  matched.push(`human-only-stage (${opt.stage}) — 머지·배포·발송은 분류 대상이 아니다 (ADR-0061 §5)`)
+  matched.push(`human-only-stage (${opt.stage}) — merge/deploy/send are never a classification question (ADR-0061 §5)`)
 }
 if (opt.paths.length > MANY_FILES) {
   applyDims({ blast: 'high' })
-  matched.push(`many-files (${opt.paths.length} > ${MANY_FILES}) — 광범위 변경`)
+  matched.push(`many-files (${opt.paths.length} > ${MANY_FILES}) — broad change`)
 }
 
 const docsOnly = opt.paths.length > 0 && opt.paths.every(isDocPath)
 if (docsOnly && matched.length === 0) {
   applyDims({ blast: 'low', revers: 'full', cost: 'low' })
-  matched.push('docs-only-baseline — 런타임 표면 없음 (CLAUDE.md·docs/adr/** 제외)')
+  matched.push('docs-only-baseline — no runtime surface (excludes CLAUDE.md · docs/adr/**)')
 }
 
-// 앱코드 저위험 베이스라인 (BAC-584 AC1, docs-only와 대칭 — 사용자 승인 2026-08-05): 어떤 규칙도
-// 안 걸린 ≤MANY_FILES 파일 changeset은 low/full/low. 실측 40건 표본에서 REQUIRE 36/40(90%)의 다수가
-// "규칙 미매치 → 3축 미지정 → fail-closed"였다 — 40번 물어 39번 같은 답을 내는 게이트는 라우팅
-// 신호가 아니다. "미분류=REQUIRE"는 규칙 테이블이 아예 모르는 표면(미매치 명령·>MANY_FILES 미매치
-// 스윕)에만 남는다(진짜 fail-closed 의도). 명령이 함께 있으면 적용하지 않는다 — 미매치 명령은
-// 여전히 fail-closed다.
+// App-code low-risk baseline (BAC-584 AC1, symmetric with docs-only): a changeset of ≤MANY_FILES
+// files that no rule matched is low/full/low. A 40-sample audit found REQUIRE on 36/40 (90%), and the
+// majority of those were "no rule matched → 3 dims unset → fail-closed" — a gate that gives the same
+// answer 39 times out of 40 carries no routing signal. "unclassified = REQUIRE" survives only for
+// surfaces the rule table has no opinion on at all (an unmatched command, or a >MANY_FILES unmatched
+// sweep) — that is the genuine fail-closed intent. Not applied when a command is also present — an
+// unmatched command still fails closed.
 const appCodeLowRisk =
   !docsOnly &&
   matched.length === 0 &&
@@ -336,7 +315,7 @@ const appCodeLowRisk =
   opt.paths.length <= MANY_FILES
 if (appCodeLowRisk) {
   applyDims({ blast: 'low', revers: 'full', cost: 'low' })
-  matched.push(`app-code-low-risk-baseline — PATH_RULE 미매치 + ≤${MANY_FILES}파일 (BAC-584)`)
+  matched.push(`app-code-low-risk-baseline — no path rule matched + ≤${MANY_FILES} files (BAC-584)`)
 }
 
 // Agent input: escalate-only. An UNRECOGNISED agent value blanks the dimension rather than being
@@ -344,29 +323,31 @@ if (appCodeLowRisk) {
 // reaches gate.mjs and fails closed.
 const final = { ...rule }
 const agentNotes = []
-const blanked = new Set() // 에이전트 garbage 값으로 블랭크된 차원 — 아래 완성 단계가 되살리면 안 된다
+const blanked = new Set() // dimensions blanked by garbage agent input — the completion step below must not revive them
 for (const [key, { scale, label }] of Object.entries(DIMS)) {
   const v = opt.agent[key]
   if (v === null) continue
   if (!scale.includes(v)) {
     final[key] = ''
     blanked.add(key)
-    agentNotes.push(`${label}="${v}" 인식 불가 → 미지정 처리(fail closed)`)
+    agentNotes.push(`${label}="${v}" unrecognised → left unset (fail closed)`)
     continue
   }
   if (scale.indexOf(v) > scale.indexOf(final[key])) {
     final[key] = v
-    agentNotes.push(`${label}: ${rule[key] || '(규칙 없음)'} → ${v} (에이전트 상향)`)
+    agentNotes.push(`${label}: ${rule[key] || '(no rule)'} → ${v} (agent escalated)`)
   } else if (v !== final[key]) {
-    agentNotes.push(`${label}: "${v}" 무시 — 규칙값 ${final[key]}보다 낮다 (하향 불가)`)
+    agentNotes.push(`${label}: "${v}" ignored — below the rule value ${final[key]} (no de-escalation)`)
   }
 }
 
-// 차원 완성 (BAC-584 3-tier): 실질 규칙(PATH/COMMAND — 크기만 아는 many-files·베이스라인 제외)이
-// 매치된 표면은 미지정 차원을 low/full/low로 완성한다. 이 완성 없이는 rev/cost 누락 fail-closed가
-// 모든 규칙 매치를 REQUIRE로 밀어 DENY_AND_LOG 티어가 구조적으로 도달 불가다. many-files는 완성
-// 트리거가 아니다 — ">MANY_FILES 미매치 스윕"은 여전히 fail-closed REQUIRE(규칙 테이블이 모르는
-// 표면). 에이전트 garbage 값으로 블랭크된 차원은 완성하지 않는다(그 블랭크가 fail-closed 의도다).
+// Dimension completion (BAC-584 3-tier): a matched surface that comes from a real rule (PATH/COMMAND
+// — not the size-only many-files/baseline rows) has its unset dimensions completed to low/full/low.
+// Without this completion, a missing rev/cost on every rule match would fail closed to REQUIRE, and
+// the DENY_AND_LOG tier would be structurally unreachable. many-files does not trigger completion — a
+// ">MANY_FILES unmatched sweep" stays fail-closed REQUIRE (a surface the rule table has no opinion
+// on). A dimension blanked by garbage agent input is not completed either — that blank is the
+// intended fail-closed signal.
 const knownSurface = matched.some(
   (m) =>
     !m.startsWith('docs-only-baseline') &&
@@ -397,28 +378,30 @@ if (opt.action || opt.stage) gateArgs.push('--action', opt.action || `stage: ${o
 if (opt.renderMd) {
   if (!opt.gate) usage('--render-md needs the gate verdict — do not combine with --no-gate')
   if (opt.json) usage('--render-md and --json are mutually exclusive output modes')
-  // 게이트를 캡처 모드로 위임(단일 결정지점 유지)한 뒤 그 판정을 PR-body용 마크다운으로 렌더한다.
+  // Delegate to the gate in capture mode (single decision point) and render its verdict as
+  // PR-body-ready markdown.
   const res = spawnSync(process.execPath, [join(HERE, 'gate.mjs'), ...gateArgs], { encoding: 'utf8' })
-  // 판정 실패(스폰 에러·계약 밖 종료코드)에는 마커를 찍지 않는다 — GATE=? 마커가 PR에 실리면
-  // 사후 감사 grep이 그것을 "증거 적재됨"으로 세는 오염이 된다. 캡처 모드라 삼켜질 뻔한 gate
-  // stderr도 그대로 통과시켜 디버깅 단서를 남긴다.
+  // No marker on a failed verdict (spawn error / out-of-contract exit code) — a GATE=? marker landing
+  // in a PR would let a post-hoc audit grep count it as "evidence loaded" when it wasn't. Capture mode
+  // would otherwise swallow gate's stderr, so pass it through for debugging.
   if (res.status !== 0 && res.status !== 10 && res.status !== 11) {
     if (res.stderr) process.stderr.write(res.stderr)
     process.stderr.write(
-      `[classify-risk] gate 판정 실패(status=${res.status ?? 'spawn-error'}) — 마커 미출력(증거 오염 방지)\n`,
+      `[classify-risk] gate verdict failed (status=${res.status ?? 'spawn-error'}) — no marker emitted (evidence-pollution guard)\n`,
     )
     process.exitCode = 2
   } else {
     const gateOut = res.stdout || ''
     const line = (name) => (gateOut.match(new RegExp(`^${name}: (.*)$`, 'm')) || [])[1] || '?'
     const verdict = line('GATE')
-    // 마커에 STAGE·BASE(merge-base sha)를 실어 "어느 diff에 대한 판정인가"를 자기검증 가능하게 한다.
+    // The marker carries STAGE·BASE (merge-base sha) so "which diff was this a verdict on" is
+    // self-verifiable.
     const provenance = `STAGE=${opt.stage || '-'} BASE=${opt.gitBase ? opt.gitBase.slice(0, 12) : '-'}`
     process.stdout.write(
       [
-        '### 게이트 판정 — classify-risk (ADR-0061 · 3-tier)',
+        '### Gate verdict — classify-risk (ADR-0061 · 3-tier)',
         '',
-        '| 항목 | 값 |',
+        '| Field | Value |',
         '|---|---|',
         `| GATE | **${verdict}** |`,
         `| TRACK | ${track} |`,
