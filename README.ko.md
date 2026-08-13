@@ -19,8 +19,9 @@
 (`loop-memory`)는 안 받아들일 수 있다. 쓸 것만 설치하면 된다 — `claude plugin details <name>`가
 결정 전에 플러그인별 예상 토큰 비용을 보여준다.
 
-> **상태: M0(비공개 스캐폴드).** 이 저장소는 살균·검증은 끝났지만 아직 외부 공개 발표나 버전 고정
-> 전이다. 사전 고지 없는 breaking change를 각오할 것. [마일스톤](#마일스톤) 참고.
+> **상태: M1(공개 진행 중).** 명시적 semver(`0.2.0`), 릴리스마다 `claude plugin tag`로 태깅한다.
+> `1.0` 이전이라 마이너 버전 사이에도 breaking change가 있을 수 있다 — 신경 쓰인다면 버전을 고정할
+> 것. [마일스톤](#마일스톤) 참고.
 
 ## `loop-engine`에 들어있는 것
 
@@ -127,6 +128,20 @@ gate.mjs --blast-radius high --reversibility partial --cost low
   기록으로 남는다.
 - `classify-risk.mjs`는 차원을 계산한 뒤 `gate.mjs`를 exec한다 — 차원을 라우팅 판단으로 바꾸는
   자리가 정확히 하나이지, 서로 어긋날 수 있는 사본 두 개가 아니다.
+- **경로/명령 룰 테이블은 빈 채로 배포된다.** 어떤 경로가 마이그레이션이고, 어떤 경로가 인증이고,
+  어떤 경로가 CI 파이프라인 자체인지는 *당신 레포* 고유의 도메인 지식이지, 이식 가능한 플러그인이
+  하드코딩할 게 아니다. `--rules <path>`(또는 `CLASSIFY_RISK_RULES`, 또는 레포 루트에
+  `risk-rules.json`을 두는 것)로 당신의 룰 테이블을 넣는다:
+  ```json
+  { "pathRules": [{ "id": "db-migration", "startsWith": ["db/migrations/"],
+                     "dims": { "revers": "none" }, "deep": ["your-migration-check"],
+                     "why": "적용된 마이그레이션은 되돌릴 수 없다" }],
+    "commandRules": [{ "id": "cmd-deploy", "patterns": ["\\bdeploy\\b"],
+                        "dims": { "revers": "none" }, "why": "실행 즉시 공유 상태를 바꾼다" }] }
+  ```
+  룰 파일이 전혀 없어도 구조적 베이스라인은 그대로 적용된다(문서 전용·소규모 changeset은 AUTO,
+  다파일 변경은 상향, merge/deploy/send는 항상 사람 결정) — 룰을 한 줄도 안 써도 도구는 바로 쓸 수
+  있다, 다만 아직 당신 레포의 구체적 위험 구역은 모를 뿐이다.
 
 ### `require-tests.sh` — 테스트를 0개 돌리는 검증기는 조용히 그린이 아니라 RED가 되어야 한다
 
@@ -182,15 +197,23 @@ tools/loop-engine/
   독립 실행된다 — `tools/loop-engine/test/run.sh`가 이 저장소 밖의 것 없이 15/15 그린이다.
 - CI(`.github/workflows/`)가 매 `main` push마다 `gitleaks`와 자체 테스트 스위트 +
   `claude plugin validate --strict`를 돌린다.
-- 버전 고정이 **아직 의미를 갖지 않는다** — 이 저장소는 `M1` 이전이라, deprecation 창 없는
-  force-push와 breaking change를 각오해야 한다.
+- **버저닝: 흐르는 SHA 채널이 아니라 명시적 semver.** Claude Code 자체의 버전 해석 순서
+  ([Plugins reference § Version management](https://code.claude.com/docs/en/plugins-reference#version-management)
+  참고)는 `plugin.json`과 마켓 엔트리 둘 다에서 `version`을 생략했을 때만 "해석된 커밋이 바뀔 때마다
+  업데이트"로 폴백한다 — 공식 문서는 이 폴백을 "활발히 개발 중인 내부·팀 플러그인"에 맞는 방식으로,
+  명시적 버전 상향은 "안정적 릴리스 주기를 가진 공개 플러그인"에 맞는 방식으로 구분한다. M1은
+  후자다. 이 선택은 실제 툴링 충돌도 해소한다: 위 CI에 배선된 `claude plugin validate --strict`는
+  `version` 부재를 경고가 아니라 하드 에러로 취급한다 — "version 생략"과 "CI에 `--strict` 유지"는
+  동시에 성립할 수 없다. 릴리스마다 `plugin.json`의 `version`을 올리고 `claude plugin tag`로 태깅한다.
 
 ## 마일스톤
 
-- **M0(현재)** — 비공개 스캐폴드: 시크릿/PII 스윕 + gitleaks CI + `loop-engine` bin·test 무수정
+- **M0(완료)** — 비공개 스캐폴드: 시크릿/PII 스윕 + gitleaks CI + `loop-engine` bin·test 무수정
   이식 + `claude plugin validate --strict` 그린 + `--plugin-dir` dogfood `verdict-run` 1회 완주.
-- **M1** — `loop-engine` 공개: `docs/`에 남은 한국어 프로즈 영어화, `classify-risk`의 룰 테이블을
-  소비자가 직접 넣을 수 있게 외부화, 마켓 공개(SHA 핀 채널).
+- **M1(현재)** — `loop-engine` 공개: `docs/`에 남은 한국어 프로즈 영어화(완료), `classify-risk`의
+  룰 테이블을 소비자가 `--rules`/`CLASSIFY_RISK_RULES`/레포 루트 `risk-rules.json`으로 직접 넣을 수
+  있게 외부화(완료), 저장소 비공개 → 공개 전환은 명시적 semver로([개발 상태](#개발-상태)에 SHA 채널
+  대신 이걸 택한 이유).
 - **M2** — `ship-flow`(배달 루프 스킬 묶음) + `templates/`(소비 레포에 setup 스킬이 배선하는 헌법
   층 템플릿 — 플러그인 루트 `CLAUDE.md`는 Claude Code가 프로젝트 컨텍스트로 로드하지 않아, 파일
   하나로 플러그인 안에 그냥 두는 걸로는 안 됨).

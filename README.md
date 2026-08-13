@@ -21,9 +21,9 @@ the ceiling invariant (`loop-engine`) without also adopting an opinionated deliv
 (`ship-flow`) or a semantic-memory database (`loop-memory`). Install only what you're going to use —
 `claude plugin details <name>` shows the projected per-plugin token cost before you decide.
 
-> **Status: M0 (private scaffold).** This repo is sanitized and validated but not yet publicly
-> announced or version-pinned for external consumers. Expect breaking changes without notice. See
-> [Milestones](#milestones).
+> **Status: M1 (public release in progress).** Explicit semver (`0.2.0`), tagged with `claude plugin
+> tag` on release. Pre-`1.0`, so breaking changes are still possible between minor versions — pin a
+> version if that matters to you. See [Milestones](#milestones).
 
 ## What's in `loop-engine`
 
@@ -135,6 +135,20 @@ gate.mjs --blast-radius high --reversibility partial --cost low
   instead of living only in a terminal that scrolled away.
 - `classify-risk.mjs` computes dimensions and then execs `gate.mjs` — there is exactly one place
   that turns dimensions into a routing decision, not two copies that can drift.
+- **The path/command rule table ships empty.** Which paths are a migration, which are auth, which
+  are the CI pipeline itself — that's domain knowledge specific to *your* repo, not something a
+  portable plugin should hardcode. Point `--rules <path>` (or `CLASSIFY_RISK_RULES`, or drop a
+  `risk-rules.json` at your repo root) at your own rule table:
+  ```json
+  { "pathRules": [{ "id": "db-migration", "startsWith": ["db/migrations/"],
+                     "dims": { "revers": "none" }, "deep": ["your-migration-check"],
+                     "why": "an applied migration cannot be undone" }],
+    "commandRules": [{ "id": "cmd-deploy", "patterns": ["\\bdeploy\\b"],
+                        "dims": { "revers": "none" }, "why": "running this changes shared state" }] }
+  ```
+  With no rules file at all, structural baselines still apply (docs-only and small-changeset AUTO,
+  many-files escalates, merge/deploy/send are always a human decision) — the tool is usable before
+  you've written a single rule, it just won't know your repo's specific danger zones yet.
 
 ### `require-tests.sh` — a verifier that runs zero tests must go RED, not vacuously green
 
@@ -191,17 +205,26 @@ path stayed.
   with nothing outside this repo.
 - CI (`.github/workflows/`) runs `gitleaks` and the self-test suite + `claude plugin validate
   --strict` on every push to `main`.
-- Version pins are **not** load-bearing yet — this repo is pre-`M1`, expect force-pushes and
-  breaking changes without a deprecation window.
+- **Versioning: explicit semver, not a floating SHA channel.** Claude Code's own version-resolution
+  order (see [Plugins reference § Version management](https://code.claude.com/docs/en/plugins-reference#version-management))
+  falls back to "update whenever the resolved commit changes" only when `version` is omitted from
+  both `plugin.json` and the marketplace entry — the docs call that the right fit for "internal or
+  team plugins under active development", and explicit version bumps the right fit for "published
+  plugins with stable release cycles". M1 is the latter. It also resolves a real tooling conflict:
+  `claude plugin validate --strict` (wired into CI above) treats a missing `version` as a hard error,
+  not just a warning — so "omit version" and "keep `--strict` in CI" cannot both hold. Bump `version`
+  in `plugin.json` on every release and tag it with `claude plugin tag`.
 
 ## Milestones
 
-- **M0 (current)** — private scaffold: secrets/PII sweep, gitleaks CI, `loop-engine` bin + tests
+- **M0 (done)** — private scaffold: secrets/PII sweep, gitleaks CI, `loop-engine` bin + tests
   migrated unmodified, `claude plugin validate --strict` green, one dogfooded `verdict-run` via
   `--plugin-dir`.
-- **M1** — public release of `loop-engine`: English docs for the remaining Korean-language prose in
-  `docs/`, `classify-risk`'s rule table externalized so a consumer can supply their own, marketplace
-  goes public on a SHA-pinned channel.
+- **M1 (current)** — public release of `loop-engine`: English docs for the remaining Korean-language
+  prose in `docs/` (done), `classify-risk`'s rule table externalized so a consumer can supply their
+  own via `--rules`/`CLASSIFY_RISK_RULES`/a `risk-rules.json` at their repo root (done), repository
+  flips private → public on explicit semver (see [Development status](#development-status) for why
+  not a SHA channel).
 - **M2** — `ship-flow` (the delivery-loop skill stack) + `templates/` (constitution-layer templates
   a setup skill wires into a consuming repo — a plugin's root `CLAUDE.md` is not loaded as project
   context by Claude Code, so this can't just be a file sitting in the plugin).
