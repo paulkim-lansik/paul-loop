@@ -1,0 +1,23 @@
+name: loop-engine test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: run loop-engine self-test suite
+        run: bash tools/loop-engine/test/run.sh
+      - name: validate plugin + marketplace manifests
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate --strict .
+          claude plugin validate --strict tools/loop-engine
