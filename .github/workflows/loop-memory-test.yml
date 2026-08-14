@@ -1,0 +1,44 @@
+name: loop-memory test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/loop-memory/**"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/loop-memory-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/loop-memory/**"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/loop-memory-test.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/loop-memory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install dependencies
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      # Unit tests only (no docker) — the vitest.config.ts default excludes *.integration.test.ts.
+      # The docker-gated integration suite (test:integration) is a local/manual check here, the same
+      # restraint the plugin's origin repo applies to its own equivalent (not a required CI gate).
+      - name: unit tests
+        run: npm test
+      - name: build (dependency-free bundle)
+        run: npm run build
+      - name: validate plugin + marketplace manifests
+        working-directory: .
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate --strict .
+          claude plugin validate --strict tools/loop-memory
