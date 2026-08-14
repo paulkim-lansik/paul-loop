@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [{{RELEASE_BRANCH}}]
+  workflow_dispatch:
+
+# Cancel a superseded run on re-push — without this, every re-push adds cost on top of the runs it
+# obsoletes rather than replacing them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Add your language/package-manager setup step here (e.g. actions/setup-node + your package
+      # manager's cache).
+      - run: {{VERIFY_COMMAND}}
+
+  # ── Add more jobs here as this repo grows ──────────────────────────────────────
+  # A common next step: path-filtered jobs that only run when a specific area changed (e.g. a docker
+  # integration test that only needs to re-run when the DB schema or the API changed). If you add one,
+  # add it to `ci-gate`'s `needs` and to the aggregation logic below — see the comment on `ci-gate` for
+  # why a job that's missing from the gate creates a silent hole.
+
+  # ── always-run summary gate ──────────────────────────────────────────────────
+  # Why this job exists, not just the jobs above: pointing your branch protection's required check
+  # directly at a job name creates two holes that only show up under real concurrent use:
+  #   1. A job skipped by a path filter is treated by GitHub as "required check satisfied" — even when
+  #      the skip wasn't actually legitimate for that PR. Point the required check at a per-job name
+  #      and a mis-scoped path filter can land unreviewed changes.
+  #   2. A required check that's still *pending* when someone clicks merge doesn't block the merge —
+  #      the final failure can arrive after the merge already happened.
+  # Fix: one job (this one) uses `needs: [...]` + `if: always()` to wait for and aggregate every other
+  # job's result, and your branch protection's required check points at THIS job's name only. When you
+  # add a job above, add it to `needs:` and to the aggregation logic below — a job left out of both is
+  # a silent hole in the gate (identical to problem 1, just self-inflicted instead of GitHub's own
+  # default behavior).
+  ci-gate:
+    name: CI gate
+    needs: [verify]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: aggregate required job results
+        env:
+          VERIFY: ${{ needs.verify.result }}
+        run: |
+          fail=0
+          # A job with no path filter (like `verify` above) must always succeed on a pull_request —
+          # `skipped` here would mean the workflow itself is misconfigured, not a legitimate skip.
+          for pair in "verify:$VERIFY"; do
+            job="${pair%%:*}"; result="${pair#*:}"
+            if [ "$result" = "success" ]; then
+              echo "gate: $job=success"
+            else
+              echo "::error::gate: $job=$result (must be success on a pull_request)"; fail=1
+            fi
+          done
+          # If you add a path-filtered job, its skip needs to be judged against the SAME path-filter
+          # output that decided to skip it — success always passes; skipped only passes if the filter
+          # output says this PR's change scope legitimately didn't need it; anything else (failure,
+          # cancelled, or skipped-when-the-filter-said-required) fails the gate.
+          exit "$fail"
