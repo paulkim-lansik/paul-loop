@@ -1,0 +1,113 @@
+# CLAUDE.md — {{PROJECT_NAME}} development conventions
+
+Single source of truth for how anyone (human or AI agent) touches this repo's code. This is the
+constitution layer — always loaded, always in force. Merge with any personal/global guidelines you
+also use; on conflict, this file wins for this repo.
+
+---
+
+## 0. How to read this — don't mix enforced (gate) with advisory (judgment)
+
+| Marker | Meaning | Where it's enforced |
+|---|---|---|
+| ✅ **Gate** | A machine blocks the merge. Violation = RED | lint · typecheck · test · {{VERIFY_COMMAND}} |
+| 🔶 **Guidance** | Needs judgment. Lives only as prose here | code review + agent judgment |
+
+Lesson behind this split: a one-line fact from official docs becomes a gate; a design opinion becomes
+guidance. Don't blur the two — "enforce a design opinion via lint" produces gates nobody can satisfy,
+and "leave a hard factual constraint as prose" produces violations nobody catches.
+
+---
+
+## 1. Package manager & verification (read this first)
+
+- **Package manager: {{PACKAGE_MANAGER}} only.** {{PACKAGE_MANAGER_NOTES}}
+- Dependencies are installed in the package that uses them, not the repo root — the root holds only
+  shared tooling config.
+- Verify command — **the verifier is the ceiling. An agent's self-judgment never substitutes for a
+  PASS from this command.**
+
+  | Command | What it does | When |
+  |---|---|---|
+  | `{{VERIFY_COMMAND}}` | {{VERIFY_DESCRIPTION}} | Always, before any PR |
+
+  {{DEEP_GATES_TABLE}}
+
+### Test strategy (🔶 guidance)
+
+- Prefer proving *behavior*, not chasing a coverage percentage. A test that exercises a code path
+  without asserting on the property that actually matters is coverage theater.
+- Security/invariant-critical paths (auth, tenant isolation, anything a mistake in which is expensive
+  to discover later) need a test that would actually fail if the invariant broke — not just a test
+  that the happy path returns 200.
+
+---
+
+## 2. Package/module boundaries {{BOUNDARY_ENFORCEMENT_MARKER}}
+
+- Import other internal packages through their public entrypoint only — no deep-path imports that
+  reach past what the package intentionally exports. {{BOUNDARY_ENFORCEMENT_NOTES}}
+
+---
+
+## 3. Secrets & environment (🔶 guidance, tighten to ✅ once you have a validator)
+
+- Validate required environment/config at boot (fail fast on missing/malformed values) rather than
+  discovering a missing secret at first use in production.
+- `.env` (or equivalent) is local-only. Non-local secrets live in a secret manager, not committed
+  config.
+
+---
+
+## 4. The loop — where this convention is learned and lives
+
+- **One loop entrypoint.** Pick a single skill (this plugin ships `ship-feature`) that carries an
+  issue from plan → implementation → verified PR, rather than several competing entrypoints. Fewer
+  entrypoints means the risk gates and lesson-capture steps below can't be silently bypassed by using
+  a different door in.
+- **The verifier is the ceiling.** `{{VERIFY_COMMAND}}`'s exit code is the truth, never an agent's own
+  report of "tests pass now."
+- **Lessons.** Only a verifier-confirmed fix gets recorded as a lesson. A lesson that recurs is a
+  promotion candidate; promotion goes through a skeptical second pass (a different judgment than the
+  one that proposed it) before it gets codified back into this file — never a single pass grading its
+  own homework.
+- **Risk classification is rule-driven, not self-reported.** Whatever changes a diff touches (schema
+  migrations, auth paths, this file itself, CI/deploy config, N+ files) should map to a
+  deterministic risk tier via a rule table, not an agent's own claim about how risky its change is.
+  Merge/deploy/release actions are always the highest tier regardless of anything else about the
+  diff — a human approves those, every time.
+- **Branch model: {{BRANCH_MODEL}}.** {{BRANCH_MODEL_NOTES}}
+- **Worktree isolation (if concurrent work on this repo is common).** The main checkout's HEAD stays
+  on {{RELEASE_OR_INTEGRATION_BRANCH}} — new work starts in its own `git worktree add`, not a
+  `checkout -b` in the shared checkout. This is what lets two people/agents work on this repo at the
+  same time without one's uncommitted changes breaking the other's `git` operations.
+- **Merge happens on the server, not locally.** Push the branch, open a PR, let a human (or the
+  required CI checks) approve it there. A local `git merge`/`git push` straight to the shared branch
+  skips the review surface this whole loop exists to provide.
+
+---
+
+## 5. Knowledge ownership — what lives where
+
+**Test: if it needs to be reproducible, it belongs in the repo.** Anyone who clones this repo should
+get the same quality of collaboration, regardless of who (or which AI agent) is doing the work.
+
+| This kind of knowledge... | ...lives here |
+|---|---|
+| A decision, its reasoning, and the trade-off you picked | a decision record (e.g. `docs/adr/`) |
+| Domain terms / ubiquitous language | a glossary (e.g. `CONTEXT.md`) |
+| A gate or MUST-follow convention | this file |
+| A verified fix worth remembering | the lesson store this loop uses |
+| Current issue status, who's doing what, deadlines | your issue tracker ({{TRACKER_NAME}}), not this file |
+| Personal preferences, working style | your own personal agent config, not this repo |
+
+Don't let project state (what's in progress, who owns what) leak into this file — it goes stale the
+moment it's written and the tracker is already the source of truth for it.
+
+---
+
+## Placeholders this template still has open
+
+Search this file for `{{...}}` — the setup skill that installed this file should have already filled
+them in from an interview. If any remain, that interview was skipped or incomplete; fill them by hand
+or re-run the setup skill.
