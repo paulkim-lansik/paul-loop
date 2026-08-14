@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "known-safe fixed test fixtures, not real credentials"
+regexes = [
+  # tools/loop-memory/test/*.integration.test.ts — a fixed, deterministic HMAC signing-key value
+  # used only against the local docker pgvector test container (never a real secret store).
+  '''bac-619-(cli-)?test-signing-key''',
+]

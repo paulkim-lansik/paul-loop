@@ -18,7 +18,7 @@ const { db, pool } = createLoopDb();
 const embedder = stubEmbedder();
 // write-path provenance(BAC-619) — 이 테스트 전용 고정 secret. 실 운영 secret과 무관(테스트는 항상
 // stubEmbedder처럼 결정적·오프라인 값을 쓴다).
-const SIGNING_KEY = 'bac-619-test-signing-key';
+const SIGNING_KEY = 'bac-619-test-signing-key'; // gitleaks:allow — fixed test fixture, not a real secret
 
 // 이 회차만의 고유 id — DB가 회차 간 누적돼도 단정이 오염되지 않게(랜덤 키로 한정).
 const verifiedId = randomUUID();
