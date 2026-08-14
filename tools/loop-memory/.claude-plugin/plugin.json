@@ -1,0 +1,80 @@
+{
+  "name": "loop-memory",
+  "version": "0.1.0",
+  "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in: installs disabled by default — this is a database dependency, not core loop mechanics.",
+  "author": {
+    "name": "paulkim-lansik"
+  },
+  "homepage": "https://github.com/paulkim-lansik/paul-loop",
+  "repository": "https://github.com/paulkim-lansik/paul-loop",
+  "license": "MIT",
+  "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"],
+  "defaultEnabled": false,
+  "dependencies": [{ "name": "loop-engine", "version": "^0.2.0" }],
+  "userConfig": {
+    "openai_api_key": {
+      "type": "string",
+      "title": "OpenAI API key",
+      "description": "Used to embed lessons/knowledge for semantic recall (provider=openai). Leave unset if using Gemini instead. Without either key, the hooks no-op (fail-open).",
+      "sensitive": true,
+      "required": false
+    },
+    "gemini_api_key": {
+      "type": "string",
+      "title": "Gemini API key",
+      "description": "Used to embed lessons/knowledge for semantic recall (provider=gemini). Leave unset if using OpenAI instead.",
+      "sensitive": true,
+      "required": false
+    },
+    "loop_database_url": {
+      "type": "string",
+      "title": "loop-memory Postgres connection URL",
+      "description": "pgvector-enabled Postgres to store notes in. Defaults to this plugin's docker-compose.yml (postgresql://postgres:postgres@localhost:5434/loop_memory).",
+      "required": false
+    },
+    "loop_memory_signing_key": {
+      "type": "string",
+      "title": "Write-path signing key",
+      "description": "HMAC-SHA256 secret that signs graduated lesson notes (defends against memory poisoning of untrusted write paths — see README \"Threat model\"). Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing); the knowledge corpus is unaffected.",
+      "sensitive": true,
+      "required": false
+    },
+    "loop_adr_dir": {
+      "type": "string",
+      "title": "ADR directory (optional knowledge source)",
+      "description": "Repo-relative path to your ADR directory (e.g. docs/adr). Assumes each file's first line is `# ADR-NNNN: Title` and a `**Status**: Superseded (by ADR-XXXX)`-style marker for deprecation. Leave unset to skip this knowledge source entirely.",
+      "required": false
+    },
+    "loop_context_file": {
+      "type": "string",
+      "title": "Glossary file (optional knowledge source)",
+      "description": "Repo-relative path to a single glossary markdown file, chunked by `**Term**:` paragraphs. Leave unset to skip.",
+      "required": false
+    },
+    "loop_research_dir": {
+      "type": "string",
+      "title": "Research directory (optional knowledge source)",
+      "description": "Repo-relative path to a directory of markdown research docs, chunked by `##` section. Leave unset to skip.",
+      "required": false
+    },
+    "loop_design_dir": {
+      "type": "string",
+      "title": "Design-spec directory (optional knowledge source)",
+      "description": "Repo-relative path to a directory of markdown design-spec docs, chunked by `##` section. Leave unset to skip.",
+      "required": false
+    },
+    "loop_recall_max_distance": {
+      "type": "number",
+      "title": "Lessons recall distance cutoff",
+      "description": "Cosine distance (0=identical..2=opposite) above which a lesson hit is dropped instead of injected. Embedder-dependent — calibrate for your provider. Default (if unset): 0.65, a loose safety net.",
+      "required": false
+    },
+    "loop_knowledge_max_distance": {
+      "type": "number",
+      "title": "Knowledge recall distance cutoff",
+      "description": "Same as loop_recall_max_distance, but for the knowledge corpus (ADR/glossary/research/design) — kept separate since knowledge prose has a different embedding distribution than short lesson signatures. Default (if unset): 0.65.",
+      "required": false
+    }
+  },
+  "hooks": "./hooks/hooks.json"
+}

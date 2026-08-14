@@ -160,11 +160,74 @@ Put this before a test runner on any step whose entire purpose is to *prove* som
 tests that prove it were deleted, or never written, `vitest --passWithNoTests`-style flags would
 happily exit `0` over nothing — this guard turns that into an explicit `FAILED:` line instead.
 
+## What's in `loop-memory`
+
+**Opt-in** (`defaultEnabled: false` — install it, then `claude plugin enable loop-memory@paul-loop`).
+It's a database dependency (pgvector-enabled Postgres), not core loop mechanics, so it doesn't ride
+along with `loop-engine`/`ship-flow`. It gives verified lessons semantic recall — instead of a
+grep-shaped `.loop/lessons` directory, a `UserPromptSubmit` hook embeds the current prompt and
+injects the lessons (and, if configured, ADR/glossary/research knowledge) that are semantically
+closest to it.
+
+Two hooks do the work, both fail-open (a missing key, a down database, or a timeout is always a
+silent no-op, never a blocked prompt or a broken session):
+
+- **`SessionStart` → `graduate`** — copies verified lessons from `.loop/lessons` (loop-engine's own
+  convention) into the pgvector store, idempotently (already-graduated lessons are skipped by id).
+- **`UserPromptSubmit` → `recall`** — embeds the prompt, pulls the semantically-closest verified
+  lessons (and configured knowledge, if any) back out, and injects them as `<past-lessons
+  untrusted="true">` / `<knowledge untrusted="true">` context blocks — explicitly framed as
+  reference data, not instructions, as defense in depth against prompt injection via stored notes.
+
+Configure it with `claude plugin install loop-memory@paul-loop --config KEY=value` (repeatable) or
+interactively via `/plugin configure loop-memory@paul-loop`:
+
+| Key | Required | Notes |
+|---|---|---|
+| `openai_api_key` / `gemini_api_key` | no (but you need at least one) | `sensitive: true` — stored in the OS keychain / `~/.claude/.credentials.json`, never in `settings.json`. Without either key both hooks no-op. |
+| `loop_database_url` | no | Defaults to `postgresql://postgres:postgres@localhost:5434/loop_memory` — this plugin's `docker-compose.yml` matches that default (`docker compose up -d --wait` from `tools/loop-memory/`). |
+| `loop_memory_signing_key` | no | HMAC-SHA256 secret. Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing) — see "Threat model" below. `sensitive: true`. |
+| `loop_adr_dir` / `loop_context_file` / `loop_research_dir` / `loop_design_dir` | no | Optional *knowledge* corpus sources (separate from lessons) — a directory of `# ADR-NNNN: Title`-headed decision docs, a single `**Term**:`-chunked glossary file, and two `##`-section-chunked doc directories, respectively. Unset = that source is skipped entirely; nothing is assumed about your repo's docs unless you point at them. |
+| `loop_recall_max_distance` / `loop_knowledge_max_distance` | no | Cosine-distance cutoffs (0=identical..2=opposite) for the lessons and knowledge corpora respectively — a hit farther than this is dropped instead of injected. **Embedder-dependent**, calibrate for your provider/corpus; the code default (0.65) is a loose safety net if left unset. |
+
+### Threat model — write-path provenance
+
+A persistent, semantically-searched memory store is a stored-prompt-injection target: anything that
+can write a convincing-looking note can get it replayed into a future session as "context". The
+`graduate` hook only ever writes lessons that `loop-engine`'s `lessons.mjs` already marked
+*verified* (a real verifier confirmed the fix), and — if `loop_memory_signing_key` is set — signs
+each one with HMAC-SHA256. `recall` refuses (fail-closed) any lesson note whose signature doesn't
+verify, so a write path that doesn't know the secret (a stray `INSERT`, a different code path
+calling the store's `addNote` directly) can produce rows that sit in the table but never surface in
+recall. The knowledge corpus (ADR/glossary/research/design) isn't signed — it's expected to come
+only from tracked, reviewed repo docs, not runtime writes.
+
+### CLI
+
+The hooks call a single bundled entry point (`dist/cli.js`, `${CLAUDE_PLUGIN_ROOT}/dist/cli.js` once
+installed) — dependency-free, no `node_modules` needed at runtime, same "ships as a script" shape as
+`loop-engine`'s `bin/`. You can also run it by hand for manual recall/graduate/inspection:
+
+```bash
+node dist/cli.js graduate --lessons .loop/lessons [--knowledge <adrDir>] [--context <file>] [--research <dir>] [--design <dir>]
+node dist/cli.js recall (--query "<text>" | --query-file <f>) [--k N] [--json]
+node dist/cli.js stats [--json]   # read-only store summary, no embedder/key needed
+```
+
+Both `graduate` and `recall` refuse to run against a stub embedder by default if no
+`OPENAI_API_KEY`/`GEMINI_API_KEY` is set (`--allow-stub` overrides, for offline manual wiring
+checks) — a store built with a real embedder queried with a stub one returns results that look
+valid but are meaningless, not an empty/obviously-wrong result.
+
 ## Install
 
 ```bash
 claude plugin marketplace add paulkim-lansik/paul-loop
 claude plugin install loop-engine@paul-loop
+# loop-memory installs disabled (defaultEnabled:false) — install, configure, then enable:
+claude plugin install loop-memory@paul-loop --config openai_api_key=sk-...
+# (or configure interactively later, inside a session: /plugin configure loop-memory@paul-loop)
+claude plugin enable loop-memory@paul-loop
 ```
 
 ## Try it without installing anything
@@ -189,6 +252,15 @@ tools/loop-engine/
   lib/                            # shared helpers bin/ scripts import
   test/                           # self-test suite (bash + node, no docker) — test/run.sh runs all of it
   docs/                           # verdict contract, lessons model, eval-gate, otel notes
+tools/ship-flow/                  # delivery-loop skills — see the plugin's own skills/ for docs
+tools/loop-memory/
+  .claude-plugin/plugin.json      # this plugin's manifest — defaultEnabled:false, userConfig schema
+  hooks/                          # SessionStart (graduate) + UserPromptSubmit (recall), plus hooks.json
+  src/                            # TypeScript source (drizzle schema, CLI, embedder seam)
+  dist/cli.js                     # committed, dependency-free esbuild bundle — what hooks actually run
+  drizzle/                        # pgvector schema migrations
+  docker-compose.yml, docker/     # dev-only pgvector Postgres for local development/tests
+  test/                           # vitest unit + docker-gated integration tests
 ```
 
 `tools/loop-engine` (not `plugins/loop-engine`) is not a style choice — this plugin was extracted
@@ -198,13 +270,15 @@ path stayed.
 
 ## Development status
 
-- **Sanitized, not yet public.** M0 removed everything that only made sense inside the origin
-  monorepo: one hook with an external import, tests that assert on that repo's own CI/hook wiring,
-  and a fixture file that carried real (if scrubbed-of-secrets) PR titles and file paths from a
-  production codebase. What's left runs standalone — `tools/loop-engine/test/run.sh` is 15/15 green
-  with nothing outside this repo.
+- **Public.** M0 removed everything that only made sense inside the origin monorepo: one hook with
+  an external import, tests that assert on that repo's own CI/hook wiring, and a fixture file that
+  carried real (if scrubbed-of-secrets) PR titles and file paths from a production codebase. What's
+  left runs standalone — `tools/loop-engine/test/run.sh` is 15/15 green with nothing outside this
+  repo. The repository itself flipped private → public in M1.
 - CI (`.github/workflows/`) runs `gitleaks` and the self-test suite + `claude plugin validate
-  --strict` on every push to `main`.
+  --strict` on every push to `main` for `loop-engine`; `loop-memory` has its own workflow (unit
+  tests + manifest validation — the docker-gated integration suite is a local/manual check, not a
+  required CI gate, the same restraint the plugin's origin repo applies to its own equivalent).
 - **Versioning: explicit semver, not a floating SHA channel.** Claude Code's own version-resolution
   order (see [Plugins reference § Version management](https://code.claude.com/docs/en/plugins-reference#version-management))
   falls back to "update whenever the resolved commit changes" only when `version` is omitted from
@@ -220,16 +294,17 @@ path stayed.
 - **M0 (done)** — private scaffold: secrets/PII sweep, gitleaks CI, `loop-engine` bin + tests
   migrated unmodified, `claude plugin validate --strict` green, one dogfooded `verdict-run` via
   `--plugin-dir`.
-- **M1 (current)** — public release of `loop-engine`: English docs for the remaining Korean-language
+- **M1 (done)** — public release of `loop-engine`: English docs for the remaining Korean-language
   prose in `docs/` (done), `classify-risk`'s rule table externalized so a consumer can supply their
   own via `--rules`/`CLASSIFY_RISK_RULES`/a `risk-rules.json` at their repo root (done), repository
-  flips private → public on explicit semver (see [Development status](#development-status) for why
+  flipped private → public on explicit semver (see [Development status](#development-status) for why
   not a SHA channel).
-- **M2** — `ship-flow` (the delivery-loop skill stack) + `templates/` (constitution-layer templates
-  a setup skill wires into a consuming repo — a plugin's root `CLAUDE.md` is not loaded as project
-  context by Claude Code, so this can't just be a file sitting in the plugin).
-- **M3 (optional)** — `loop-memory` (pgvector semantic lesson recall, opt-in / `defaultEnabled:
-  false`) and a submission to `anthropics/claude-plugins-community`.
+- **M2 (done)** — `ship-flow` (the delivery-loop skill stack) + `templates/` (constitution-layer
+  templates a setup skill wires into a consuming repo — a plugin's root `CLAUDE.md` is not loaded as
+  project context by Claude Code, so this can't just be a file sitting in the plugin).
+- **M3 (in progress, optional)** — `loop-memory` (pgvector semantic lesson recall, opt-in /
+  `defaultEnabled: false` — scaffold done, this section documents it) and a submission to
+  `anthropics/claude-plugins-community` (still open — a human decision, not made in this repo).
 
 ## License
 

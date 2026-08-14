@@ -1,0 +1,76 @@
+name: loop-memory test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/loop-memory/**"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/loop-memory-test.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/loop-memory/**"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/loop-memory-test.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/loop-memory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install dependencies
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      # Unit tests only (no docker) — the vitest.config.ts default excludes *.integration.test.ts.
+      # The docker-gated integration suite (test:integration) is a local/manual check here, the same
+      # restraint the plugin's origin repo applies to its own equivalent (not a required CI gate).
+      - name: unit tests
+        run: npm test
+      - name: build (dependency-free bundle)
+        run: npm run build
+      # dist/cli.js — not src/cli.ts — is what the shipped hooks actually run at runtime (no
+      # node_modules on the end-user machine), but nothing above exercises it. A stub-embedder
+      # fail-closed gate check doesn't need a live DB/API key, so it doubles as a bundle
+      # completeness smoke test (a broken bundle would crash on MODULE_NOT_FOUND before ever
+      # reaching this message, not just exit non-zero for the expected reason).
+      - name: smoke-test the built bundle (no DB/API key needed)
+        run: |
+          set +e
+          OPENAI_API_KEY= GEMINI_API_KEY= node dist/cli.js recall --query test 2>&1 | tee /tmp/bundle-smoke.log
+          cli_exit=${PIPESTATUS[0]}
+          set -e
+          test "$cli_exit" -eq 1
+          grep -q "no embedding API key" /tmp/bundle-smoke.log
+      # hooks/*.mjs ship as plain JS, unrun by the vitest suite (that only exercises src/*.ts) and
+      # unchecked by `claude plugin validate` (manifest schema only, not hook script content) — a
+      # syntax error here would otherwise merge green.
+      - name: syntax-check hooks
+        run: node --check hooks/graduate-lessons.mjs && node --check hooks/recall-lessons.mjs
+      # Both hooks' fail-open no-op path (no embedding key configured) needs no docker/API key and
+      # is the one path every install exercises by default — assert it directly against the real
+      # hook processes rather than only trusting their internal logic by inspection.
+      - name: smoke-test hook fail-open no-op path
+        run: |
+          set -e
+          out_g=$(env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/graduate-lessons.mjs; echo "exit=$?")
+          echo "$out_g" | grep -q "^exit=0$"
+          out_r=$(echo '{"user_input":"anything at least eight chars"}' | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/recall-lessons.mjs; echo "|exit=$?")
+          echo "$out_r" | grep -q "|exit=0$"
+          # stdout before the exit marker must be empty — UserPromptSubmit must never inject noise
+          # when there's no key configured.
+          stdout_only=$(echo '{"user_input":"anything at least eight chars"}' | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/recall-lessons.mjs)
+          test -z "$stdout_only"
+      - name: validate plugin + marketplace manifests
+        working-directory: .
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate --strict .
+          claude plugin validate --strict tools/loop-memory

@@ -21,6 +21,14 @@
       "description": "Delivery-loop skills — ship-feature (plan-to-PR autonomous loop), hotfix, retrospect, grill-with-docs, deps-audit, to-issues/to-prd, tdd, harness-maturity-audit, improve-codebase-architecture, resolving-merge-conflicts, plus review agents and audit/research workflows — parameterized by a consuming repo's own tracker/branch-model config instead of hardcoded to one repo. dependencies: loop-engine.",
       "version": "0.1.0",
       "keywords": ["delivery", "git-flow", "hotfix", "ship", "release"]
+    },
+    {
+      "name": "loop-memory",
+      "source": "./tools/loop-memory",
+      "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in / defaultEnabled:false — a database dependency, not core loop mechanics.",
+      "version": "0.1.0",
+      "defaultEnabled": false,
+      "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"]
     }
   ]
 }

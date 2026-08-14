@@ -1,0 +1,1 @@
+ALTER TABLE "memory_note" ADD COLUMN "provenance" text;
