@@ -62,6 +62,18 @@
       "title": "Design-spec directory (optional knowledge source)",
       "description": "Repo-relative path to a directory of markdown design-spec docs, chunked by `##` section. Leave unset to skip.",
       "required": false
+    },
+    "loop_recall_max_distance": {
+      "type": "number",
+      "title": "Lessons recall distance cutoff",
+      "description": "Cosine distance (0=identical..2=opposite) above which a lesson hit is dropped instead of injected. Embedder-dependent — calibrate for your provider. Default (if unset): 0.65, a loose safety net.",
+      "required": false
+    },
+    "loop_knowledge_max_distance": {
+      "type": "number",
+      "title": "Knowledge recall distance cutoff",
+      "description": "Same as loop_recall_max_distance, but for the knowledge corpus (ADR/glossary/research/design) — kept separate since knowledge prose has a different embedding distribution than short lesson signatures. Default (if unset): 0.65.",
+      "required": false
     }
   },
   "hooks": "./hooks/hooks.json"

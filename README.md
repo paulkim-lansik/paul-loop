@@ -188,6 +188,7 @@ interactively via `/plugin configure loop-memory@paul-loop`:
 | `loop_database_url` | no | Defaults to `postgresql://postgres:postgres@localhost:5434/loop_memory` — this plugin's `docker-compose.yml` matches that default (`docker compose up -d --wait` from `tools/loop-memory/`). |
 | `loop_memory_signing_key` | no | HMAC-SHA256 secret. Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing) — see "Threat model" below. `sensitive: true`. |
 | `loop_adr_dir` / `loop_context_file` / `loop_research_dir` / `loop_design_dir` | no | Optional *knowledge* corpus sources (separate from lessons) — a directory of `# ADR-NNNN: Title`-headed decision docs, a single `**Term**:`-chunked glossary file, and two `##`-section-chunked doc directories, respectively. Unset = that source is skipped entirely; nothing is assumed about your repo's docs unless you point at them. |
+| `loop_recall_max_distance` / `loop_knowledge_max_distance` | no | Cosine-distance cutoffs (0=identical..2=opposite) for the lessons and knowledge corpora respectively — a hit farther than this is dropped instead of injected. **Embedder-dependent**, calibrate for your provider/corpus; the code default (0.65) is a loose safety net if left unset. |
 
 ### Threat model — write-path provenance
 
