@@ -15,7 +15,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$RECV" ] || fail "otel-receiver.mjs not found at $RECV"
 [ -f "$METRICS" ] || fail "otel-metrics.mjs not found at $METRICS"
 
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 RECVPID=""
 trap '[ -n "$RECVPID" ] && kill "$RECVPID" 2>/dev/null; rm -rf "$TMP"' EXIT
 

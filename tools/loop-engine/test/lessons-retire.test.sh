@@ -15,7 +15,7 @@ LESSONS="$ROOT/tools/loop-engine/bin/lessons.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$LESSONS" ] || fail "lessons.mjs not found at $LESSONS"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 L() { node "$LESSONS" "$@" --lessons "$DIR"; }
 
@@ -77,7 +77,7 @@ printf '%s' "$SOUT3" | grep -q "open_candidates=1" || fail "rejected lesson must
 TSX="$ROOT/packages/loop-memory/node_modules/.bin/tsx"
 LESSONS_TS="$ROOT/packages/loop-memory/src/lessons.ts"
 if [ -x "$TSX" ] && [ -f "$LESSONS_TS" ]; then
-  BAC580_DIR="$(mktemp -d)"
+  BAC580_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
   BAC580_LESSONS_DIR="$BAC580_DIR/lessons"
   mkdir -p "$BAC580_LESSONS_DIR"
   BAC580_PROBE="$BAC580_DIR/probe.mjs"

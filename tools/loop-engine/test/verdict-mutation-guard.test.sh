@@ -10,7 +10,7 @@ VR="$HERE/../bin/verdict-run.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$VR" ] || fail "verdict-run.sh not executable at $VR"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 
 mkrepo() {
