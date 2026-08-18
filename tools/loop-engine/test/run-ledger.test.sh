@@ -17,7 +17,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$LIB" ] || fail "run-ledger.mjs not found at $LIB"
 [ -f "$APPEND" ] || fail "ledger-append.mjs not found at $APPEND"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'chmod -R u+w "$DIR" 2>/dev/null; rm -rf "$DIR"' EXIT
 
 append_evt() { # $1=root $2=args-json

@@ -14,7 +14,7 @@ LESSONS="$ROOT/tools/loop-engine/bin/lessons.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$LESSONS" ] || fail "lessons.mjs not found at $LESSONS"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 L() { node "$LESSONS" "$@" --lessons "$DIR"; }
 

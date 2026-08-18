@@ -17,7 +17,7 @@ LESSONS="$ROOT/tools/loop-engine/bin/lessons.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$S" ] || fail "sanitize.mjs not found at $S"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
 # T1: blocklist 키 낙하 — 값은 마커로 치환, 비민감 키는 보존. 케이스/구분자 변형(api_key/API-KEY)도 매치.

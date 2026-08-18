@@ -147,7 +147,7 @@ now_ms() {
 # git 명령이 하나라도 실패하면(unborn HEAD·index.lock 경합 등) rc!=0 — 호출부가 fail-closed
 # 처리한다(무음 강등 금지: status-only로 조용히 좁아지는 fail-open 차단).
 workspace_digest() {
-  _t="$(mktemp)" || return 1
+  _t="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || return 1
   {
     git rev-parse HEAD \
       && git status --porcelain=v1 -z \

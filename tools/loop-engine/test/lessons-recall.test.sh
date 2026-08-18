@@ -20,14 +20,14 @@ LESSONS="$ROOT/tools/loop-engine/bin/lessons.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$LESSONS" ] || fail "lessons.mjs not found at $LESSONS"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
 node "$LESSONS" record --signature "FAIL: widget exploded at boot" --verified --fix "reboot the widget" --title "widget boot fix" --lessons "$DIR" >/dev/null \
   || fail "record failed"
 
 # 1) HIT: stdout has the lesson, stderr is silent (no noise on the success path).
-OUT="$(mktemp)"; ERR="$(mktemp)"
+OUT="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
 node "$LESSONS" recall --signature "FAIL: widget exploded at boot" --lessons "$DIR" >"$OUT" 2>"$ERR"
 rc=$?
 [ "$rc" = "0" ] || fail "recall hit must exit 0; got rc=$rc"
@@ -37,7 +37,7 @@ rm -f "$OUT" "$ERR"
 
 # 2) MISS (no lesson for this signature): stdout empty + exit 0 (unchanged contract), stderr has the
 #    normalized signature key + a semantic-recall routing hint (ADR-0062).
-OUT="$(mktemp)"; ERR="$(mktemp)"
+OUT="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
 node "$LESSONS" recall --signature "FAIL: gadget fizzled at shutdown" --lessons "$DIR" >"$OUT" 2>"$ERR"
 rc=$?
 [ "$rc" = "0" ] || fail "recall miss must still exit 0; got rc=$rc"
@@ -48,7 +48,7 @@ rm -f "$OUT" "$ERR"
 
 # 3) MISS via --category mismatch: same silent-stdout/exit-0 contract, stderr names the key + mismatch —
 #    but NOT the semantic-recall hint (the signature DID match; this isn't the "wrong store" case above).
-OUT="$(mktemp)"; ERR="$(mktemp)"
+OUT="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
 node "$LESSONS" recall --signature "FAIL: widget exploded at boot" --category domain --lessons "$DIR" >"$OUT" 2>"$ERR"
 rc=$?
 [ "$rc" = "0" ] || fail "recall category-miss must exit 0; got rc=$rc"

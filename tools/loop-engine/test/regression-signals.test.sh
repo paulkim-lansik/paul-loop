@@ -16,7 +16,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$SIGNALS" ] || fail "regression-signals.mjs not found at $SIGNALS"
 [ -f "$LESSONS" ] || fail "lessons.mjs not found at $LESSONS"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
 # ── T1) PASS 후 FAIL (한 게이트) → 회귀 1건, 필드 정확, 텍스트 REGRESSION 줄 ────────────────

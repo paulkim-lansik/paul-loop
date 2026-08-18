@@ -14,7 +14,7 @@ BUDGET="$ROOT/tools/loop-engine/bin/context-budget.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$BUDGET" ] || fail "context-budget.mjs not found at $BUDGET"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 MOCK_PID=""
 trap 'if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null; wait "$MOCK_PID" 2>/dev/null; fi; rm -rf "$DIR"' EXIT
 

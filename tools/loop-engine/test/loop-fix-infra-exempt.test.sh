@@ -9,7 +9,7 @@ LOOPFIX="$HERE/../bin/loop-fix.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$LOOPFIX" ] || fail "loop-fix.sh not executable at $LOOPFIX"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── case 1: 인프라 실패 2회 → 3회차 PASS. --max-iter 1이어도 면제 재시도로 성공해야 한다 ────

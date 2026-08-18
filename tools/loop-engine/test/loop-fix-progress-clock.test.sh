@@ -10,7 +10,7 @@ LOOPFIX="$HERE/../bin/loop-fix.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$LOOPFIX" ] || fail "loop-fix.sh not executable at $LOOPFIX"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── case 1: 원장 이상(파손 current 포인터 → unknown 강등 + 원장 부재) + hung verify →

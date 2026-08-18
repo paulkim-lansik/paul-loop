@@ -21,7 +21,7 @@ CR="$ROOT/tools/loop-engine/bin/classify-risk.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$CR" ] || fail "classify-risk.mjs not found at $CR"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
 # ── 1) no rules anywhere → ordinary small changeset is the app-code-low-risk baseline (AUTO) ────

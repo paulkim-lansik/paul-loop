@@ -15,7 +15,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$METRICS" ] || fail "run-metrics.mjs not found at $METRICS"
 [ -f "$SURFACES" ] || fail "boundary-surfaces.mjs not found at $SURFACES"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
 # ── 0) 제외 목록이 코드에 명시 — merge/deploy/send 전부 + 판정 함수 행위 ────────────────────

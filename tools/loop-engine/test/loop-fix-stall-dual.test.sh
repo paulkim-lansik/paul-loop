@@ -10,7 +10,7 @@ LOOPFIX="$HERE/../bin/loop-fix.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$LOOPFIX" ] || fail "loop-fix.sh not executable at $LOOPFIX"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── case 1: FAIL 문구 동결 + 카운트 전진 → stall하면 안 된다(조기 포기 오탐) ────────────────

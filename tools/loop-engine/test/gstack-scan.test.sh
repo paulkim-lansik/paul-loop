@@ -22,7 +22,7 @@ SCAN="$ROOT/tools/loop-engine/bin/gstack-scan.mjs"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$SCAN" ] || fail "gstack-scan.mjs not found at $SCAN"
 
-DIR="$(mktemp -d)"
+DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 LESSONS="$DIR/lessons"
 FIXTURE="$DIR/learnings.jsonl"

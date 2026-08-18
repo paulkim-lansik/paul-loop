@@ -17,7 +17,7 @@ LOOPFIX="$HERE/../bin/loop-fix.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$LOOPFIX" ] || fail "loop-fix.sh not executable at $LOOPFIX"
 
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK" || fail "cannot cd into work dir"
 mkdir -p .loop
