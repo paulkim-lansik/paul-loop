@@ -100,6 +100,14 @@ plugin-standard tooling for it, and a repo without such a tool can skip this sec
   or a heartbeat-style "promotion candidate" nudge if this repo has one). This is the terminal gate that
   keeps the candidate pool from growing monotonically. Fail closed: only a verified + `challenge
   --verdict accept`ed lesson can retire; a content change later re-opens it for fresh review.
+- `node tools/plugin-path.mjs exec bin/lessons.sh invalidate --id <id> --reason "<why>" [--superseded-by <id2>] --lessons <dir>`
+  (if this repo's lessons tooling has it) — mark a lesson WRONG (the lesson itself was mistaken), distinct
+  from `retire` (the lesson was right but is now codified). An invalidated lesson is excluded, fail
+  closed, from recall and from the promote listing/`--codify` going forward.
+- `node tools/plugin-path.mjs exec bin/lessons.sh mark-clean --gate "<verify cmd>" --lessons <dir>` (if
+  available) — bump a clean-pass counter on lessons attributed to that gate; a fresh recurrence resets it
+  to 0. `promote`'s listing flags a lesson crossing the clean-pass threshold as a `RETIREMENT CANDIDATE`
+  comment — informational only, never an auto-retire/invalidate.
 
 ### Destination checklist — SKILL.md or CLAUDE.md?
 
@@ -180,8 +188,12 @@ own doesn't reopen them. A reopen request must:
 
 - **Cite the id.** Name the exact lesson id (or ADR number) under discussion — a vague appeal to "that
   decision" doesn't identify a target.
-- **Bring new evidence.** Something the original verdict didn't have: a fresh recurrence, a new failure
-  signature, a verified counterexample. "On reflection..." with no new signal isn't evidence.
+- **Bring new evidence.** Something the original verdict didn't have: a new failure signature, a
+  verified counterexample, or a recurrence recorded with a genuinely updated `--fix`/`--title` — not
+  just a repeat of the same text. `lessons record` only clears a settled `challenge`/`retired` when the
+  fix/title content actually changes; re-recording the identical text just bumps the count and leaves
+  the old verdict standing, so a plain recurrence by itself is not reopening evidence. "On
+  reflection..." with no new signal isn't evidence.
 - **Not overwrite the record.** Don't edit the retired/rejected entry's fields in place — that erases the
   audit trail. Open a fresh lesson/challenge cycle instead, or (if this repo's lessons tooling has an
   `invalidate --superseded-by` command) link the old id forward to the new one; otherwise reference the
@@ -189,7 +201,9 @@ own doesn't reopen them. A reopen request must:
   that references the old one, not a rewrite of it.
 
 A reopen missing an id or missing new evidence is an automatic reject in the skeptical pass — the same
-challenge gate as any promotion candidate.
+challenge gate as any promotion candidate. Verify it actually landed, too: after recording the new
+evidence, run `lessons stats`/`lessons promote` and confirm the id is back among the open candidates —
+don't take the act of re-recording alone as proof the lesson reopened.
 
 ## Reporting
 
