@@ -271,5 +271,41 @@ printf '%s' "$STATE_CONTENT_R3" | grep -q '"verdict":"PASS"' && fail "(r3): the 
 printf '%s' "$STATE_CONTENT_R3" | grep -q '"verdict":"FAIL"' || fail "(r3): expected verdict-state.json to be corrected to FAIL by the trap, got: $STATE_CONTENT_R3"
 
 cd "$ORIG_PWD" || true
-echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync via an EXIT trap covering early-exit paths too (not last-writer-wins, not just the normal-completion path, and now armed BEFORE argument parsing itself), --log-dir/LOOP_DIR coupling (isolated verdict-state.json per --log-dir), case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning (both colon-containing and colon-omitted typos)"
+
+# ==== (s) FIX round-5 regression: --log-dir's LOG_DIR/LOOP_DIR coupling must be applied INLINE the
+# instant --log-dir itself is parsed, not deferred to a step after the whole argument-parsing loop
+# finishes. Pre-fix, a LATER usage error in the same invocation (after a non-default --log-dir had
+# already been parsed) exited before that deferred coupling step ran, so the EXIT trap's corrective
+# sync silently targeted the unrelated default `.loop/` instead of the just-parsed --log-dir target
+# — the exact stale/wrong-target failure mode every prior round exists to prevent, just relocated
+# to a value that had been parsed but not yet "applied". (s1) proves the target directory a
+# non-default --log-dir names is the one that actually gets corrected, even when a later argument
+# in the same command line errors out — not the unrelated default. (s2) proves a flag-shaped
+# --log-dir value (a plausible operator slip: forgetting the directory and typing another flag
+# right after --log-dir) is now rejected up front with a clear error, instead of being silently
+# accepted and failing opaquely later inside mkdir/verdict-run.sh's own state write. ====
+SUB_S="$DIR/s"; mkdir -p "$SUB_S"; cd "$SUB_S" || fail "cd s"
+printf -- '- AC: seed pass | verify: true\n' > plan.md
+
+# ---- (s1) non-default --log-dir + a later bad flag must correct THAT target, not the default ----
+rm -rf custom-dir .loop
+run_ac_verify plan.md custom-dir >/dev/null 2>&1; SEED_CODE_S1=$?
+[ "$SEED_CODE_S1" -eq 0 ] || fail "(s1): seed run expected exit 0, got $SEED_CODE_S1"
+CUSTOM_STATE_S1="custom-dir/verdict-state.json"
+grep -q '"verdict":"PASS"' "$CUSTOM_STATE_S1" || fail "(s1): expected the seed run to leave custom-dir/verdict-state.json at PASS, got: $(cat "$CUSTOM_STATE_S1" 2>&1)"
+OUT_S1="$(env -u LOOP_DIR "$AC_VERIFY" plan.md --log-dir custom-dir --bogus-flag 2>&1)"; CODE_S1=$?
+[ "$CODE_S1" -eq 2 ] || fail "(s1): expected exit 2 (bogus flag after --log-dir), got $CODE_S1: $OUT_S1"
+[ -f "$CUSTOM_STATE_S1" ] || fail "(s1): expected custom-dir/verdict-state.json to still exist"
+STATE_CONTENT_S1="$(cat "$CUSTOM_STATE_S1")"
+printf '%s' "$STATE_CONTENT_S1" | grep -q '"verdict":"PASS"' && fail "(s1): the seeded PASS in custom-dir must NOT survive a later usage error in the same invocation (LOG_DIR/LOOP_DIR coupling must already be applied the instant --log-dir was parsed, before the later bad flag was even reached), got: $STATE_CONTENT_S1"
+printf '%s' "$STATE_CONTENT_S1" | grep -q '"verdict":"FAIL"' || fail "(s1): expected custom-dir/verdict-state.json to be corrected to FAIL, got: $STATE_CONTENT_S1"
+[ -f ".loop/verdict-state.json" ] && fail "(s1): the unrelated default .loop/verdict-state.json must not be created/touched by a run that named a different --log-dir target"
+
+# ---- (s2) a flag-shaped --log-dir value must be rejected up front, not silently accepted ----
+OUT_S2="$(env -u LOOP_DIR "$AC_VERIFY" plan.md --log-dir --weird 2>&1)"; CODE_S2=$?
+[ "$CODE_S2" -eq 2 ] || fail "(s2): expected exit 2 (flag-shaped --log-dir value), got $CODE_S2: $OUT_S2"
+printf '%s' "$OUT_S2" | grep -qi 'requires a directory path' || fail "(s2): expected a clear error naming --log-dir's value as flag-shaped, got: $OUT_S2"
+
+cd "$ORIG_PWD" || true
+echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync via an EXIT trap covering early-exit paths too (not last-writer-wins, not just the normal-completion path, and now armed BEFORE argument parsing itself), --log-dir/LOOP_DIR coupling applied inline the instant --log-dir is parsed (isolated verdict-state.json per --log-dir, correct even when a later argument errors), flag-shaped --log-dir values rejected up front, case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning (both colon-containing and colon-omitted typos)"
 exit 0
