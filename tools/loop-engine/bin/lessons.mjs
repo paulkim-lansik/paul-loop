@@ -19,7 +19,7 @@
 //
 // Commands:
 //   lessons record  --signature-file <verdict.txt> | --signature "<text>"
-//                   [--fix "<what fixed it>"] [--title "<t>"] [--source loop-fix|eval-gate|diagnose|review|manual]
+//                   [--fix "<what fixed it>"] [--title "<t>"] [--source loop-fix|loop-fix-fail|eval-gate|diagnose|review|manual]
 //                   [--category engineering|domain] [--iterations N] [--verified] [--gate "<verify cmd>"] [--lessons <dir>]
 //                   --gate attributes this recurrence to a verify gate (BAC-631). Both this key and the
 //                   ledger's payload.cmd are normalized through lib/regression-signals normalizeGateKey
