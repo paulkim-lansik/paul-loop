@@ -66,9 +66,9 @@ node -e '
 ' "$JSON" || fail "T1b gate-key normalization wrong"
 # record --gate도 같은 정규화를 거쳐 교차 참조 키가 일치해야 한다(lessons 쪽 표면).
 LDIRN="$DIR/lessons-norm"
-node "$LESSONS" record --signature "FAIL: norm cross-ref" --verified --gate "sh -c pnpm verify" --lessons "$LDIRN" >/dev/null || fail "T1b record --gate failed"
-node "$LESSONS" record --signature "FAIL: norm cross-ref" --verified --lessons "$LDIRN" >/dev/null
-node "$LESSONS" record --signature "FAIL: norm cross-ref" --verified --lessons "$LDIRN" >/dev/null
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --gate "sh -c pnpm verify" --lessons "$LDIRN" >/dev/null || fail "T1b record --gate failed"
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --lessons "$LDIRN" >/dev/null
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --lessons "$LDIRN" >/dev/null
 PNORM="$(node "$LESSONS" promote --runs "$N" --lessons "$LDIRN" 2>/dev/null)" || fail "T1b promote --runs must exit 0"
 printf '%s' "$PNORM" | grep -q "\[REGRESSION: pnpm verify PASS→FAIL" || fail "T1b record --gate 'sh -c pnpm verify' must cross-reference the normalized gate, got: $PNORM"
 echo "PASS: T1b gate identity converges across call paths (sh -c wrapper normalized, both surfaces)"
@@ -225,7 +225,7 @@ echo "PASS: T6 missing/empty runs dir is handled without crash, exit 0"
 # ── T7) lessons record --gate ×3 → promote --runs: [3×] 카운트와 [REGRESSION:] 줄이 구분 병기 ─
 LDIR="$DIR/lessons7"
 for i in 1 2 3; do
-  node "$LESSONS" record --signature "FAIL: rls policy missing on tenant table" --verified \
+  node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: rls policy missing on tenant table") --verified \
     --fix "add pgPolicy + FORCE" --title "rls policy fix" --gate "pnpm verify" --lessons "$LDIR" >/dev/null \
     || fail "T7 record #$i failed"
 done
@@ -259,7 +259,7 @@ cat > "$LDIR8/0123456789abcdef.json" <<'EOF'
 EOF
 SOUT="$(node "$LESSONS" stats --lessons "$LDIR8")" || fail "T8 stats on legacy lesson must exit 0"
 printf '%s' "$SOUT" | grep -q "total=1 verified=1" || fail "T8 stats must read the legacy lesson, got: $SOUT"
-node "$LESSONS" record --signature "FAIL: fresh failure" --verified --lessons "$LDIR8" >/dev/null || fail "T8 record without --gate must work"
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: fresh failure") --verified --lessons "$LDIR8" >/dev/null || fail "T8 record without --gate must work"
 ROUT="$(node "$LESSONS" recall --signature "FAIL: fresh failure" --lessons "$LDIR8" 2>/dev/null)" || fail "T8 recall must exit 0"
 printf '%s' "$ROUT" | grep -q "Past lesson" || fail "T8 recall must behave as before, got: $ROUT"
 POUT8="$(node "$LESSONS" promote --runs "$A" --lessons "$LDIR8" 2>/dev/null)" || fail "T8 promote --runs must exit 0"
@@ -293,14 +293,14 @@ cat > "$P/runP.jsonl" <<'EOF'
 EOF
 LDIRP="$DIR/lessons-proto"
 for i in 1 2 3; do
-  node "$LESSONS" record --signature "FAIL: no gate attribution here" --verified --lessons "$LDIRP" >/dev/null || fail "T11 record #$i failed"
+  node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: no gate attribution here") --verified --lessons "$LDIRP" >/dev/null || fail "T11 record #$i failed"
 done
 POUTP="$(node "$LESSONS" promote --runs "$P" --lessons "$LDIRP" 2>/dev/null)" || fail "T11 promote --runs must exit 0"
 printf '%s' "$POUTP" | grep -q "\[REGRESSION: constructor" && fail "T11 candidate WITHOUT gate_history must never get a per-candidate line via the prototype chain, got: $POUTP"
 printf '%s' "$POUTP" | grep -q "REGRESSION: constructor" || fail "T11 the independent section must still surface the forged-name regression, got: $POUTP"
 # record --gate "__proto__"의 일반 대입은 프로토타입 세터를 타 무음 유실된다 — own property로 남아야 한다.
-node "$LESSONS" record --signature "FAIL: proto gate lesson" --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #1 failed"
-node "$LESSONS" record --signature "FAIL: proto gate lesson" --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #2 failed"
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: proto gate lesson") --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #1 failed"
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: proto gate lesson") --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #2 failed"
 node -e '
   const { readdirSync, readFileSync } = require("node:fs");
   const dir = process.argv[1];

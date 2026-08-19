@@ -107,5 +107,40 @@ f2="$(ls lessons/*.json)"
 grep -q '"count": 2' "$f2" || fail "case5: expected count to increase to 2 after later PASS convergence"
 grep -q '"verified": true' "$f2" || fail "case5: expected verified to flip true after later PASS convergence"
 
-echo "PASS: FAIL-channel lessons recorded on STALLED/MAX-ITER, withheld on INFRA/PROTECTED-VIOLATION, merged on later convergence"
+# ── case 6: BUDGET로 끝나는 실행 → unverified fail-channel lesson 기록 ─────────────────────
+C="$WORK/c6"; mkdir -p "$C"; cd "$C" || fail "cd c6"
+cat > fake-verify.sh <<'EOF'
+#!/bin/sh
+sleep 1
+echo "FAILED src/example.test.ts > budget fail-channel test"
+exit 1
+EOF
+# sleep 1 이 iter1에서 이미 --budget-sec 1을 넘겨 STALLED보다 먼저 BUDGET으로 끊긴다
+# (infra-exempt.test.sh case 7과 같은 패턴).
+"$LOOPFIX" --verify 'sh fake-verify.sh' --fix ':' --budget-sec 1 --max-iter 10 --lessons lessons >/dev/null 2>&1
+code=$?
+[ "$code" -eq 1 ] || fail "case6: expected exit 1 via BUDGET, got $code"
+grep -q "done: BUDGET" .loop/history.log || fail "case6: expected the loop to hit BUDGET"
+[ "$(lessons_file_count lessons)" -eq 1 ] || fail "case6: expected exactly 1 lesson file recorded"
+f="$(ls lessons/*.json)"
+grep -q '"source": "loop-fix-fail"' "$f" || fail "case6: expected source=loop-fix-fail"
+grep -q '"verified": false' "$f" || fail "case6: expected verified=false (never converged)"
+
+# ── case 7: --fix 없는 verify-only 모드 — 첫 FAIL에서 즉시 중단 → unverified lesson 기록 ────
+C="$WORK/c7"; mkdir -p "$C"; cd "$C" || fail "cd c7"
+cat > fake-verify.sh <<'EOF'
+#!/bin/sh
+echo "FAILED src/example.test.ts > verify-only fail-channel test"
+exit 1
+EOF
+"$LOOPFIX" --verify 'sh fake-verify.sh' --lessons lessons >/dev/null 2>&1
+code=$?
+[ "$code" -eq 1 ] || fail "case7: expected exit 1 via verify-only FAIL, got $code"
+grep -q "done: FAIL (verify-only)" .loop/history.log || fail "case7: expected verify-only FAIL marker"
+[ "$(lessons_file_count lessons)" -eq 1 ] || fail "case7: expected exactly 1 lesson file recorded"
+f="$(ls lessons/*.json)"
+grep -q '"source": "loop-fix-fail"' "$f" || fail "case7: expected source=loop-fix-fail"
+grep -q '"verified": false' "$f" || fail "case7: expected verified=false (never converged)"
+
+echo "PASS: FAIL-channel lessons recorded on STALLED/MAX-ITER/BUDGET/verify-only-FAIL, withheld on INFRA/PROTECTED-VIOLATION, merged on later convergence"
 exit 0

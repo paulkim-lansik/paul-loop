@@ -380,10 +380,18 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
 
   if [ "$vcode" -eq 0 ]; then
     log "iter $iter: PASS — stopping (success)."
+    # mark-clean wiring (issue #9): bump clean_pass_count on every lesson tied to this gate BEFORE
+    # record — record's existing-lesson merge path resets clean_pass_count to 0 for the lesson that
+    # just recurred THIS run (if FIRST_VERDICT was captured), so that lesson is never miscounted as
+    # a clean pass. Runs whenever --lessons is set, independent of FIRST_VERDICT — a fully clean pass
+    # (no failure this run) has no FIRST_VERDICT but must still bump every lesson on this gate.
+    if [ -n "$LESSONS" ] && [ -x "$LESSONS_BIN" ]; then
+      "$LESSONS_BIN" mark-clean --gate "$VERIFY" --lessons "$LESSONS" >/dev/null 2>&1
+    fi
     # Phase 3: record a VERIFIED lesson — ground truth (the verifier) confirmed this fix worked.
     if [ -n "$LESSONS" ] && [ -s "$FIRST_VERDICT" ] && [ -x "$LESSONS_BIN" ]; then
       "$LESSONS_BIN" record --signature-file "$FIRST_VERDICT" --source loop-fix \
-        --iterations "$iter" --verified --lessons "$LESSONS" >/dev/null 2>&1 \
+        --iterations "$iter" --verified --gate "$VERIFY" --lessons "$LESSONS" >/dev/null 2>&1 \
         && log "recorded a verified lesson to memory ($LESSONS)"
     fi
     log "=== loop-fix done: SUCCESS in $iter iteration(s) ==="

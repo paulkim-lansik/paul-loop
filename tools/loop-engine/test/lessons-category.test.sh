@@ -19,14 +19,14 @@ trap 'rm -rf "$DIR"' EXIT
 L() { node "$LESSONS" "$@" --lessons "$DIR"; }
 
 # 1) record with no --category defaults to engineering.
-L record --signature "FAIL: flaky ci runner timed out" --verified --title "ci timeout" >/dev/null \
+L record --signature-file <(printf '%s\n' "FAIL: flaky ci runner timed out") --verified --title "ci timeout" >/dev/null \
   || fail "record (no category) failed"
 ID1="$(L promote --min-count 1 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)"
 [ -n "$ID1" ] || fail "could not extract lesson id (no-category record)"
 grep -q '"category": "engineering"' "$DIR/$ID1.json" || fail "default category must be 'engineering': $(cat "$DIR/$ID1.json")"
 
 # 2) record with --category domain sets it on creation.
-L record --signature "FAIL: dose calculation off by one unit" --verified --title "dose calc" --category domain >/dev/null \
+L record --signature-file <(printf '%s\n' "FAIL: dose calculation off by one unit") --verified --title "dose calc" --category domain >/dev/null \
   || fail "record --category domain failed"
 ID2="$(L promote --min-count 1 2>/dev/null | grep -oE '[0-9a-f]{16}' | grep -v "^$ID1$" | head -1)"
 [ -n "$ID2" ] || fail "could not extract lesson id (domain record)"

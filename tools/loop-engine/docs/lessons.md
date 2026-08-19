@@ -36,6 +36,9 @@ same lesson. File-per-lesson is git-diffable and merge-friendly.
 { "id": "<sig>", "title": "...", "fix": "...", "source": "loop-fix", "category": "engineering",
   "verified": true, "count": 3, "iterations": [2,1,3],
   "gate_history": { "pnpm verify": { "count": 2, "first_seen": "...", "last_seen": "..." } },
+  "clean_pass_count": 0,
+  "challenge": null, "retired": null,
+  "invalid_at": "", "invalid_reason": "", "superseded_by": "", "invalidated_by": "",
   "first_seen": "...", "last_seen": "..." }
 ```
 
@@ -47,6 +50,23 @@ normalized gate command (same rule as the runs ledger's `payload.cmd`). Missing/
 coerce to `{}` on read — same read-time-default precedent as `category`, no migration. PASS history
 is NOT copied here; the `.loop/runs` ledger stays the SSOT.
 
+`clean_pass_count` (issue #9) is an exit-code-derived counter: `mark-clean --gate <cmd>` bumps it on
+every lesson attributed to that gate (via `gate_history`) that is neither invalidated nor retired —
+"how many times this gate has passed CLEANLY since this lesson's fix was last needed." `record`'s
+fail-recurrence path (an existing lesson matched again) resets it to 0 — a recurrence is evidence the
+lesson is NOT yet stable. `loop-fix.sh` calls `mark-clean` on every PASS (before `record`, so a lesson
+that just recurred THIS run is not miscounted as clean), whether or not this run ever failed. Missing/
+corrupt coerces to `0` on read — same read-time-default precedent as `category`/`gate_history`.
+`promote`'s listing annotates candidates crossing an informational `CLEAN_RETIRE_THRESHOLD` (5) as
+retirement candidates — a signal only, never an auto-invalidate/retire.
+
+`invalid_at`/`invalid_reason`/`superseded_by`/`invalidated_by` (issue #6) record an `invalidate` call
+— the lesson itself was WRONG, distinct from `retired` (the lesson was right but is now
+superseded/codified). `invalid_at` is authoritative only as a non-empty string (empty = not
+invalidated, the read-time default). An invalidated lesson is excluded, fail-closed, from every
+downstream surface: `recall` (checked ahead of the verified check, so even a `verified: true` lesson
+that was later invalidated is never recalled) and `promote` (listing / `--codify`).
+
 ## Commands
 
 ```bash
@@ -55,6 +75,12 @@ lessons record  --signature-file <verdict.txt> [--fix "..."] [--source loop-fix|
 lessons recall  --signature-file <verdict.txt> [--include-unverified] [--category engineering|domain] [--lessons <dir>]
 lessons promote [--min-count N] [--codify] [--runs <runs-dir>] [--lessons <dir>]   # recurring verified → codify candidates
 lessons retire  --id <key> --ref "<where codified>" [--lessons <dir>]   # TERMINAL: retire a codified lesson from the pool
+lessons invalidate --id <key> [--reason "..."] [--superseded-by <id2>] [--by "<who>"] [--lessons <dir>]
+                # mark a lesson WRONG (distinct from retire — right but superseded). Fail-closed
+                # excluded from recall and promote (listing/--codify) from then on.
+lessons mark-clean --gate "<verify cmd>" [--lessons <dir>]
+                # bump clean_pass_count on every non-invalidated, non-retired lesson attributed to
+                # --gate — "this gate passed cleanly, without this lesson's fix being needed again."
 lessons stats   [--category engineering|domain] [--lessons <dir>]   # observability: convergence + avg iterations + retired/open/by-category counts
 ```
 
@@ -83,7 +109,12 @@ loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --lesson
 
 - On each failing iteration, `loop-fix` **recalls** verified lessons for that exact failure and
   injects them into the fix prompt ("a past verified run hit this same failure — here's what worked").
-- On **SUCCESS**, it **records** a verified lesson (the original failure → converged in N iterations).
+- On **SUCCESS**, it first calls **`mark-clean --gate "$VERIFY"`** (bumping `clean_pass_count` on every
+  lesson tied to this gate — runs even on a fully clean pass with no failure at all this run), THEN
+  **records** a verified lesson tagged `--gate "$VERIFY"` when a failure was captured this run (the
+  original failure → converged in N iterations). This order matters: if the run's own failure just
+  recurred, `record`'s merge resets that lesson's `clean_pass_count` back to 0 right after `mark-clean`
+  bumped it, so a lesson that just needed its fix again is never miscounted as a clean pass.
 
 So the 5th time the loop meets a familiar failure, it starts with the answer instead of rediscovering
 it — and `lessons stats` shows whether the loop is getting faster (avg iterations-to-green).
