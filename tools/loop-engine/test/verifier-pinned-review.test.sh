@@ -5,7 +5,10 @@
 # sensitive is touched, PASS when base tests still hold against new code, the CORE case (a PR that
 # weakens bin/ AND loosens its own test in the same PR is still caught by the untouched base test),
 # a brand-new HEAD-only test file is left alone (not force-restored from a base where it doesn't
-# exist), a deleted base test file is restored and still enforced, and the no-CODEOWNERS PASS.
+# exist), a deleted base test file is restored and still enforced, the no-CODEOWNERS PASS, a PR that
+# weakens bin/ AND deletes CODEOWNERS in the same commit still FAILs (adversarial round 4 — CODEOWNERS
+# itself must be read from base, not the PR's own working tree), and an unresolvable BASE ref is a
+# hard error rather than the same silent PASS a legitimately-absent CODEOWNERS produces (round 5).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$HERE/../bin/verifier-pinned-review.sh"
@@ -180,5 +183,40 @@ OUT6="$(bash "$SCRIPT" --base "$BASE6" --repo-root "$R6" 2>&1)"; RC6=$?
 printf '%s' "$OUT6" | grep -q "no CODEOWNERS sensitive paths" \
   || fail "scenario6 must report the no-CODEOWNERS PASS: $OUT6"
 
-echo "PASS: verifier-pinned-review — skip when nothing sensitive touched, PASS when base tests still hold, FAIL on self-weakening (bin/+test loosened together), new HEAD-only tests left alone, deleted base tests restored and still enforced, and no-CODEOWNERS PASS"
+# ==== scenario 7 (issue #14 adversarial round 4): the PR weakens bin/checker.sh AND deletes
+# CODEOWNERS itself, in the SAME commit, where BASE has a real CODEOWNERS with sensitive entries.
+# Before round 4's fix, CODEOWNERS was read from the live working tree (the PR's own HEAD content
+# in real CI), so this same-commit deletion blinded the sensitive-path scan entirely — the script
+# took the "nothing to pin" PASS before the diff scan ever ran, silently missing the checker.sh
+# regression. CODEOWNERS is now pinned to base content the same way test/ files are, so a PR's own
+# edit to CODEOWNERS (including deleting it) must have zero effect on what gets checked for that
+# same PR -> FAIL, exactly like scenario 3 ====
+R7="$(new_base_repo s7)"
+BASE7="$(git -C "$R7" rev-parse HEAD)"
+cat > "$R7/tools/loop-engine/bin/checker.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+rm "$R7/CODEOWNERS"
+git -C "$R7" add -A && git -C "$R7" commit -q -m "weaken checker.sh AND delete CODEOWNERS in the same commit"
+
+OUT7="$(bash "$SCRIPT" --base "$BASE7" --repo-root "$R7" 2>&1)"; RC7=$?
+[ "$RC7" -eq 1 ] \
+  || fail "scenario7 (same-commit weaken bin/ + delete CODEOWNERS) must FAIL(1) — a PR's own CODEOWNERS edit must not blind its own check; got rc=$RC7: $OUT7"
+printf '%s' "$OUT7" | grep -q "bad input must be rejected" \
+  || fail "scenario7: the base-pinned CODEOWNERS must still resolve the sensitive paths and the old pinned test must still catch the regression: $OUT7"
+printf '%s' "$OUT7" | grep -q "nothing to pin" \
+  && fail "scenario7: deleting CODEOWNERS in the attack commit must not produce the 'nothing to pin' skip — that would be the exact bypass this scenario exists to close: $OUT7"
+
+# ==== scenario 8: BASE does not resolve to any real commit at all -> hard error, exit 2, never the
+# same "nothing to pin, PASS" a legitimately-absent CODEOWNERS produces (adversarial round 5) ====
+R8="$(new_base_repo s8)"
+
+OUT8="$(bash "$SCRIPT" --base "this-ref-does-not-exist-xyz123" --repo-root "$R8" 2>&1)"; RC8=$?
+[ "$RC8" -eq 2 ] \
+  || fail "scenario8 (unresolvable BASE ref) must exit 2, never a silent PASS; got rc=$RC8: $OUT8"
+printf '%s' "$OUT8" | grep -q "not a valid ref" \
+  || fail "scenario8: must report BASE as unresolvable, not silently treat it as 'no CODEOWNERS': $OUT8"
+
+echo "PASS: verifier-pinned-review — skip when nothing sensitive touched, PASS when base tests still hold, FAIL on self-weakening (bin/+test loosened together), new HEAD-only tests left alone, deleted base tests restored and still enforced, no-CODEOWNERS PASS, same-commit CODEOWNERS-deletion still FAILs, and an unresolvable BASE is a hard error rather than a silent PASS"
 exit 0

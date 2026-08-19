@@ -54,6 +54,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ---- 0) BASE must resolve to a real commit before we trust ANY "path absent at base" reading ----
+# Without this, step 1 below can't tell "BASE is valid and CODEOWNERS legitimately doesn't exist
+# there" apart from "BASE itself failed to resolve" — `git show <bad-ref>:CODEOWNERS 2>/dev/null`
+# produces empty output for both, and treating both as "nothing to pin, PASS" is fail-open exactly
+# where step 2's diff below is fail-closed for the identical class of git failure (adversarial
+# round 5). Validating BASE once, up front, makes every later "git show $BASE:<path> failed" read
+# unambiguous: BASE is already known-good, so the failure can only mean the path isn't in that tree.
+git -C "$REPO_ROOT" rev-parse --verify "${BASE}^{commit}" >/dev/null 2>&1 \
+  || { echo "verifier-pinned-review.sh: '${BASE}' is not a valid ref reachable from this repo" >&2; exit 2; }
+
 # ---- 1) parse CODEOWNERS into a sensitive-path-prefix list ----
 # Read from the BASE revision via `git show`, never the live working tree. The working tree in a
 # real CI run IS the PR's own HEAD/merge-ref content, fully attacker-controlled — reading CODEOWNERS
