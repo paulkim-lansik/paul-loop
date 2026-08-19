@@ -87,12 +87,19 @@
 # backup store lives on the same filesystem the fixer can write to, so a sufficiently motivated
 # fixer CAN poison the backup copy in the same move it poisons the live file — (c) exists to catch
 # exactly that. It is not a tamper-proof store; it is a check that notices when the store was
-# tampered with. When the restored bytes do NOT match the original hash, loop-fix.sh does NOT claim
-# success: it logs a loud, distinct failure, writes $LOOP_DIR/protect-compromised (which file(s),
-# why), and still exits 3. A SUBSEQUENT run then refuses to start at all (exit 4) until a human
-# inspects and clears that marker — so the actual guarantee is "detect, attempt an exact restore,
-# and if restoration integrity cannot itself be verified, refuse future runs until a human clears
-# it," not "always perfectly undoes any sabotage no matter how the fixer attacks the backup."
+# tampered with. Whenever a protected file's restore cannot be independently verified — the
+# restored bytes do NOT match the original hash, the backup copy is missing entirely (e.g. the
+# fixer `rm`s it instead of overwriting it with matching content), or the `cp` from backup itself
+# fails — loop-fix.sh does NOT claim success: it logs a loud, distinct failure, writes
+# $LOOP_DIR/protect-compromised (which file(s), why), and still exits 3. A SUBSEQUENT run then
+# refuses to start at all (exit 4) until a human inspects and clears that marker — so the actual
+# guarantee is "detect, attempt an exact restore, and if restoration integrity cannot itself be
+# verified, refuse future runs until a human clears it," not "always perfectly undoes any sabotage
+# no matter how the fixer attacks the backup." Known narrow gap: restore uses `cp -p`, which
+# follows a symlink rather than replacing it — if the fixer replaces a protected file with a
+# symlink to an external path, the restored bytes land at the symlink's target and the file is
+# left as a symlink (content is correct, file type/identity is not) — this does not defeat
+# detection or let a rerun report false success, it is a restoration-fidelity gap, not a bypass.
 # Stall caveat: stall detection is reliable when the verifier emits recognizable failure markers
 # or changing pass/fail counts; the hard guarantee against runaway is --max-iter.
 #
@@ -297,6 +304,14 @@ restore_protected() {
     if [ ! -f "$_b" ]; then
       log "  RESTORE FAILED for $f: no backup copy at $_b — manual intervention needed."
       _restore_failed=1
+      # A missing backup is just as untrustworthy a post-state as a hash-mismatched one — the
+      # live file is left in whatever (possibly cheated) state the fixer put it in, with no way
+      # to verify it. Without this, a fixer that simply `rm`s its own backup (instead of
+      # overwriting it with matching content) skips the hash-mismatch branch entirely and no
+      # marker gets written, leaving a rerun free to take the cheated content as a fresh, trusted
+      # baseline — reopening the exact false-SUCCESS-on-rerun bug this guard exists to close.
+      printf 'file=%s reason=no backup copy found at %s — cannot verify or restore original pre-run bytes (the fixer may have deleted its own backup)\n' \
+        "$f" "$_b" >> "$COMPROMISED_MARKER"
       continue
     fi
     _dir="$(dirname "$f")"
@@ -316,10 +331,14 @@ restore_protected() {
     else
       log "  RESTORE FAILED for $f: cp from backup did not succeed — manual intervention needed."
       _restore_failed=1
+      # Same reasoning as the missing-backup branch above: an unverifiable live file must block
+      # future runs, not just log a warning this invocation will forget.
+      printf 'file=%s reason=cp from backup %s did not succeed — cannot verify or restore original pre-run bytes\n' \
+        "$f" "$_b" >> "$COMPROMISED_MARKER"
     fi
   done 3< "$PROTECT_LIST_FILE" 4< "$PROTECT_SNAP" 5< "$PROTECT_MODES"
-  if [ "$_integrity_failed" -eq 1 ]; then
-    log "  RESTORE COULD NOT BE VERIFIED — the backup store itself appears to have been tampered with. Do NOT trust this workspace; a human must inspect it. Marker written: $COMPROMISED_MARKER (future runs will refuse to start until it is cleared)."
+  if [ "$_integrity_failed" -eq 1 ] || [ "$_restore_failed" -eq 1 ]; then
+    log "  RESTORE COULD NOT BE VERIFIED — the workspace may still be compromised. Do NOT trust it; a human must inspect it. Marker written: $COMPROMISED_MARKER (future runs will refuse to start until it is cleared)."
   else
     log "  restored $_restored protected file(s) to their pre-run state."
   fi

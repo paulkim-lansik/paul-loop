@@ -179,5 +179,63 @@ cmp -s src/real.test.sh src/original-real.test.sh \
 grep -q "removed rogue new file matching --protect" .loop/history.log \
   || fail "case6: expected a log line naming the rogue file that was removed"
 
-echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning via a fail-closed marker, and deletes rogue new protect-glob-matching files before aborting"
+# ── case 7: fixer DELETES its own backup copy instead of poisoning it (round-3 adversarial re-check) ──
+# round-2's integrity-hash check only ran in the "cp succeeded" branch of restore_protected() — the
+# pre-existing "no backup copy" branch set _restore_failed but never wrote the compromise marker.
+# Deleting the backup is strictly easier for a fixer than overwriting it with matching content (no
+# need to even defeat the step-5 chmod-0444 friction — `rm` only needs directory write access), and
+# it used to leave a rerun completely unblocked, silently taking the cheated content as a fresh
+# trusted baseline. Any restore failure — missing backup OR hash mismatch — must be equally
+# fail-closed.
+C="$WORK/c7"; mkdir -p "$C"; cd "$C" || fail "cd c7"
+cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+printf 'ORIGINAL-CONTENT-c7\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-fix-delete-backup.sh <<'EOF'
+#!/bin/sh
+echo "CHEAT-DELBACKUP" > guard-file.txt
+rm -f .loop/protected-backup/guard-file.txt
+EOF
+
+"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-delete-backup.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case7 run1: expected exit 3 (PROTECTED-VIOLATION), got $code"
+grep -q "no backup copy" .loop/history.log || fail "case7 run1: expected a 'no backup copy' RESTORE FAILED line"
+[ -f .loop/protect-compromised ] \
+  || fail "case7 run1: expected a compromise marker even though the failure was a missing backup (not a hash mismatch) — deleting the backup must be just as fail-closed as poisoning it"
+grep -q "guard-file.txt" .loop/protect-compromised || fail "case7 run1: compromise marker must name the affected file"
+
+_hist_before_c7="$(wc -l < .loop/history.log | tr -d ' ')"
+"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix ':' --protect 'guard-file.txt' --max-iter 1 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 4 ] || fail "case7 run2 (rerun): expected exit 4 (refuse to start on a prior compromise marker), got $code — deleting the backup instead of overwriting it must not bypass the fail-closed rerun block"
+_hist_after_c7="$(wc -l < .loop/history.log | tr -d ' ')"
+[ "$_hist_before_c7" = "$_hist_after_c7" ] \
+  || fail "case7 run2: history.log grew during a refused run"
+
+# ── case 8: `cp` from backup itself fails (e.g. backup unreadable) — same fail-closed requirement ──
+# Skipped under root: chmod-based unreadability is meaningless to a root process (permission checks
+# are bypassed), which would make this assertion flaky rather than meaningful in that environment.
+if [ "$(id -u)" != "0" ]; then
+  C="$WORK/c8"; mkdir -p "$C"; cd "$C" || fail "cd c8"
+  cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+  printf 'ORIGINAL-CONTENT-c8\n' > guard-file.txt
+  cp guard-file.txt original-guard-file.txt
+  cat > fake-fix-break-backup.sh <<'EOF'
+#!/bin/sh
+echo "CHEAT-BREAKBACKUP" > guard-file.txt
+chmod 000 .loop/protected-backup/guard-file.txt 2>/dev/null
+EOF
+
+  "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-break-backup.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+  code=$?
+  [ "$code" -eq 3 ] || fail "case8 run1: expected exit 3 (PROTECTED-VIOLATION), got $code"
+  grep -q "cp from backup did not succeed" .loop/history.log \
+    || fail "case8 run1: expected a 'cp from backup did not succeed' RESTORE FAILED line"
+  [ -f .loop/protect-compromised ] \
+    || fail "case8 run1: expected a compromise marker even though the failure was an unreadable backup (not a hash mismatch)"
+  chmod 644 .loop/protected-backup/guard-file.txt 2>/dev/null   # let the trap's rm -rf clean up
+fi
+
+echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, and deletes rogue new protect-glob-matching files before aborting"
 exit 0
