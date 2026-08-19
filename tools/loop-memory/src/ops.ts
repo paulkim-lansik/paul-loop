@@ -20,6 +20,13 @@ export interface NoteInput {
   /** write-path provenance(BAC-619) — HMAC-SHA256(content, secret) hex. lessons.ts의 graduateLessons만
    * 채운다(src/provenance.ts). 생략하면 컬럼은 null(서명 없음 — recallLessons가 제외한다). */
   provenance?: string;
+  /** 호출 출처 태그(paul-loop 이슈 #35) — memory_op.payload.source로 그대로 남는다. hooks/*.mjs가
+   * "node dist/cli.js graduate ..." 하위프로세스를 spawn할 때만 env `LOOP_MEMORY_SOURCE=hook`을 심어
+   * cli.ts가 이 값을 채운다. 수동 CLI 호출·테스트는 안 심으므로 생략(undefined) — 생략 시 이 필드는
+   * payload에 키 자체가 안 남는다(JSON.stringify가 undefined 값을 드롭), 'cli' 같은 오도하는 기본값으로
+   * 채우지 않는다. lessons.ts의 `LessonFile.source`(교훈 파일 자체의 출처, 예: 'loop-fix')와는 무관한
+   * 별개 개념 — 혼동 주의. */
+  source?: string;
 }
 
 export interface RecallHit {
@@ -60,6 +67,7 @@ export async function addNote(db: LoopDb, embedder: Embedder, input: NoteInput) 
       tags: input.tags,
       context: input.context,
       links: input.links,
+      source: input.source,
     },
   });
   return note;
@@ -96,6 +104,7 @@ export async function updateNote(
       tags: patch.tags,
       context: patch.context,
       links: patch.links,
+      source: patch.source,
     },
   });
 }
@@ -118,7 +127,13 @@ export async function noop(db: LoopDb, noteId: string, reason?: string) {
  *  건드리고 원장(memory_op)에만 이벤트를 남긴다 — recall()의 후보 반환과 달리, 훅의 거리컷오프를
  *  통과해 *실제 주입*된 노트만 이걸 호출해야 사후에 "그 시점 컨텍스트에 실제로 있었는가"를 증명할 수
  *  있다(회상 실패표본 분류 (B): lesson이 있었고 주입됐는데 무시됨). */
-export async function recordRecall(db: LoopDb, noteId: string, payload?: Record<string, unknown>) {
+export async function recordRecall(
+  db: LoopDb,
+  noteId: string,
+  // source(paul-loop 이슈 #35): NoteInput.source와 같은 개념 — 호출부(cli.ts)가 이미 완성된 payload
+  // 객체를 통째로 넘기므로 여기서 별도 병합은 없다. 타입에만 명시해 호출부가 이 필드를 discover하게 한다.
+  payload?: Record<string, unknown> & { source?: string },
+) {
   await db.insert(memoryOp).values({ op: 'RECALL', noteId, payload: payload ?? null });
 }
 

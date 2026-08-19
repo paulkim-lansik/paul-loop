@@ -37,6 +37,17 @@
  *
  * Exit: 0 ok · 2 usage · 1 runtime(연결/임베드 실패). 호출자(훅)는 nonzero/빈 출력을 "회상 없음"으로
  * 보고 그냥 진행한다(fail-open) — 메모리 인프라가 없거나 죽어도 세션을 절대 막지 않는다.
+ *
+ * `LOOP_MEMORY_SOURCE`(paul-loop 이슈 #35): graduate/record-recall이 쓰는 memory_op 행의 `payload.source`
+ * 로 그대로 남는 호출 출처 태그. hooks/*.mjs가 이 CLI를 spawn할 때만 `hook`으로 심는다 — 수동 CLI
+ * 호출·테스트는 안 심으므로 생략(payload에 키 자체가 안 남는다).
+ * ⚠️ 이건 **자기신고(self-reported) 관측용 메타데이터**일 뿐, 보안/위조방지 신호가 아니다. 셸 접근이
+ * 있는 누구나(사람이 디버깅 중이든, CI 스크립트든, 테스트든, 다른 에이전트든, 손으로
+ * `LOOP_MEMORY_SOURCE=hook`을 export해두고 잊었든) `node dist/cli.js graduate ...`를 직접 돌려 이
+ * env를 손으로 심으면 실제 훅 발동과 바이트 단위로 구분 불가능한 행이 남는다 — DB를 직접 질의하는 것과
+ * 같은 신뢰 수준이다. 이 값이 있고 없고가 증명하는 건 "훅 코드 경로에서 왔다고 명시적으로 표시됨" 대
+ * "표시 안 됨" 뿐이다. "실제 라이브 세션에서 훅이 발동했다"는 더 강한 주장은 이걸로 증명되지 않는다
+ * (paul-loop 이슈 #35는 이 커밋으로 완전히 닫히지 않는다 — 그 증거는 여전히 없다).
  */
 import { readFileSync } from 'node:fs';
 import { sql } from 'drizzle-orm';
@@ -145,6 +156,16 @@ const opt = {
   decay: false, // recall --decay: lessons 코퍼스를 decay 랭킹(BAC/paul-loop #12)으로 재정렬
   hits: '', // record-recall: [{id, distance?, corpus?}, ...] JSON 문자열 (BAC-586)
 };
+// source 태그(paul-loop 이슈 #35). hooks/graduate-lessons.mjs와 hooks/recall-lessons.mjs가
+// "node dist/cli.js ..." 하위프로세스를 spawn할 때만 이 env를 심는다(env `LOOP_MEMORY_SOURCE=hook`) —
+// 수동 CLI 호출·테스트는 안 심으므로 undefined로 남는다. graduate/record-recall이 이 값을
+// memory_op.payload.source에 그대로 적는다. ⚠️ 자기신고 메타데이터일 뿐 위조방지 신호가 아니다 — 셸
+// 접근이 있으면 누구든 이 env를 손으로 심어 진짜 훅 발동과 구분 불가능한 행을 만들 수 있다(DB 직접
+// 질의와 같은 신뢰 수준). "훅 코드 경로로 명시 표시됨" 대 "표시 안 됨"만 구분하지, "실제 훅이
+// 발동했다"는 증명하지 않는다. 없어도 오도하는 기본값(예: 'cli')으로 채우지 않는다 — 생략은 생략인 채로
+// 남는다.
+const source = process.env.LOOP_MEMORY_SOURCE || undefined;
+
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   const val = () => {
@@ -265,7 +286,7 @@ async function runStats(json: boolean): Promise<void> {
 /** record-recall: 훅이 실제로 주입한 노트 id들을 memory_op에 RECALL 행으로 남긴다(계측, BAC-586).
  *  임베더가 필요 없다(노트/거리는 이미 훅이 확정한 값을 그대로 받아 적을 뿐) — pickEmbedder를 거치지
  *  않아 임베딩 키 없이도 동작한다. --hits는 [{id, distance?, corpus?}, ...] JSON 배열. */
-async function runRecordRecall(hitsJson: string): Promise<void> {
+async function runRecordRecall(hitsJson: string, source: string | undefined): Promise<void> {
   let hits: unknown;
   try {
     hits = JSON.parse(hitsJson || '[]');
@@ -278,7 +299,7 @@ async function runRecordRecall(hitsJson: string): Promise<void> {
   try {
     for (const h of hits as Array<{ id?: string; distance?: number; corpus?: string }>) {
       if (!h?.id) continue;
-      await recordRecall(db, h.id, { distance: h.distance, corpus: h.corpus });
+      await recordRecall(db, h.id, { distance: h.distance, corpus: h.corpus, source });
     }
   } finally {
     await pool.end();
@@ -329,7 +350,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === 'record-recall') {
-    await runRecordRecall(opt.hits);
+    await runRecordRecall(opt.hits, source);
     return;
   }
   if (cmd === 'consolidate') {
@@ -363,7 +384,7 @@ async function main(): Promise<void> {
   const { db, pool } = createLoopDb();
   try {
     if (cmd === 'graduate') {
-      const r = await graduateLessons(db, pool, embedder, opt.lessons, signingKey);
+      const r = await graduateLessons(db, pool, embedder, opt.lessons, signingKey, source);
       // locked를 "0 added, 0 skipped"와 구분해 찍는다(BAC-372, printKnowledgeResult와 동일 이유) —
       // 동시 졸업 중이라 이번엔 아무 것도 안 봤다는 뜻이지 "이미 최신"이 아니다.
       if (r.locked) {
@@ -378,11 +399,11 @@ async function main(): Promise<void> {
       // knowledge 코퍼스(BAC-355: ADR·CONTEXT·research·design 4개 소스, 각자 독립 플래그가 주어질
       // 때만). 전부 멱등(증분 재임베드) — syncKnowledge 미러-싱크 위에 얹혀 있다.
       if (opt.knowledge) {
-        const k = await graduateKnowledge(db, pool, embedder, opt.knowledge);
+        const k = await graduateKnowledge(db, pool, embedder, opt.knowledge, source);
         printKnowledgeResult('ADR', k);
       }
       if (opt.context) {
-        const c = await graduateContext(db, pool, embedder, opt.context);
+        const c = await graduateContext(db, pool, embedder, opt.context, source);
         printKnowledgeResult('CONTEXT', c);
       }
       if (opt.research) {
@@ -393,6 +414,7 @@ async function main(): Promise<void> {
           opt.research,
           RESEARCH_TAG,
           opt.research,
+          source,
         );
         printKnowledgeResult('research', r2);
         // silent truncation 금지(BAC-355 AC) — .md 아닌 항목(HTML 리포트 등)은 사유와 함께 드러낸다.
@@ -401,7 +423,15 @@ async function main(): Promise<void> {
         }
       }
       if (opt.design) {
-        const d = await graduateMarkdownDir(db, pool, embedder, opt.design, DESIGN_TAG, opt.design);
+        const d = await graduateMarkdownDir(
+          db,
+          pool,
+          embedder,
+          opt.design,
+          DESIGN_TAG,
+          opt.design,
+          source,
+        );
         printKnowledgeResult('design', d);
         for (const s of d.skipped) {
           process.stdout.write(`loop-memory: knowledge (design) skip ${s.file} — ${s.reason}\n`);
