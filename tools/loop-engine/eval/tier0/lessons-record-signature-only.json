@@ -1,7 +1,7 @@
 {
   "id": "lessons-record-signature-only",
   "input": "lessons-record-signature-only",
-  "note": "현재(#9 병합 전) lessons record는 --signature만으로(--signature-file 없이, --verified 없이) 성공해야 한다. #9(증거 무결성 계약)가 병합되면 이 계약이 바뀔 수 있다 — 그때 이 케이스를 함께 갱신할 것.",
+  "note": "lessons record는 --signature만으로(--signature-file 없이, --verified 없이) 성공해야 한다. 이 케이스는 --verified를 쓰지 않으므로 #9(증거 무결성 계약)가 병합돼도 영향받지 않는다 — #9는 --verified와 --signature-file 부재가 함께일 때만 거부하고(usage error, exit 2), unverified record는 명시적으로 그 범위 밖이다(origin/feature/9-evidence-integrity 커밋 ecf77ca 확인). 갱신 불필요.",
   "assert": {
     "contains": ["EXIT_CODE=0", "lessons: recorded"]
   }

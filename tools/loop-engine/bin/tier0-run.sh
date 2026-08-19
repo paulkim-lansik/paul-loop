@@ -81,11 +81,12 @@ FIXTURE
     ;;
 
   lessons-record-signature-only)
-    # 계약(#9 병합 전 현재 동작): lessons record는 --signature만으로(--signature-file 없이,
-    # --verified 없이) 성공해야 한다 — record는 서명(signature-file 또는 signature) 존재만 요구
-    # 하고 provenance(verified)는 요구하지 않는다(lessons.mjs의 signatureOf()/record 분기).
-    # ⚠️ #9("증거 무결성 계약 — lessons record fail-closed")가 병합되면 이 계약이 바뀌어 이 케이스가
-    # 깨질 수 있다 — 그때는 #9의 새 계약에 맞춰 이 시나리오와 대응 골든 케이스를 함께 갱신할 것.
+    # 계약: lessons record는 --signature만으로(--signature-file 없이, --verified 없이) 성공해야
+    # 한다 — record는 서명(signature-file 또는 signature) 존재만 요구하고 provenance(verified)는
+    # 요구하지 않는다(lessons.mjs의 signatureOf()/record 분기).
+    # 이 시나리오는 --verified를 쓰지 않으므로 #9("증거 무결성 계약")가 병합돼도 영향받지 않는다 —
+    # #9는 --verified가 --signature-file 없이 쓰였을 때만 거부하고(usage error, exit 2), unverified
+    # record는 명시적으로 그 범위 밖이다(origin/feature/9-evidence-integrity 커밋 ecf77ca 확인).
     "$LESSONS_BIN" record --signature "tier0 fixture: sample failure text" --lessons lessons > out.txt 2>&1
     code=$?
     echo "EXIT_CODE=$code"

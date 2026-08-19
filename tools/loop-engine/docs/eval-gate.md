@@ -107,6 +107,8 @@ node bin/eval-gate.mjs --dataset eval/tier0 --target "bash bin/tier0-run.sh" --l
 ```
 
 Regression-locked by `test/eval-gate-tier0.test.sh` (part of `test/run.sh`). One case
-(`lessons-record-signature-only`) documents CURRENT pre-#9 behavior (`lessons record` succeeds
-without `--verified`) and is expected to need updating once #9 ("증거 무결성 계약") lands and makes
-`record` fail closed on unverified input.
+(`lessons-record-signature-only`) documents that `lessons record` succeeds on a hand-typed
+`--signature` alone, without `--signature-file` and without `--verified`. This case is unaffected
+by #9 ("증거 무결성 계약"): #9 only fails closed when `--verified` is combined with a hand-typed
+`--signature` and no `--signature-file` — unverified records (this case's scenario) are explicitly
+out of scope for that change, so no update is needed here once #9 lands.
