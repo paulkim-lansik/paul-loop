@@ -5,11 +5,16 @@
 # through verdict-run.sh (the same Verdict Contract producer everything else in this repo
 # composes with), checks any `artifacts:`/`expect:` fields, and emits its own top-level VERDICT
 # block — so it plugs into whatever already consumes verdict-run.sh's shape (Stop-hook,
-# loop-fix.sh) unmodified. This includes ${LOOP_DIR:-.loop}/verdict-state.json: each per-AC
-# verdict-run.sh sub-call writes that shared file with ITS OWN pass/fail (existing, unmodified
-# last-writer-wins contract), so after all ACs are processed this script makes one more sync call
-# whose only purpose is to be the last writer with the CORRECT overall aggregate — a Stop-hook-style
-# freshness gate reading that file sees ac-verify.sh's true result, not whichever AC ran last.
+# loop-fix.sh) unmodified. This includes ${LOOP_DIR:-.loop}/verdict-state.json — coupled to OUR
+# --log-dir via an explicit `export LOOP_DIR="$LOG_DIR"` (see below) so a non-default --log-dir
+# isn't silently ignored: each per-AC verdict-run.sh sub-call writes that shared file with ITS OWN
+# pass/fail (existing, unmodified last-writer-wins contract). An EXIT trap (registered right after
+# LOG_DIR is finalized, see below) makes one corrective sync call on EVERY exit path this script
+# can take — normal completion AND any early exit (usage errors, a verdict-run.sh exit-2 hit
+# mid-run, or any exit path added later) — so it is always the last writer: the true aggregate on
+# normal completion, a fail-closed default on any early exit. A Stop-hook-style freshness gate
+# reading that file always sees ac-verify.sh's true result for THIS run, never a stale leftover
+# from an earlier AC or an earlier unrelated run.
 #
 # Usage:
 #   ac-verify.sh <plan-file> [--log-dir <dir>]
@@ -106,6 +111,47 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ---- LOG_DIR is now finalized (flag parsed, default applied) ----
+
+# Couple verdict-run.sh's own ${LOOP_DIR:-.loop} default to OUR --log-dir (issue #23 round-2
+# finding: they were previously decoupled — verdict-run.sh's write_state() derives
+# verdict-state.json's path purely from ITS OWN process's LOOP_DIR env var, which ac-verify.sh
+# never set, so a non-default --log-dir silently got its state file written to the unrelated
+# default ./.loop/ instead, and two parallel --log-dir runs with no manually-exported LOOP_DIR
+# would clobber the same shared default file). Exporting here makes every verdict-run.sh sub-call
+# below (per-AC calls and the corrective sync call) inherit a LOOP_DIR guaranteed to match
+# --log-dir. Both default to the literal ".loop", so this is a no-op for every caller that doesn't
+# pass --log-dir.
+export LOOP_DIR="$LOG_DIR"
+
+LOGSUBDIR="$LOG_DIR/ac-verify"
+
+# ---- fail-closed corrective verdict-state.json sync via an EXIT trap ----
+# ac-verify.sh has multiple exit paths — this normal-completion path, plus early exits on usage
+# errors and on a per-AC verdict-run.sh sub-call's own exit-2 refusal encountered mid-run (see the
+# header comment, and any exit path added later). A sync call placed only at normal completion
+# leaves every early-exit path with whatever an earlier AC's OWN sub-call happened to leave in
+# verdict-state.json (last-writer-wins) — a stale, unrelated pass/fail for a run that never
+# actually finished. Fixing this per call-site doesn't scale (the next new early-exit path
+# reopens the same gap) — so instead ONE trap fires on every exit, no matter which code path
+# reaches it, and makes one corrective verdict-run.sh sync call (stdout+stderr discarded) whose
+# only purpose is to be the last writer.
+#
+# SYNC_VERDICT_EXIT starts fail-closed (1 = FAIL) BEFORE the trap is registered — "treat this run
+# as failed/incomplete unless proven otherwise". Only the normal-completion path below (once the
+# true aggregate $code has actually been computed) updates SYNC_VERDICT_EXIT to that real value,
+# right before the script's final `exit "$code"` — which is what fires the trap. Every other exit
+# reaches the trap with the untouched fail-closed default. The handler never calls `exit` itself
+# (that would clobber the real exit code this script is trying to return) — it only runs its side
+# effect and lets the original exit code propagate.
+SYNC_VERDICT_EXIT=1
+SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
+sync_verdict_state_on_exit() {
+  sync_desc="ac-verify.sh aggregate result for '$(shquote "$PLAN")'"
+  "$VERDICT_RUN" --log "$SYNC_LOG" -- sh -c ": $sync_desc; exit $SYNC_VERDICT_EXIT" >/dev/null 2>&1
+}
+trap sync_verdict_state_on_exit EXIT
+
 if [ -z "$PLAN" ]; then
   echo "ac-verify.sh: a plan file is required. Usage: ac-verify.sh <plan-file> [--log-dir <dir>]" >&2
   exit 2
@@ -119,7 +165,6 @@ if [ ! -x "$VERDICT_RUN" ]; then
   exit 2
 fi
 
-LOGSUBDIR="$LOG_DIR/ac-verify"
 mkdir -p "$LOGSUBDIR" 2>/dev/null || { echo "ac-verify.sh: cannot create log directory '$LOGSUBDIR'" >&2; exit 2; }
 AGG_LOG="$LOG_DIR/ac-verify.log"
 : > "$AGG_LOG" 2>/dev/null || { echo "ac-verify.sh: cannot write aggregate log file '$AGG_LOG'" >&2; exit 2; }
@@ -209,15 +254,38 @@ while IFS= read -r line || [ -n "$line" ]; do
           *)
             # This segment matched none of the three known fields (even after the normalization
             # above) and is about to silently vanish into the description — exactly the
-            # invisible-typo failure mode. If it LOOKS like a mistyped field (a `:` within roughly
-            # its first 20 chars), warn on stderr so it's visible instead of silent. Stays a
-            # warning, not a hard error: an ordinary colon in free-text description content is
-            # legitimate and common — failing the build over it would be worse than the bug.
+            # invisible-typo failure mode. Warn on stderr (not a hard error — an ordinary colon or
+            # leading word in free-text description content is legitimate and common; failing the
+            # build over it would be worse than the bug) when either heuristic fires:
+            #   1. it LOOKS like a mistyped field (a `:` within roughly its first 20 chars), or
+            #   2. its first whitespace-delimited word — after the SAME leading-emphasis-marker
+            #      stripping + lower-casing as the field-prefix matcher above, and with any single
+            #      trailing `:` stripped — case-insensitively equals one of the three reserved
+            #      field names. This catches a colon-OMITTED typo (e.g. "verify exit 9" instead of
+            #      "verify: exit 9") that heuristic 1 alone can't see (no colon anywhere), without
+            #      false-positiving on ordinary free text (which essentially never starts with
+            #      exactly one of these three words by coincidence). Additive to heuristic 1, which
+            #      still independently catches colon-typos further into a segment (e.g. the field
+            #      name itself misspelled, as in "verfy: exit 7").
             seg="$(trim "$tok")"
             head20="$(printf '%s' "$seg" | cut -c1-20)"
+            warn=0
             case "$head20" in
-              *:*) echo "ac-verify.sh: warning — AC #$idx (\"$desc\"): unrecognized field-like segment (folded into description, not treated as a contract): \"$seg\"" >&2 ;;
+              *:*) warn=1 ;;
             esac
+            word="$(printf '%s' "$seg" | awk '{print $1}')"
+            case "$word" in
+              '**'*) word="${word:2}" ;;
+              '__'*) word="${word:2}" ;;
+              '*'*)  word="${word:1}" ;;
+              '_'*)  word="${word:1}" ;;
+            esac
+            word="${word%:}"
+            word_norm="$(printf '%s' "$word" | tr 'A-Z' 'a-z')"
+            case "$word_norm" in
+              verify|artifacts|expect) warn=1 ;;
+            esac
+            [ "$warn" -eq 1 ] && echo "ac-verify.sh: warning — AC #$idx (\"$desc\"): unrecognized field-like segment (folded into description, not treated as a contract): \"$seg\"" >&2
             desc="$desc | $tok"
             ;;
         esac
@@ -342,25 +410,14 @@ fi
 
 code=0; [ "$verdict" = "FAIL" ] && code=1
 
-# ---- correct the shared verdict-state.json: make OUR aggregate the last writer ----
-# Every per-AC `"$VERDICT_RUN" --log "$ac_log" -- sh -c "$verify_cmd"` call above already wrote
-# ${LOOP_DIR:-.loop}/verdict-state.json via verdict-run.sh's own write_state() (existing,
-# unmodified last-writer-wins contract — every layer writes it, that part of verdict-run.sh is
-# correct and untouched here). Left alone, whichever AC happened to be PROCESSED LAST leaves ITS
-# OWN pass/fail there — which can silently disagree with ac-verify.sh's own true aggregate
-# $verdict/$code above (e.g. an earlier AC failed but the last AC processed passed: the file would
-# read "PASS" even though our own VERDICT block below correctly says FAIL). A consumer reading
-# verdict-state.json directly (e.g. a Stop-hook-style freshness gate) would see a stale, wrong
-# "fresh PASS" for a run that genuinely failed.
-#
-# Fix: one final verdict-run.sh call whose only purpose is its write_state() side effect — make it
-# the last writer with the CORRECT aggregate result. Runs unconditionally (PASS or FAIL). Its own
-# stdout (a second, poorer VERDICT block) is thrown away (>/dev/null) — ac-verify.sh's own richer,
-# AC-specific block below (with the real passed=/failed=/skipped= SUMMARY) remains the only VERDICT
-# block that reaches the caller's stdout. Logged to a dedicated path, distinct from any per-AC log.
-SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
-sync_desc="ac-verify.sh aggregate result for '$(shquote "$PLAN")'"
-"$VERDICT_RUN" --log "$SYNC_LOG" -- sh -c ": $sync_desc; exit $code" >/dev/null 2>&1
+# ---- the true aggregate is now known: arm the EXIT trap (registered earlier, right after
+# LOG_DIR was finalized) with the REAL result instead of its fail-closed default. This is the only
+# place SYNC_VERDICT_EXIT moves off of "1" — every other exit path in this script (including ones
+# added later) reaches the trap with the safe fail-closed default untouched, and the trap's own
+# corrective verdict-run.sh sync call (its stdout+stderr discarded — ac-verify.sh's own richer,
+# AC-specific block below, with the real passed=/failed=/skipped= SUMMARY, remains the only
+# VERDICT block that reaches the caller's stdout) fires automatically once this script exits.
+SYNC_VERDICT_EXIT="$code"
 
 printf '=== VERDICT ===\n'
 printf 'VERDICT: %s\n' "$verdict"
