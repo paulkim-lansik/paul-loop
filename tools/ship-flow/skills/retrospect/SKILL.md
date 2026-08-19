@@ -100,6 +100,24 @@ plugin-standard tooling for it, and a repo without such a tool can skip this sec
   keeps the candidate pool from growing monotonically. Fail closed: only a verified + `challenge
   --verdict accept`ed lesson can retire; a content change later re-opens it for fresh review.
 
+### Grounded reopen (retired or rejected lessons)
+
+Retired lessons and `challenge --verdict reject`ed candidates are settled — "let's revisit that" on its
+own doesn't reopen them. A reopen request must:
+
+- **Cite the id.** Name the exact lesson id (or ADR number) under discussion — a vague appeal to "that
+  decision" doesn't identify a target.
+- **Bring new evidence.** Something the original verdict didn't have: a fresh recurrence, a new failure
+  signature, a verified counterexample. "On reflection..." with no new signal isn't evidence.
+- **Not overwrite the record.** Don't edit the retired/rejected entry's fields in place — that erases the
+  audit trail. Open a fresh lesson/challenge cycle instead, or (if this repo's lessons tooling has an
+  `invalidate --superseded-by` command) link the old id forward to the new one; otherwise reference the
+  superseded id in the new entry's `--fix` text. A reversal that belongs at the ADR level gets a new ADR
+  that references the old one, not a rewrite of it.
+
+A reopen missing an id or missing new evidence is an automatic reject in the skeptical pass — the same
+challenge gate as any promotion candidate.
+
 ## Reporting
 
 State what was recorded/recalled and the loop-efficiency trend. When promoting, name the recurring
