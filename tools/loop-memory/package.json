@@ -16,6 +16,7 @@
     "db:migrate": "drizzle-kit migrate",
     "graduate": "tsx src/cli.ts graduate",
     "recall": "tsx src/cli.ts recall",
+    "consolidate": "tsx src/cli.ts consolidate",
     "stats": "tsx src/cli.ts stats",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.config.integration.ts",

@@ -17,7 +17,13 @@
  * Commands:
  *   loop-memory graduate      [--lessons <dir>] [--knowledge <adrDir>] [--context <file>]
  *                             [--research <dir>] [--design <dir>] [--allow-stub]
- *   loop-memory recall        (--query "<text>" | --query-file <f>) [--k N] [--json] [--allow-stub]
+ *   loop-memory recall        (--query "<text>" | --query-file <f>) [--k N] [--json] [--decay] [--allow-stub]
+ *                             --decay: lessons 코퍼스만 decay 랭킹(오래되고 최근 재발 없는 교훈은 감쇠)
+ *                             으로 재정렬 — knowledge 코퍼스는 영향 없음(파일 count/lastSeen 개념이 없다).
+ *   loop-memory consolidate   [--json]   — sleep-time consolidation 배치(BAC/paul-loop #12, read-only):
+ *                             dedup 병합 후보 + 승격 사전 채점 신호를 한 번에 스캔해 보고한다. 실시간
+ *                             훅 경로가 아니라 사람/주기 실행 전용 — 아무것도 쓰지 않는다(자동 병합·삭제
+ *                             ·승격 없음, 후보만 표시).
  *   loop-memory stats         [--json]   — 읽기 전용 스토어 요약(임베더/키 불필요). loop-doctor가 호출.
  *   loop-memory record-recall --hits <json>  — 훅이 실제 주입 확정한 노트를 memory_op에 RECALL 행으로
  *                             남긴다(계측, BAC-586). --hits는 [{id, distance?, corpus?}, ...] JSON
@@ -46,7 +52,14 @@ import {
   RESEARCH_TAG,
   recallKnowledge,
 } from './knowledge';
-import { graduateLessons, recallLessons } from './lessons';
+import {
+  type ConsolidationReport,
+  consolidateLessonMemory,
+  type DecayedRecallHit,
+  graduateLessons,
+  recallLessons,
+  recallLessonsDecayed,
+} from './lessons';
 import { recordRecall } from './ops';
 import { signingKeyFromEnv } from './provenance';
 
@@ -129,6 +142,7 @@ const opt = {
   k: 5,
   json: false,
   allowStub: false,
+  decay: false, // recall --decay: lessons 코퍼스를 decay 랭킹(BAC/paul-loop #12)으로 재정렬
   hits: '', // record-recall: [{id, distance?, corpus?}, ...] JSON 문자열 (BAC-586)
 };
 for (let i = 0; i < argv.length; i++) {
@@ -173,6 +187,9 @@ for (let i = 0; i < argv.length; i++) {
       break;
     case '--allow-stub':
       opt.allowStub = true;
+      break;
+    case '--decay':
+      opt.decay = true;
       break;
     case '--hits':
       opt.hits = val();
@@ -268,6 +285,44 @@ async function runRecordRecall(hitsJson: string): Promise<void> {
   }
 }
 
+/** consolidate: sleep-time consolidation 배치(BAC/paul-loop #12, read-only) — dedup 병합 후보 +
+ *  승격 사전 채점 신호를 한 번의 스캔으로 보고한다. 임베더/키가 필요 없다(이미 저장된 임베딩끼리
+ *  코사인 거리를 재는 것뿐, 새 텍스트를 임베드하지 않는다) — stats와 같은 이유로 pickEmbedder를 거치지
+ *  않는다. 아무것도 쓰지 않는다: 병합/삭제/승격은 사람 또는 lessons.mjs(retire/challenge) 몫.
+ *  write-path provenance(BAC-619) — `signingKey` 없으면 lesson 코퍼스를 fail-closed로 아무것도 못
+ *  읽어(consolidateLessonMemory 참고) duplicates/promotionSignals 둘 다 항상 빈 배열로 나온다. */
+async function runConsolidate(json: boolean, signingKey: string | undefined): Promise<void> {
+  const { db, pool } = createLoopDb();
+  try {
+    const report: ConsolidationReport = await consolidateLessonMemory(db, signingKey);
+    if (json) {
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+      return;
+    }
+    process.stdout.write('loop-memory consolidate:\n');
+    if (report.duplicates.length === 0) {
+      process.stdout.write('  duplicates: (none)\n');
+    } else {
+      process.stdout.write(`  duplicates (${report.duplicates.length} cluster(s)):\n`);
+      for (const c of report.duplicates) {
+        process.stdout.write(`    - ${c.lessonIds.join(', ')}\n`);
+      }
+    }
+    if (report.promotionSignals.length === 0) {
+      process.stdout.write('  promotion signals: (none)\n');
+    } else {
+      process.stdout.write(`  promotion signals (${report.promotionSignals.length}):\n`);
+      for (const s of report.promotionSignals) {
+        process.stdout.write(
+          `    - ${s.lessonId} (cluster size ${s.clusterSize}, peers: ${s.peerLessonIds.join(', ')})\n`,
+        );
+      }
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
 async function main(): Promise<void> {
   if (cmd === 'stats') {
     await runStats(opt.json);
@@ -277,8 +332,22 @@ async function main(): Promise<void> {
     await runRecordRecall(opt.hits);
     return;
   }
+  if (cmd === 'consolidate') {
+    // write-path provenance(BAC-619) — graduate/recall과 같은 경고: 없으면 lesson 코퍼스 읽기가
+    // fail-closed로 항상 빈 결과다(runConsolidate 참고). knowledge 코퍼스 개념은 consolidate에 없다.
+    const signingKey = signingKeyFromEnv();
+    if (!signingKey) {
+      process.stderr.write(
+        'loop-memory: LOOP_MEMORY_SIGNING_KEY not set — consolidate returns empty (fail-closed, BAC-619 write-path provenance)\n',
+      );
+    }
+    await runConsolidate(opt.json, signingKey);
+    return;
+  }
   if (cmd !== 'graduate' && cmd !== 'recall') {
-    process.stderr.write('Usage: loop-memory <graduate|recall|stats|record-recall> [options]\n');
+    process.stderr.write(
+      'Usage: loop-memory <graduate|recall|consolidate|stats|record-recall> [options]\n',
+    );
     process.exit(2);
   }
   const embedder = pickEmbedder(opt.allowStub);
@@ -350,8 +419,13 @@ async function main(): Promise<void> {
     }
     // 두 코퍼스에 같은 쿼리를 임베드하므로 메모이즈로 임베드 API 1회(질의는 병렬 유지, ADR-0033 §5).
     const memo = memoizeEmbedder(embedder);
+    // --decay(BAC/paul-loop #12): lessons 코퍼스만 decay 랭킹으로 재정렬 — 훅의 실시간 경로
+    // (recallLessons)는 opt.decay가 false인 기본 호출이라 전혀 안 건드린다. knowledge는 파일 기반
+    // count/lastSeen 개념이 없어(레포 문서라 "재발" 개념 자체가 안 맞음) decay 대상이 아니다.
     const [lessons, knowledge] = await Promise.all([
-      recallLessons(db, memo, q, signingKey, opt.k),
+      opt.decay
+        ? recallLessonsDecayed(db, memo, q, signingKey, opt.lessons, opt.k)
+        : recallLessons(db, memo, q, signingKey, opt.k),
       recallKnowledge(db, memo, q, opt.k),
     ]);
     if (opt.json) {
@@ -362,7 +436,13 @@ async function main(): Promise<void> {
     const fmt = (h: { distance: number; content: string }) =>
       `- (${h.distance.toFixed(3)}) ${h.content.replace(/\n/g, ' / ')}\n`;
     process.stdout.write('lessons:\n');
-    for (const h of lessons) process.stdout.write(fmt(h));
+    for (const h of lessons) {
+      // --decay: 정렬에 실제로 쓰인 건 decayed score(raw distance 아님) — 텍스트 출력도 그 값을 보여줘야
+      // 사람이 읽는 순서와 표시값이 일치한다(그렇지 않으면 --json은 score로 정렬해놓고 텍스트는 distance를
+      // 찍어, distance 오름차순이 아닌 것처럼 보이는 줄이 섞인다).
+      const shown = opt.decay ? (h as DecayedRecallHit).score : h.distance;
+      process.stdout.write(`- (${shown.toFixed(3)}) ${h.content.replace(/\n/g, ' / ')}\n`);
+    }
     process.stdout.write('knowledge:\n');
     for (const h of knowledge) process.stdout.write(fmt(h));
   } finally {
