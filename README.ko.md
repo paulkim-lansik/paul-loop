@@ -180,6 +180,7 @@ tools/loop-engine/
   .claude-plugin/plugin.json      # 이 플러그인의 매니페스트
   bin/                            # 명령들 — 플러그인 로드 시 PATH 자동 등록
   lib/                            # bin/ 스크립트가 import하는 공유 헬퍼
+  eval/tier0/                     # 티어0 하네스 자기-스모크 게이트의 골든셋(#7)
   test/                           # 자체 테스트 스위트(bash+node, docker 0) — test/run.sh가 전부 실행
   docs/                           # verdict 계약·lessons 모델·eval-gate·otel 메모
 ```

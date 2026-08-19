@@ -1,0 +1,8 @@
+{
+  "id": "loop-fix-max-iter",
+  "input": "loop-fix-max-iter",
+  "note": "verify가 항상 FAIL이면 loop-fix.sh는 --max-iter를 소진하고 exit 1 + 'MAX-ITER'로 끝나야 한다.",
+  "assert": {
+    "contains": ["EXIT_CODE=1", "MAX-ITER"]
+  }
+}

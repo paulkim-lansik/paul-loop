@@ -1,0 +1,8 @@
+{
+  "id": "lessons-record-signature-only",
+  "input": "lessons-record-signature-only",
+  "note": "현재(#9 병합 전) lessons record는 --signature만으로(--signature-file 없이, --verified 없이) 성공해야 한다. #9(증거 무결성 계약)가 병합되면 이 계약이 바뀔 수 있다 — 그때 이 케이스를 함께 갱신할 것.",
+  "assert": {
+    "contains": ["EXIT_CODE=0", "lessons: recorded"]
+  }
+}

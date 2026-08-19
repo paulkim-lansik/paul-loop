@@ -1,0 +1,9 @@
+{
+  "id": "lessons-record-missing-signature",
+  "input": "lessons-record-missing-signature",
+  "note": "--signature-file도 --signature도 없는 record는 usage error로 fail-closed, exit 2여야 한다.",
+  "assert": {
+    "contains": ["EXIT_CODE=2"],
+    "not_contains": ["lessons: recorded"]
+  }
+}
