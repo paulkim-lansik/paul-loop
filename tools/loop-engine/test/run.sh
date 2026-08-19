@@ -14,15 +14,20 @@ total=0
 # them for a background process to win — reproduced empirically, a background toggler alternating a
 # victim file's content between clean and malicious won roughly half the time.
 #
-# The fix removes the gap instead of narrowing it. Every *.test.sh file's full content is read into
-# memory with exactly one read, in a pass that completes for every file before any test starts
-# executing — so an early-running test's write to a not-yet-processed sibling's file on disk can
-# never affect what that sibling actually runs; its content was already captured before any test
-# (sabotaging or not) got a chance to run. Execution then runs that captured in-memory string
-# directly via `bash -c "$content" "$t"` — there is no second open of the path at all, so "the
-# content checked" and "the content executed" are the same in-memory string by construction, not
-# two reads that could observe different bytes. There is nothing left to hash-compare, so that
-# logic is gone entirely rather than narrowed.
+# The fix removes the check-then-use gap instead of narrowing it. Every *.test.sh file's full
+# content is read into memory with one `cat`, in a pass that completes for every file before any
+# test starts executing — so an early-running test's write to a not-yet-processed sibling's file on
+# disk can never affect what that sibling actually runs against, because there is no second open of
+# that path afterward: execution runs the already-captured in-memory string directly via
+# `bash -c "$content" "$t"`, not a re-read of "$t". This closes the *inter-test* race this guard
+# exists for (one *.test.sh sabotaging another later in the same run — the actual bypass this
+# defends against, since no earlier step in this script's real callers gives attacker-controlled
+# code an execution window before or during this read-all loop). It does not claim the single
+# `cat -- "$t"` read of any one file is itself atomic against a hypothetical concurrent external
+# writer already running against that exact path from outside this script — no such writer exists
+# on this loop's actual entry points, but if one somehow did, a torn read is a separate, narrower
+# question this comment used to overstate as fully closed. There is nothing left to hash-compare
+# against a prior scan, so that logic is gone entirely rather than narrowed.
 #
 # `bash -c "$content" "$t"` sets $0 to the literal path string "$t" (the standard
 # `bash -c script name` idiom — the argument right after the script text becomes $0, with no

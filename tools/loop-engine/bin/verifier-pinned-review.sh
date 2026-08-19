@@ -55,14 +55,22 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- 1) parse CODEOWNERS into a sensitive-path-prefix list ----
-# No CODEOWNERS at all = nothing declared as verifier-defining = nothing to pin. PASS.
-CODEOWNERS_FILE="$REPO_ROOT/CODEOWNERS"
+# Read from the BASE revision via `git show`, never the live working tree. The working tree in a
+# real CI run IS the PR's own HEAD/merge-ref content, fully attacker-controlled — reading CODEOWNERS
+# live meant a single attack commit that both weakened a verifier-defining file AND deleted/emptied
+# CODEOWNERS blinded this entire check (the sensitive-path list ended up empty, so the script took
+# the "nothing to pin" PASS before the diff scan below ever ran; reproduced, issue #14 adversarial
+# round 4 — a full, trivially-reachable defeat that predated this fix). Pinning CODEOWNERS to base
+# content the same way tools/loop-engine/test/*.test.sh is already pinned closes it: what a PR's own
+# commit does to CODEOWNERS has zero effect on what gets checked for that same PR. A PR that
+# legitimately widens CODEOWNERS only takes effect starting with the next PR, once it's merged and
+# becomes the new base — an acceptable one-PR delay for a legitimate change, not a security gap for
+# an attacker (their own narrowing/deleting edit can't be used against themselves).
+# No CODEOWNERS at base at all = nothing declared as verifier-defining = nothing to pin. PASS.
 SENSITIVE_FILE="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || { echo "verifier-pinned-review.sh: mktemp failed" >&2; exit 2; }
-if [ -f "$CODEOWNERS_FILE" ]; then
-  grep -vE '^[[:space:]]*(#|$)' "$CODEOWNERS_FILE" | awk '{print $1}' > "$SENSITIVE_FILE"
-fi
+git -C "$REPO_ROOT" show "${BASE}:CODEOWNERS" 2>/dev/null | grep -vE '^[[:space:]]*(#|$)' | awk '{print $1}' > "$SENSITIVE_FILE"
 if [ ! -s "$SENSITIVE_FILE" ]; then
-  echo "verifier-pinned-review: no CODEOWNERS sensitive paths declared — nothing to pin, PASS"
+  echo "verifier-pinned-review: no CODEOWNERS sensitive paths declared at base — nothing to pin, PASS"
   exit 0
 fi
 
