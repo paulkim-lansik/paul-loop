@@ -282,6 +282,17 @@ start_watchdog() {
 
 log() { printf '%s\n' "$*" | tee -a "$HISTORY"; }
 
+# Phase 3 fail-channel (issue #10): record an UNVERIFIED lesson when the loop gives up without
+# ever reaching PASS — ground truth never confirmed a fix, so this is a signal, not a verified
+# lesson (record()'s existing merge logic upgrades it to verified=true if a later run with the
+# same signature DOES converge). No-op if --lessons wasn't given, or FIRST_VERDICT was never
+# captured (e.g. the very first verify hung before any verdict landed).
+record_fail_lesson() {
+  [ -n "$LESSONS" ] && [ -s "$FIRST_VERDICT" ] && [ -x "$LESSONS_BIN" ] || return 0
+  "$LESSONS_BIN" record --signature-file "$FIRST_VERDICT" --source loop-fix-fail --iterations "$iter" --lessons "$LESSONS" >/dev/null 2>&1 \
+    && log "recorded an unverified fail-channel lesson to memory ($LESSONS)"
+}
+
 log "=== loop-fix start $(date '+%Y-%m-%d %H:%M:%S') ==="
 log "verify: $VERIFY"
 log "fix:    ${FIX:-<none — verify-only mode>}"
@@ -350,6 +361,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ -f "$WATCHDOG_FIRED" ]; then
     wreason="$(head -n1 "$WATCHDOG_FIRED" 2>/dev/null)"
     log "iter $iter: ${wreason:-TIMEOUT} — material-progress watchdog fired. Aborting."
+    record_fail_lesson
     log "=== loop-fix done: ${wreason:-TIMEOUT} ==="
     exit 1
   fi
@@ -425,6 +437,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   prev_fp="$fp"; prev_counts="$counts"
   if [ "$stall_count" -ge "$STALL" ]; then
     log "iter $iter: STALLED — identical failure fingerprint and no count progress ${stall_count}x running. Aborting."
+    record_fail_lesson
     log "=== loop-fix done: STALLED ==="
     exit 1
   fi
@@ -434,6 +447,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     elapsed=$(( $(date +%s) - start_epoch ))
     if [ "$elapsed" -ge "$BUDGET" ]; then
       log "iter $iter: budget ${BUDGET}s exhausted (${elapsed}s). Aborting."
+      record_fail_lesson
       log "=== loop-fix done: BUDGET ==="
       exit 1
     fi
@@ -442,6 +456,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   # ---- verify-only mode: no fixer, just report and stop ----
   if [ -z "$FIX" ]; then
     log "no --fix given; verify-only mode. Stopping at first FAIL."
+    record_fail_lesson
     log "=== loop-fix done: FAIL (verify-only) ==="
     exit 1
   fi
@@ -496,6 +511,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ -f "$WATCHDOG_FIRED" ]; then
     wreason="$(head -n1 "$WATCHDOG_FIRED" 2>/dev/null)"
     log "iter $iter: ${wreason:-TIMEOUT} — material-progress watchdog fired during the fixer. Aborting."
+    record_fail_lesson
     log "=== loop-fix done: ${wreason:-TIMEOUT} ==="
     exit 1
   fi
@@ -511,5 +527,6 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
 done
 
 log "reached max-iter=$MAX_ITER without PASS. Aborting."
+record_fail_lesson
 log "=== loop-fix done: MAX-ITER ==="
 exit 1
