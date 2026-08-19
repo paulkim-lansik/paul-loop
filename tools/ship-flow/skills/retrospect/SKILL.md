@@ -88,9 +88,10 @@ plugin-standard tooling for it, and a repo without such a tool can skip this sec
 
 - `node tools/plugin-path.mjs exec bin/lessons.sh stats --lessons <dir>` — avg iterations-to-green, recurrence counts, top recurring blockers.
   Use it to see whether the loop is actually getting faster.
-- `node tools/plugin-path.mjs exec bin/lessons.sh promote --min-count 3 --lessons <dir>` — recurring verified lessons worth codifying. Hand
-  each to `write-a-skill` (make the fix a reusable skill) or fold it into `CLAUDE.md` (a guideline),
-  then the loop stops re-solving it from scratch. Add `--runs .loop/runs` to fold in deterministic gate-regression
+- `node tools/plugin-path.mjs exec bin/lessons.sh promote --min-count 3 --lessons <dir>` — recurring verified lessons worth codifying. For
+  each candidate, pick its destination with the checklist below, then hand it to `write-a-skill` (make
+  the fix a reusable skill) or fold it into `CLAUDE.md` (a guideline) accordingly — then the loop stops
+  re-solving it from scratch. Add `--runs .loop/runs` to fold in deterministic gate-regression
   signals: a `[REGRESSION: <gate> PASS→FAIL]` line — distinct from the `[N×]` recurrence count — marks
   candidates whose gate regressed in the runs ledger, and unattributed regressions list in their own section. The
   ledger is forgeable (trust boundary), so a regression is candidate INPUT only — the skeptical challenge gate stands.
@@ -99,6 +100,86 @@ plugin-standard tooling for it, and a repo without such a tool can skip this sec
   or a heartbeat-style "promotion candidate" nudge if this repo has one). This is the terminal gate that
   keeps the candidate pool from growing monotonically. Fail closed: only a verified + `challenge
   --verdict accept`ed lesson can retire; a content change later re-opens it for fresh review.
+- `node tools/plugin-path.mjs exec bin/lessons.sh invalidate --id <id> --reason "<why>" [--superseded-by <id2>] --lessons <dir>`
+  (if this repo's lessons tooling has it) — mark a lesson WRONG (the lesson itself was mistaken), distinct
+  from `retire` (the lesson was right but is now codified). An invalidated lesson is excluded, fail
+  closed, from recall and from the promote listing/`--codify` going forward.
+- `node tools/plugin-path.mjs exec bin/lessons.sh mark-clean --gate "<verify cmd>" --lessons <dir>` (if
+  available) — bump a clean-pass counter on lessons attributed to that gate; a fresh recurrence resets it
+  to 0. `promote`'s listing flags a lesson crossing the clean-pass threshold as a `RETIREMENT CANDIDATE`
+  comment — informational only, never an auto-retire/invalidate.
+
+### Destination checklist — SKILL.md or CLAUDE.md?
+
+Don't leave this to ad hoc judgment call by call — a candidate lands in exactly one of two homes,
+decided by what kind of knowledge it is:
+
+- **A repeatable, ordered procedure** (steps you'd literally run, a tool-call sequence, something with
+  a clear start and end) → **SKILL.md**. Skills are for *doing*.
+- **A constraint or judgment call that recurs across many different situations** (not one runnable
+  sequence, but a rule you keep checking against — "never do X", "always prefer Y before Z") →
+  **CLAUDE.md guideline**. Guidelines are for *judging*.
+- **Both at once** (a procedure plus a standing rule about when/how to invoke it)? Split it: the steps
+  become the skill; the standing constraint stays a short CLAUDE.md line (or becomes the skill's own
+  trigger-first `description:` — see the discoverability check below), pointing at the skill instead of
+  restating its steps.
+- **Still ambiguous?** Default to the **more narrowly triggered** option. A CLAUDE.md guideline is read
+  on every session (constant context cost); a skill only loads when its trigger fires. When in doubt,
+  prefer the one that costs nothing until it's actually needed.
+- **`write-a-skill` not available in this repo** (check `ls <skills-dir>/` — e.g. this plugin's own
+  `tools/ship-flow/skills/` has no `write-a-skill` skill as of this writing): a skill-shaped candidate
+  either waits for `write-a-skill` to be added, or — only if it truly can't survive as prose — becomes a
+  CLAUDE.md guideline as a fallback. Don't force a procedure into CLAUDE.md by writing it as a numbered
+  step list; a numbered list inside a guideline is the tell that the destination was chosen wrong, and
+  it should move to skill form once `write-a-skill` lands.
+
+### After `write-a-skill` writes a new skill — discoverability check
+
+Codifying a candidate into a skill file isn't the same as making it *discoverable*. A skill nobody's
+router ever picks is dead weight. If this repo's `write-a-skill` skill already runs a check like this
+itself (read its own SKILL.md to confirm), trust it and skip this; otherwise run it by hand before
+calling the promotion done:
+
+- **Trigger-first `description:`.** It opens with *when* the skill fires ("Use when...", "Trigger this
+  when...") — not a bare category label ("Handles X", "X utilities"). A category label can't be matched
+  against a request; a trigger clause can.
+- **No routing collision.** Skim sibling skills' `description:` fields for overlapping trigger language.
+  Two skills that both plausibly fire on the same phrasing make routing ambiguous — narrow the wording
+  (or merge the skills) until each has a distinct trigger.
+- **No path escape.** Every file the skill reads or writes stays under its own skill directory
+  (`<skills-dir>/<skill-name>/...`) — no `../` reaching into a sibling skill's directory or the skills
+  root.
+- **Valid frontmatter.** `name` and `description` are both present, `name` matches the directory name,
+  and the YAML actually parses (a stray unescaped colon or unclosed quote silently breaks discovery
+  without erroring loudly).
+- **No name collision.** The `name` doesn't already exist elsewhere in this repo's skill directories — a
+  silent shadow means one of the two copies never gets picked by the router.
+
+Then, **if this repo maintains a skills index/catalog doc** (a page listing all installed skills by
+category), add the newly promoted skill to it as the last step — a skill that passes every check above
+but stays unlisted in the repo's own catalog is still easy to miss.
+
+### Finding CLAUDE.md guidelines that should have been skills
+
+CLAUDE.md accumulates guidelines over a project's life, and some of them — in hindsight — describe a
+procedure rather than a standing rule, and would read and get followed better as a skill. This plugin
+repo has no consuming repo's CLAUDE.md of its own to list candidates from, so what follows is the
+*procedure* for auditing one, not a fixed list:
+
+1. Read the consuming repo's CLAUDE.md guideline by guideline.
+2. Run each one back through the destination checklist above, in reverse: "if this were a fresh
+   promotion candidate today, would the first bullet route it to SKILL.md instead?" — i.e., is it
+   actually an ordered sequence of steps written as prose, rather than a constraint that shapes
+   judgment across situations?
+3. Flag the ones where the answer is yes. Don't auto-migrate them — moving a guideline can break
+   existing cross-references to it elsewhere in the repo (e.g. `CLAUDE.md §N` citations). Surface the
+   candidate list and let a human decide the move via a normal PR, the same review boundary as any other
+   promotion.
+4. A flagged candidate still has to clear the normal bar before it counts as migrated: `write-a-skill`
+   produces it, and the discoverability check above passes.
+
+Worth re-running this audit periodically (e.g. during a retro sweep), not only once — a guideline that
+started as a genuine standing rule can calcify into a checklist-shaped procedure as it grows.
 
 ### Grounded reopen (retired or rejected lessons)
 
@@ -107,8 +188,12 @@ own doesn't reopen them. A reopen request must:
 
 - **Cite the id.** Name the exact lesson id (or ADR number) under discussion — a vague appeal to "that
   decision" doesn't identify a target.
-- **Bring new evidence.** Something the original verdict didn't have: a fresh recurrence, a new failure
-  signature, a verified counterexample. "On reflection..." with no new signal isn't evidence.
+- **Bring new evidence.** Something the original verdict didn't have: a new failure signature, a
+  verified counterexample, or a recurrence recorded with a genuinely updated `--fix`/`--title` — not
+  just a repeat of the same text. `lessons record` only clears a settled `challenge`/`retired` when the
+  fix/title content actually changes; re-recording the identical text just bumps the count and leaves
+  the old verdict standing, so a plain recurrence by itself is not reopening evidence. "On
+  reflection..." with no new signal isn't evidence.
 - **Not overwrite the record.** Don't edit the retired/rejected entry's fields in place — that erases the
   audit trail. Open a fresh lesson/challenge cycle instead, or (if this repo's lessons tooling has an
   `invalidate --superseded-by` command) link the old id forward to the new one; otherwise reference the
@@ -116,7 +201,9 @@ own doesn't reopen them. A reopen request must:
   that references the old one, not a rewrite of it.
 
 A reopen missing an id or missing new evidence is an automatic reject in the skeptical pass — the same
-challenge gate as any promotion candidate.
+challenge gate as any promotion candidate. Verify it actually landed, too: after recording the new
+evidence, run `lessons stats`/`lessons promote` and confirm the id is back among the open candidates —
+don't take the act of re-recording alone as proof the lesson reopened.
 
 ## Reporting
 
