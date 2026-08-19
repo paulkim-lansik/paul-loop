@@ -36,6 +36,34 @@ CI에서는 `.github/workflows/loop-engine-test.yml`의 `pull_request` 이벤트
 삭제한 테스트 파일도 복원해서 함께 돌린다. base에는 없었고 PR이 새로 추가한 테스트는 대상이 아니다 —
 그건 이 PR의 정상적인 발전이고, 이미 일반 CI(`selftest` job)가 통과 여부를 본다.
 
+## 알려진 한계 — 의도적으로 남겨둠 (적대적 검증 라운드2에서 발견, 코드로 안 막음)
+
+이 메커니즘이 못 잡는 두 클래스를 정직하게 기록한다. 둘 다 diff 경로 스캔이라는 접근 자체의 구조적
+한계이거나 GitHub 플랫폼 동작의 결과라, `verifier-pinned-review.sh` 안에서 고칠 수 없다 — 과설계로
+쫓아가지 않고 여기 문서화만 하는 걸 선택했다.
+
+**1. 교차 디렉터리 우회.** `CODEOWNERS`는 정적이고 유한한 경로 prefix 목록이다. 검증 로직이 그
+prefix 목록 **전부의 바깥**으로(이미 머지된, 그 자체로는 무해해 보이는 이전 PR이 만든 안정적인 위임
+shim을 통해) 옮겨지면, 그 로직을 실제로 약화시키는 후속 PR은 오직 그 바깥 파일만 건드리므로
+`touched=0`으로 조용히 스킵된다 — 스크립트는 변경된 경로를 prefix 목록에 grep할 뿐 도달가능성/호출
+그래프 분석을 하지 않기 때문이다. 재현 확인: base 커밋에 `tools/loop-engine/bin/` 안의 안정적인
+1줄짜리 shim이 `tools/loop-engine/` 바깥의 파일에 위임하도록 만든 뒤, 공격 PR이 그 바깥 파일만
+고치자 `verifier-pinned-review: no verifier-defining paths touched — skipping` (exit 0)이 나왔다. 지금
+이 레포엔 그런 위임 패턴이 실제로 없어 당장은 잠재적 gap이다.
+
+**2. CI 워크플로우 정의 자체는 pin되지 않는다.** `.github/workflows/loop-engine-test.yml`은
+CODEOWNERS의 민감 경로라 그걸 건드리는 PR은 pinned-baseline 체크가 정상적으로 실행되지만(`touched=1`),
+`pull_request` 트리거는 GitHub이 **PR 자신의 head/merge ref**에서 워크플로우 파일 내용을 읽어 실행한다
+— base의 얼어붙은 신뢰 사본이 아니다. 즉 PR이 자기 자신의 워크플로우 파일을 고쳐(`verifier-pinned-review`
+job을 통째로 지우거나, `--base` 인자를 HEAD 자신으로 바꿔 diff를 비워버리는 식으로) 그 검사 자체를
+무력화하면, 그 고쳐진 정의가 바로 그 PR의 체크로 실행된다. `verifier-pinned-review.sh`는 이걸 자기
+내부에서 고칠 수 없다 — job이 워크플로우에서 사라지면 스크립트 자체가 CI에서 아예 호출되지 않으니
+스스로를 복원할 방법이 없다. 진짜 방어는 GitHub 브랜치 보호의 필수 상태체크(job 이름으로 지정) —
+필수 job이 워크플로우에서 사라지면 GitHub은 그걸 "Expected — waiting for status"로 보고해 머지를
+막는다(자동으로 통과 처리하지 않는다). **이 레포의 `main`은 현재 브랜치 보호가 전혀 설정돼 있지
+않다**(2026-08-19 확인, `gh api repos/.../branches/main/protection` → 404) — 켤지 여부는 레포 소유자가
+따로 결정할 몫이라 이 PR이 대신 켜지 않는다.
+
 ## 고려한 대안
 
 - **GitHub 네이티브 코드오너 승인 필수를 그대로 켠다** — 기각. 1인 레포에서 자기 PR 자기승인 불가로
@@ -51,6 +79,14 @@ CI에서는 `.github/workflows/loop-engine-test.yml`의 `pull_request` 이벤트
 - **레포에 오너가 2인 이상이 되면**, `CODEOWNERS`를 진짜 GitHub 코드오너 승인 게이트로 전환하는 걸
   재검토한다 — 그때는 "다른 사람의 승인"이 실제로 가능해지므로 사람 리뷰가 다시 1차 방어선이 될 수
   있고, `verifier-pinned-review`는 보조 장치로 격하될 수 있다.
+- **교차 디렉터리 위임 패턴이 실제로 도입되면**(예: 공유 로직을 `tools/loop-engine/` 바깥의
+  `scripts/`류 디렉터리로 추출), 그 도입 PR 자체에 사람이 "이 경로가 검증 로직을 옮기는 게 아닌가"
+  의도적으로 더 주의 깊게 스크루티니한다. 이 클래스 공격이 실무에서 문제가 되는 게 확인되면,
+  민감 prefix 안쪽에서 그 바깥을 가리키는 새 `source`/`exec`/`bash`/`node` 호출을 flag하는 lint성
+  휴리스틱을 별도로 검토한다(지금은 과설계로 판단해 안 만듦).
+- **`main`에 브랜치 보호(필수 상태체크)를 켤 때까지**, 이 ADR의 모든 방어는 강제가 아니라
+  권고(advisory)다 — `verifier-pinned-review.sh`가 완벽해도 그걸 우회한 PR을 막을 서버단 장치가
+  없다. 브랜치 보호를 켜면 이 재검토 트리거는 닫힌 것으로 본다.
 
 ## 참고
 
