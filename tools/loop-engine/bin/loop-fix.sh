@@ -84,10 +84,21 @@
 # --protect glob but did not exist at snapshot time, so a fixer cannot dodge the guard by dropping a
 # fresh trivially-passing file next to the real protected one; and (c) recomputes each restored
 # file's hash and compares it against the ORIGINAL hash recorded before iteration 1 ever ran. The
-# backup store lives on the same filesystem the fixer can write to, so a sufficiently motivated
-# fixer CAN poison the backup copy in the same move it poisons the live file — (c) exists to catch
-# exactly that. It is not a tamper-proof store; it is a check that notices when the store was
-# tampered with. Whenever a protected file's restore cannot be independently verified — the
+# per-file sha256 used for BOTH (c) and the live detection in check_protected() is held ONLY in
+# loop-fix.sh's own bash process memory (never written to a file) — a --fix subprocess runs as a
+# separate CHILD process and structurally cannot write into its parent's shell variables, only into
+# files/IPC the parent later reads (issue #34 round-3). Earlier revisions kept this hash in a plain
+# file under $LOOP_DIR instead, which the fixer subprocess could reach the same as any other file it
+# writes: overwriting it with the hash of its own sabotaged content made detection agree with itself
+# ("unchanged"), and simply deleting it was treated as "nothing to protect" — both were a SINGLE-run,
+# silent, complete bypass with no PROTECTED-VIOLATION log line at all. That specific file is gone
+# now; there is nothing on disk left for a fixer to rewrite to fake a match. The byte-CONTENT backup
+# under $PROTECT_BACKUP is different and DOES still live on disk (file content — as opposed to its
+# hash — is not something that belongs crammed into a shell variable), so it remains reachable by
+# the fixer the same as before: a sufficiently motivated fixer CAN poison the backup copy in the
+# same move it poisons the live file — (c) exists to catch exactly that. It is not a tamper-proof
+# store; it is a check that notices when the store was tampered with. Whenever a protected file's
+# restore cannot be independently verified — the
 # restored bytes do NOT match the original hash, the backup copy is missing entirely (e.g. the
 # fixer `rm`s it instead of overwriting it with matching content), or the `cp` from backup itself
 # fails — loop-fix.sh does NOT claim success: it logs a loud, distinct failure, writes
@@ -172,11 +183,34 @@ HISTORY="$LOOP_DIR/history.log"
 VERDICT_FILE="$LOOP_DIR/last-verdict.txt"
 LOG_FILE="$LOOP_DIR/last-run.log"
 PROMPT_FILE="$LOOP_DIR/fix-prompt.txt"
-PROTECT_SNAP="$LOOP_DIR/protected.sha"
-PROTECT_LIST_FILE="$LOOP_DIR/protected.files"   # relative paths captured at snapshot time (issue #34)
-PROTECT_BACKUP="$LOOP_DIR/protected-backup"     # byte-for-byte copies, mirroring relative paths
-PROTECT_MODES="$LOOP_DIR/protected.modes"       # original perm bits, same order as PROTECT_LIST_FILE
-                                                 # (undoes the backup's read-only chmod on restore, step 5)
+PROTECT_BACKUP="$LOOP_DIR/protected-backup"     # byte-for-byte copies, mirroring relative paths — the
+                                                 # ONLY protect bookkeeping that still lives on disk
+                                                 # (issue #34 round-3: large/binary content does not
+                                                 # belong crammed into a bash variable; content backups
+                                                 # were already documented as "not tamper-proof,
+                                                 # integrity-checked instead" — see restore_protected()).
+# PROTECT_FILES_DATA / PROTECT_SNAP_DATA / PROTECT_MODES_DATA (round-3 fix, issue #34 finding — a
+# SINGLE-run false SUCCESS): the hash/list/mode ground truth used to live in plain files under
+# $LOOP_DIR (protected.sha / protected.files / protected.modes) — a path the --fix subprocess has
+# the same filesystem write access to as loop-fix.sh itself. A fixer could overwrite protected.sha
+# with the hash of its OWN sabotaged content (check_protected()'s diff then agrees with itself and
+# reports "unchanged"), or simply `rm -f` it (an empty/missing snapshot was treated as "nothing to
+# protect"). No amount of chmod/backup/re-checking-against-another-file closes this while the
+# ground truth itself lives in a file the fixer can also reach — that is an infinite regress
+# (protect the snapshot -> now protect the backup-of-the-snapshot -> …). The actual fix: loop-fix.sh
+# runs as ONE continuous bash process for the whole loop; --fix runs as a SEPARATE CHILD subprocess
+# via `sh -c`, and a child process cannot write into its parent's in-memory shell variables — only
+# into files/IPC the parent later reads. So the ground truth now lives ONLY in these three bash
+# variables, held in loop-fix.sh's own process memory, which the fixer subprocess structurally
+# cannot touch no matter what it does to the filesystem (same idiom already used for PROTECT_LIST
+# itself — a newline-accumulated string built once from CLI args, never re-read from disk). All
+# three are newline-separated strings, one entry per line, walked in lockstep (same order, one line
+# per protected file) — set once by snapshot_protected() before the iteration loop and read-only
+# after that.
+PROTECT_FILES_DATA=""   # relative paths captured at snapshot time
+PROTECT_SNAP_DATA=""    # `sha_of` output per file, same order as PROTECT_FILES_DATA
+PROTECT_MODES_DATA=""   # original perm bits per file, same order (undoes the backup's read-only
+                         # chmod on restore, step 5)
 LESSONS_BIN="$HERE/lessons.sh"
 FIRST_VERDICT="$LOOP_DIR/first-verdict.txt"
 rm -f "$FIRST_VERDICT" 2>/dev/null   # reset per run: never inherit a prior run's first failure (sharing --loop-dir)
@@ -233,21 +267,31 @@ protect_files() {
   done
 }
 
-# Snapshots both the sha256 (detection, unchanged) AND a byte-for-byte backup copy of each
-# protected file's current content under $PROTECT_BACKUP (issue #34: without the backup, a
-# detected violation had nothing to restore FROM). Runs once per loop-fix.sh run, before the
-# iteration loop — it must reflect state at run start, not be re-taken every iteration.
+# Snapshots both the sha256 (detection, held in-memory — round-3 fix, see PROTECT_SNAP_DATA above)
+# AND a byte-for-byte backup copy of each protected file's current content under $PROTECT_BACKUP
+# (issue #34: without the backup, a detected violation had nothing to restore FROM). Runs once per
+# loop-fix.sh run, before the iteration loop — it must reflect state at run start, not be re-taken
+# every iteration.
+#
+# Builds PROTECT_FILES_DATA/PROTECT_SNAP_DATA/PROTECT_MODES_DATA via a `while` loop fed by PROCESS
+# SUBSTITUTION (`< <(...)`), not a pipe (`... | while`) — a bash pipe runs its last stage in a
+# subshell, so variable assignments inside a piped `while` body are invisible once the pipe exits.
+# Process substitution attaches the producer as an input redirection instead, so the `while` body
+# itself still runs in THIS shell and the accumulated variables survive the loop.
 snapshot_protected() {
-  : > "$PROTECT_SNAP"
-  : > "$PROTECT_LIST_FILE"
-  : > "$PROTECT_MODES"
+  PROTECT_FILES_DATA=""
+  PROTECT_SNAP_DATA=""
+  PROTECT_MODES_DATA=""
   rm -rf "$PROTECT_BACKUP"
   mkdir -p "$PROTECT_BACKUP"
-  protect_files | sort -u | while IFS= read -r f; do
+  while IFS= read -r f; do
     [ -n "$f" ] || continue
-    printf '%s\n' "$f" >> "$PROTECT_LIST_FILE"
-    sha_of "$f" >> "$PROTECT_SNAP"
-    mode_of "$f" >> "$PROTECT_MODES"
+    PROTECT_FILES_DATA="$PROTECT_FILES_DATA$f
+"
+    PROTECT_SNAP_DATA="$PROTECT_SNAP_DATA$(sha_of "$f")
+"
+    PROTECT_MODES_DATA="$PROTECT_MODES_DATA$(mode_of "$f")
+"
     _dir="$(dirname "$f")"
     [ "$_dir" = "." ] || mkdir -p "$PROTECT_BACKUP/$_dir"
     cp -p "$f" "$PROTECT_BACKUP/$f" 2>/dev/null
@@ -256,20 +300,28 @@ snapshot_protected() {
     # backup-poisoning is the post-restore integrity check in restore_protected() below, plus the
     # fail-closed marker it leaves for a future run to see. Note this chmod means `cp -p` back OUT
     # of the backup during restore would otherwise propagate 0444 onto the live file too — restore
-    # explicitly re-chmods to the mode captured in $PROTECT_MODES above to undo that side effect.
+    # explicitly re-chmods to the mode captured in PROTECT_MODES_DATA above to undo that side effect.
     chmod 0444 "$PROTECT_BACKUP/$f" 2>/dev/null
-  done
+  done < <(protect_files | sort -u)
 }
 
-# Returns 0 if unchanged, 1 if any protected file's hash changed (or a file vanished).
+# Returns 0 if unchanged, 1 if any protected file's hash changed (or a file vanished). Recomputes
+# the current state FRESH every call (protect_files() + sha_of() per file) and compares it directly
+# against PROTECT_SNAP_DATA via a plain string comparison — no temp file, no `diff -q` against a
+# file, nothing on disk a fixer could rewrite to fake a match (round-3 fix). Also stashes the fresh
+# scan in PROTECT_NOW_DATA (a global, not a return value) purely so the caller can render a
+# human-readable "changed vs snapshot" diff on a violation — that var is diagnostic output, not
+# ground truth, and nothing re-reads it for the actual pass/fail decision.
 check_protected() {
-  [ -s "$PROTECT_SNAP" ] || return 0
-  _tmp="$LOOP_DIR/protected.now"
-  : > "$_tmp"
-  protect_files | sort -u | while IFS= read -r f; do
-    [ -n "$f" ] && sha_of "$f" >> "$_tmp"
-  done
-  diff -q "$PROTECT_SNAP" "$_tmp" >/dev/null 2>&1
+  [ -n "$PROTECT_SNAP_DATA" ] || return 0
+  _now=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    _now="$_now$(sha_of "$f")
+"
+  done < <(protect_files | sort -u)
+  PROTECT_NOW_DATA="$_now"
+  [ "$_now" = "$PROTECT_SNAP_DATA" ]
 }
 
 # Restores every protected file to the bytes captured by snapshot_protected() at run start —
@@ -283,20 +335,25 @@ check_protected() {
 #
 # Round-2 addition (issue #34 adversarial finding 1 — backup poisoning): after copying bytes back,
 # recomputes each restored file's sha256 and compares it against the ORIGINAL hash recorded in
-# $PROTECT_SNAP at run start (before iteration 1, so it predates any fixer action including
+# $PROTECT_SNAP_DATA at run start (before iteration 1, so it predates any fixer action including
 # poisoning the backup). A mismatch proves $PROTECT_BACKUP was ALSO tampered with — cp'ing from a
 # poisoned backup "succeeds" as a copy but does not actually restore anything trustworthy. In that
 # case this does NOT log the normal success line; it logs a distinct, loud failure and appends to
 # $COMPROMISED_MARKER (consumed by the fail-closed startup check near the top of this script) so a
 # later run refuses to proceed rather than trusting a possibly-still-sabotaged workspace.
 restore_protected() {
-  if [ ! -s "$PROTECT_LIST_FILE" ]; then
+  if [ -z "$PROTECT_FILES_DATA" ]; then
     log "  restore: no protected-file list captured — nothing to restore from."
     return 1
   fi
   _restored=0
   _restore_failed=0
   _integrity_failed=0
+  # Three parallel in-memory lists (PROTECT_FILES_DATA / PROTECT_SNAP_DATA / PROTECT_MODES_DATA),
+  # walked together via three process-substitution fds — same shape as the old three-file-descriptor
+  # read (fd 3/4/5 against real files), just sourced from bash variables instead of disk (round-3
+  # fix). Not a pipe, so this `while` body still runs in THIS shell — _restored/_restore_failed/
+  # _integrity_failed set below correctly persist past the loop.
   while IFS= read -r f <&3 && IFS= read -r _origline <&4 && IFS= read -r _origmode <&5; do
     [ -n "$f" ] || continue
     _orig_hash="${_origline%% *}"
@@ -336,7 +393,7 @@ restore_protected() {
       printf 'file=%s reason=cp from backup %s did not succeed — cannot verify or restore original pre-run bytes\n' \
         "$f" "$_b" >> "$COMPROMISED_MARKER"
     fi
-  done 3< "$PROTECT_LIST_FILE" 4< "$PROTECT_SNAP" 5< "$PROTECT_MODES"
+  done 3< <(printf '%s' "$PROTECT_FILES_DATA") 4< <(printf '%s' "$PROTECT_SNAP_DATA") 5< <(printf '%s' "$PROTECT_MODES_DATA")
   if [ "$_integrity_failed" -eq 1 ] || [ "$_restore_failed" -eq 1 ]; then
     log "  RESTORE COULD NOT BE VERIFIED — the workspace may still be compromised. Do NOT trust it; a human must inspect it. Marker written: $COMPROMISED_MARKER (future runs will refuse to start until it is cleared)."
   else
@@ -349,14 +406,15 @@ restore_protected() {
 # (issue #34 adversarial finding 3): check_protected() only compares hashes for files it already
 # knew about, so a fixer that creates a brand-new file matching a broad glob (e.g. dropping a
 # second, trivially-passing test file next to the real protected one) still trips the violation,
-# but restore_protected() alone never removes it — it only walks $PROTECT_LIST_FILE (snapshot-time
-# names). Scope is deliberately narrow: only files protect_files() matches RIGHT NOW are
-# candidates; anything the fixer created that does not match a --protect pattern is left untouched.
+# but restore_protected() alone never removes it — it only walks PROTECT_FILES_DATA (snapshot-time
+# names, held in-memory — round-3 fix). Scope is deliberately narrow: only files protect_files()
+# matches RIGHT NOW are candidates; anything the fixer created that does not match a --protect
+# pattern is left untouched.
 cleanup_rogue_protected() {
-  [ -s "$PROTECT_LIST_FILE" ] || return 0
+  [ -n "$PROTECT_FILES_DATA" ] || return 0
   protect_files | sort -u | while IFS= read -r f; do
     [ -n "$f" ] || continue
-    grep -qFx "$f" "$PROTECT_LIST_FILE" && continue   # existed at snapshot time — restore_protected()'s job
+    printf '%s' "$PROTECT_FILES_DATA" | grep -qFx "$f" && continue   # existed at snapshot time — restore_protected()'s job
     if rm -f "$f" 2>/dev/null; then
       log "  removed rogue new file matching --protect (not present at run start): $f"
     else
@@ -527,12 +585,12 @@ fi
 snapshot_protected
 has_protect=0
 printf '%s\n' "$PROTECT_LIST" | grep -q '[^[:space:]]' && has_protect=1
-if [ "$has_protect" -eq 1 ] && [ ! -s "$PROTECT_SNAP" ]; then
+if [ "$has_protect" -eq 1 ] && [ -z "$PROTECT_SNAP_DATA" ]; then
   echo "loop-fix.sh: --protect matched 0 files — refusing to run with the reward-hacking guard OFF." >&2
   echo "             Check the path/glob (note: only '**' patterns recurse)." >&2
   exit 2
 fi
-[ -s "$PROTECT_SNAP" ] && log "protecting $(wc -l < "$PROTECT_SNAP" | tr -d ' ') file(s) from modification"
+[ -n "$PROTECT_SNAP_DATA" ] && log "protecting $(printf '%s' "$PROTECT_SNAP_DATA" | wc -l | tr -d ' ') file(s) from modification"
 
 # BAC-626 ③: 워치독 기동(opt-in). 원장 경로는 기동 시 1회 해석해 history에 남긴다(강등 가시화).
 if [ "$IDLE_T" -gt 0 ] || [ "$PROG_T" -gt 0 ]; then
@@ -728,7 +786,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if ! check_protected; then
     log "iter $iter: PROTECTED FILE MODIFIED by the fixer. This is reward hacking — aborting."
     log "Changed vs snapshot:"
-    diff "$PROTECT_SNAP" "$LOOP_DIR/protected.now" 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
+    diff <(printf '%s' "$PROTECT_SNAP_DATA") <(printf '%s' "$PROTECT_NOW_DATA") 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
     restore_protected
     cleanup_rogue_protected
     log "=== loop-fix done: PROTECTED-VIOLATION ==="

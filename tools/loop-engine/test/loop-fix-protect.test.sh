@@ -14,6 +14,17 @@
 # guard's own restore path — closed by a post-restore integrity hash check + a fail-closed
 # compromise marker that makes a subsequent run refuse to proceed), and a rogue new file matching
 # the protect glob that restore_protected() alone never cleans up (case 6).
+#
+# Round 3 (adversarial review, cases 9-10): closes a CRITICAL, complete, SILENT bypass of the
+# entire guard — .loop/protected.sha (the detection ground truth) was a plain file the --fix
+# subprocess could write to just like any other file: overwriting it with the hash of its own
+# sabotaged content made check_protected() agree with itself ("unchanged"), and simply `rm -f`ing
+# it was treated as "nothing to protect" — either way, exit 0, false SUCCESS, in a SINGLE run, with
+# NO PROTECTED FILE MODIFIED log line and no restore attempt at all. Root-cause fix: the detection
+# hash (and the parallel file-list/mode-list bookkeeping) now lives ONLY in bash variables held in
+# loop-fix.sh's own process memory (PROTECT_SNAP_DATA / PROTECT_FILES_DATA / PROTECT_MODES_DATA),
+# never written to a file — a --fix child subprocess structurally cannot write into its parent
+# shell's variables, so there is nothing left on disk to forge or delete.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOOPFIX="$HERE/../bin/loop-fix.sh"
@@ -237,5 +248,60 @@ EOF
   chmod 644 .loop/protected-backup/guard-file.txt 2>/dev/null   # let the trap's rm -rf clean up
 fi
 
-echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, and deletes rogue new protect-glob-matching files before aborting"
+# ── case 9: fixer sabotages the live file AND FORGES .loop/protected.sha to match (round-3) ────
+# Before the fix, the sha256 ground truth lived in a plain file (.loop/protected.sha) the fixer
+# subprocess had the same filesystem write access to as loop-fix.sh itself. Overwriting it with the
+# hash of the fixer's OWN sabotaged content made check_protected()'s diff agree with itself — no
+# violation ever detected, no restore, no compromise marker, loop just continues to MAX-ITER/STALL
+# (or PASS, if the sabotaged content happened to satisfy verify) having never noticed. After the
+# round-3 fix, the ground truth lives only in an in-process bash variable the fixer cannot reach, so
+# forging the on-disk file (if the fixer even still bothers to write one) has zero effect — the next
+# check_protected() recomputes the hash fresh and compares in memory.
+C="$WORK/c9"; mkdir -p "$C"; cd "$C" || fail "cd c9"
+cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+printf 'ORIGINAL-CONTENT-c9\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-fix-forge-sha.sh <<'EOF'
+#!/bin/sh
+echo "CHEAT-FORGE-SHA-c9" > guard-file.txt
+shasum -a 256 guard-file.txt > .loop/protected.sha 2>/dev/null \
+  || sha256sum guard-file.txt > .loop/protected.sha 2>/dev/null
+EOF
+
+"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-forge-sha.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case9: expected exit 3 (PROTECTED-VIOLATION) even though the fixer forged a matching .loop/protected.sha, got $code — the on-disk hash file must have zero effect on detection (round-3 bypass NOT closed)"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  || fail "case9: expected the PROTECTED FILE MODIFIED marker — forging the (now-vestigial) hash file must not suppress detection"
+grep -q "restored 1 protected file(s) to their pre-run state" .loop/history.log \
+  || fail "case9: expected a log line confirming the restore"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case9: protected file bytes were NOT restored to the exact pre-run content"
+
+# ── case 10: fixer just `rm -f`s .loop/protected.sha instead of forging it (round-3) ───────────
+# Before the fix, check_protected() started with `[ -s "$PROTECT_SNAP" ] || return 0` — a
+# missing/empty on-disk snapshot was silently treated as "nothing to protect", an even simpler
+# bypass than case 9 (no need to compute a matching hash at all). After the round-3 fix there is no
+# on-disk snapshot file to delete in the first place — the equivalent fixer action is inert.
+C="$WORK/c10"; mkdir -p "$C"; cd "$C" || fail "cd c10"
+cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+printf 'ORIGINAL-CONTENT-c10\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-fix-rm-sha.sh <<'EOF'
+#!/bin/sh
+echo "CHEAT-RM-SHA-c10" > guard-file.txt
+rm -f .loop/protected.sha 2>/dev/null
+EOF
+
+"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-rm-sha.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case10: expected exit 3 (PROTECTED-VIOLATION) even though the fixer deleted .loop/protected.sha, got $code — a missing on-disk hash file must not be read as 'nothing to protect' (round-3 bypass NOT closed)"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  || fail "case10: expected the PROTECTED FILE MODIFIED marker — deleting the (now-vestigial) hash file must not suppress detection"
+grep -q "restored 1 protected file(s) to their pre-run state" .loop/history.log \
+  || fail "case10: expected a log line confirming the restore"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case10: protected file bytes were NOT restored to the exact pre-run content"
+
+echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, and cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk)"
 exit 0
