@@ -5,7 +5,11 @@
 # through verdict-run.sh (the same Verdict Contract producer everything else in this repo
 # composes with), checks any `artifacts:`/`expect:` fields, and emits its own top-level VERDICT
 # block — so it plugs into whatever already consumes verdict-run.sh's shape (Stop-hook,
-# loop-fix.sh) unmodified.
+# loop-fix.sh) unmodified. This includes ${LOOP_DIR:-.loop}/verdict-state.json: each per-AC
+# verdict-run.sh sub-call writes that shared file with ITS OWN pass/fail (existing, unmodified
+# last-writer-wins contract), so after all ACs are processed this script makes one more sync call
+# whose only purpose is to be the last writer with the CORRECT overall aggregate — a Stop-hook-style
+# freshness gate reading that file sees ac-verify.sh's true result, not whichever AC ran last.
 #
 # Usage:
 #   ac-verify.sh <plan-file> [--log-dir <dir>]
@@ -78,6 +82,16 @@ join_semicolon() {
   printf '%s' "$out"
 }
 
+# Single-quote-escape $1 for safe embedding inside a single-quoted `sh -c` argument (used by the
+# verdict-state.json aggregate-sync call below — the plan path may contain spaces/quotes). Classic
+# close-quote/escaped-quote/reopen-quote trick. Note: BSD/macOS sed drops a lone backslash before a
+# non-special replacement char, so this needs FOUR backslashes in the double-quoted sed argument
+# (bash's own double-quote parsing folds 4 -> 2, then sed's `\\` -> one literal backslash escape
+# folds 2 -> 1) to land a single literal backslash in the output — verified empirically on macOS.
+shquote() {
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+}
+
 # ---- parse args ----
 PLAN=""
 LOG_DIR="${LOOP_DIR:-.loop}"   # matches verdict-run.sh's own ${LOOP_DIR:-.loop} default convention
@@ -143,20 +157,68 @@ while IFS= read -r line || [ -n "$line" ]; do
         if [ "$first" -eq 1 ]; then
           desc="$(trim "$tok")"; first=0; continue
         fi
-        case "$tok" in
-          verify:*)
-            cur_field="verify"; verify_cmd="$(trim "${tok#verify:}")" ;;
-          artifacts:*)
-            cur_field="artifacts"; artifacts_field="$(trim "${tok#artifacts:}")" ;;
-          expect:*)
-            cur_field="expect"; expect_field="$(trim "${tok#expect:}")" ;;
+
+        # ---- normalize a COPY of the token for field-prefix matching only — lowercase (bash 3.2:
+        # tr, no ${var,,}) + strip up to one layer of leading markdown emphasis (**/__/*/_)
+        # immediately before the field name. Without this, an authoring variant like `Verify:` or
+        # `**verify:**` (both plausible things an LLM or human plan author writes) silently and
+        # invisibly folds into the description — a typo that quietly turns a real intended
+        # contract into "no contract", indistinguishable from a deliberately-uncontracted AC. The
+        # ORIGINAL (case-preserved, marker-preserved) text is used for the extracted VALUE below —
+        # only the prefix-match step itself needs to tolerate this.
+        tok_stripped="$tok"
+        case "$tok_stripped" in
+          '**'*) tok_stripped="${tok_stripped:2}" ;;
+          '__'*) tok_stripped="${tok_stripped:2}" ;;
+          '*'*)  tok_stripped="${tok_stripped:1}" ;;
+          '_'*)  tok_stripped="${tok_stripped:1}" ;;
+        esac
+        tok_norm="$(printf '%s' "$tok_stripped" | tr 'A-Z' 'a-z')"
+
+        field=""; label_len=0
+        case "$tok_norm" in
+          verify:*)    field="verify";    label_len=7  ;;
+          artifacts:*) field="artifacts"; label_len=10 ;;
+          expect:*)    field="expect";    label_len=7  ;;
+        esac
+
+        if [ -n "$field" ]; then
+          value="${tok_stripped:$label_len}"
+          # trailing emphasis markers immediately after the colon — the closing `**` of
+          # `**verify:**` lands here (same one-layer tolerance, other side of the label).
+          case "$value" in
+            '**'*) value="${value:2}" ;;
+            '__'*) value="${value:2}" ;;
+            '*'*)  value="${value:1}" ;;
+            '_'*)  value="${value:1}" ;;
+          esac
+          value="$(trim "$value")"
+          cur_field="$field"
+          case "$field" in
+            verify)    verify_cmd="$value" ;;
+            artifacts) artifacts_field="$value" ;;
+            expect)    expect_field="$value" ;;
+          esac
+          continue
+        fi
+
+        case "$cur_field" in
+          verify)    verify_cmd="$verify_cmd | $tok" ;;
+          artifacts) artifacts_field="$artifacts_field | $tok" ;;
+          expect)    expect_field="$expect_field | $tok" ;;
           *)
-            case "$cur_field" in
-              verify)    verify_cmd="$verify_cmd | $tok" ;;
-              artifacts) artifacts_field="$artifacts_field | $tok" ;;
-              expect)    expect_field="$expect_field | $tok" ;;
-              *)         desc="$desc | $tok" ;;
+            # This segment matched none of the three known fields (even after the normalization
+            # above) and is about to silently vanish into the description — exactly the
+            # invisible-typo failure mode. If it LOOKS like a mistyped field (a `:` within roughly
+            # its first 20 chars), warn on stderr so it's visible instead of silent. Stays a
+            # warning, not a hard error: an ordinary colon in free-text description content is
+            # legitimate and common — failing the build over it would be worse than the bug.
+            seg="$(trim "$tok")"
+            head20="$(printf '%s' "$seg" | cut -c1-20)"
+            case "$head20" in
+              *:*) echo "ac-verify.sh: warning — AC #$idx (\"$desc\"): unrecognized field-like segment (folded into description, not treated as a contract): \"$seg\"" >&2 ;;
             esac
+            desc="$desc | $tok"
             ;;
         esac
       done
@@ -279,6 +341,26 @@ else
 fi
 
 code=0; [ "$verdict" = "FAIL" ] && code=1
+
+# ---- correct the shared verdict-state.json: make OUR aggregate the last writer ----
+# Every per-AC `"$VERDICT_RUN" --log "$ac_log" -- sh -c "$verify_cmd"` call above already wrote
+# ${LOOP_DIR:-.loop}/verdict-state.json via verdict-run.sh's own write_state() (existing,
+# unmodified last-writer-wins contract — every layer writes it, that part of verdict-run.sh is
+# correct and untouched here). Left alone, whichever AC happened to be PROCESSED LAST leaves ITS
+# OWN pass/fail there — which can silently disagree with ac-verify.sh's own true aggregate
+# $verdict/$code above (e.g. an earlier AC failed but the last AC processed passed: the file would
+# read "PASS" even though our own VERDICT block below correctly says FAIL). A consumer reading
+# verdict-state.json directly (e.g. a Stop-hook-style freshness gate) would see a stale, wrong
+# "fresh PASS" for a run that genuinely failed.
+#
+# Fix: one final verdict-run.sh call whose only purpose is its write_state() side effect — make it
+# the last writer with the CORRECT aggregate result. Runs unconditionally (PASS or FAIL). Its own
+# stdout (a second, poorer VERDICT block) is thrown away (>/dev/null) — ac-verify.sh's own richer,
+# AC-specific block below (with the real passed=/failed=/skipped= SUMMARY) remains the only VERDICT
+# block that reaches the caller's stdout. Logged to a dedicated path, distinct from any per-AC log.
+SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
+sync_desc="ac-verify.sh aggregate result for '$(shquote "$PLAN")'"
+"$VERDICT_RUN" --log "$SYNC_LOG" -- sh -c ": $sync_desc; exit $code" >/dev/null 2>&1
 
 printf '=== VERDICT ===\n'
 printf 'VERDICT: %s\n' "$verdict"

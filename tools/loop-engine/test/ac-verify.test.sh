@@ -108,6 +108,56 @@ else
   printf '%s' "$OUT_I" | grep -q '^VERDICT: FAIL$' || fail "(i): a nonzero exit must correspond to VERDICT: FAIL: $OUT_I"
 fi
 
+# ==== (j) FIX 1 regression: shared verdict-state.json must reflect ac-verify.sh's own aggregate,
+# not whichever per-AC verdict-run.sh sub-call happened to write it last. A failing AC listed
+# BEFORE a passing AC would, pre-fix, leave the LAST (passing) sub-call's own PASS/exit-0 write in
+# the state file — even though the true aggregate, and ac-verify.sh's own printed VERDICT block,
+# is FAIL. LOOP_DIR is exported explicitly (matching --log-dir) so the state file's location is
+# known, not assumed to be literally './.loop' by coincidence. ====
+SUB="$DIR/j"; mkdir -p "$SUB"; cd "$SUB" || fail "cd j"
+printf -- '- AC: fails first | verify: false\n- AC: passes second | verify: true\n' > plan.md
+export LOOP_DIR=".loop"
+OUT_J="$(run_ac_verify plan.md .loop 2>&1)"; CODE_J=$?
+unset LOOP_DIR
+[ "$CODE_J" -eq 1 ] || fail "(j): expected exit 1 (ac-verify.sh's own aggregate is FAIL — one AC failed), got $CODE_J: $OUT_J"
+printf '%s' "$OUT_J" | grep -q '^VERDICT: FAIL$' || fail "(j): expected ac-verify.sh's own printed VERDICT: FAIL: $OUT_J"
+STATE_FILE_J="$SUB/.loop/verdict-state.json"
+[ -f "$STATE_FILE_J" ] || fail "(j): expected verdict-state.json at $STATE_FILE_J (dir listing: $(ls -la "$SUB/.loop" 2>&1))"
+STATE_CONTENT_J="$(cat "$STATE_FILE_J")"
+printf '%s' "$STATE_CONTENT_J" | grep -q '"verdict":"FAIL"' || fail "(j): expected verdict-state.json's own verdict field to be FAIL (a last-writer-wins bug would show PASS, from the last-processed passing AC's own sub-call), got: $STATE_CONTENT_J"
+printf '%s' "$STATE_CONTENT_J" | grep -q '"exit":1' || fail "(j): expected verdict-state.json's own exit field to be 1, matching ac-verify.sh's own aggregate exit code, got: $STATE_CONTENT_J"
+
+# ==== (k) FIX 2(a) regression: a capitalized `Verify:` field must resolve as a real verify:
+# contract (not silently fold into the description) — a failing command must FAIL the gate. ====
+SUB="$DIR/k"; mkdir -p "$SUB"; cd "$SUB" || fail "cd k"
+printf -- '- AC: capitalized field | Verify: exit 7\n' > plan.md
+OUT_K="$(run_ac_verify plan.md .loop 2>&1)"; CODE_K=$?
+[ "$CODE_K" -eq 1 ] || fail "(k): expected exit 1 ('Verify:' must be treated as a real contract), got $CODE_K: $OUT_K"
+printf '%s' "$OUT_K" | grep -qE '^SUMMARY: passed=0 failed=1 skipped=0 ' || fail "(k): expected failed=1 (not silently folded into skipped=): $OUT_K"
+printf '%s' "$OUT_K" | grep -q '^FAIL: AC "capitalized field":.*verify exited 7' || fail "(k): expected a FAIL line naming the AC and its real exit code 7: $OUT_K"
+
+# ==== (l) FIX 2(a) regression: same as (k) but for markdown-bold `**verify:**`. ====
+SUB="$DIR/l"; mkdir -p "$SUB"; cd "$SUB" || fail "cd l"
+printf -- '- AC: bold field | **verify:** exit 7\n' > plan.md
+OUT_L="$(run_ac_verify plan.md .loop 2>&1)"; CODE_L=$?
+[ "$CODE_L" -eq 1 ] || fail "(l): expected exit 1 ('**verify:**' must be treated as a real contract), got $CODE_L: $OUT_L"
+printf '%s' "$OUT_L" | grep -qE '^SUMMARY: passed=0 failed=1 skipped=0 ' || fail "(l): expected failed=1 (not silently folded into skipped=): $OUT_L"
+printf '%s' "$OUT_L" | grep -q '^FAIL: AC "bold field":.*verify exited 7' || fail "(l): expected a FAIL line naming the AC and its real exit code 7: $OUT_L"
+
+# ==== (n) FIX 2(b) regression: a genuine typo (`verfy:`, not one of the normalized variants above)
+# must still fall into skipped= as before (it is NOT a recognized field), but must now print a
+# warning naming it, instead of vanishing with zero trace. A second, correctly-contracted passing
+# AC isolates skipped=1 to the typo'd AC specifically (avoids conflating with the separate
+# zero-contracts-in-the-whole-plan fail-closed path already covered by test (b) above). ====
+SUB="$DIR/n"; mkdir -p "$SUB"; cd "$SUB" || fail "cd n"
+printf -- '- AC: typo field | verfy: exit 7\n- AC: real contract | verify: true\n' > plan.md
+OUT_N="$("$AC_VERIFY" plan.md --log-dir .loop 2>"$DIR/n-stderr.log")"; CODE_N=$?
+ERR_N="$(cat "$DIR/n-stderr.log")"
+[ "$CODE_N" -eq 0 ] || fail "(n): expected exit 0 (the one real contract passes; the typo'd AC is skipped, not failed), got $CODE_N: $OUT_N"
+printf '%s' "$OUT_N" | grep -qE '^SUMMARY: passed=1 failed=0 skipped=1 ' || fail "(n): expected passed=1 skipped=1 (typo'd field unrecognized, folded into description as before): $OUT_N"
+printf '%s' "$ERR_N" | grep -q 'unrecognized field-like segment' || fail "(n): expected a warning on stderr naming the unrecognized segment, got stderr: $ERR_N"
+printf '%s' "$ERR_N" | grep -q 'verfy: exit 7' || fail "(n): expected the warning to name the unrecognized segment verbatim ('verfy: exit 7'), got stderr: $ERR_N"
+
 cd "$ORIG_PWD" || true
-echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape"
+echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync (not last-writer-wins), case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning"
 exit 0
