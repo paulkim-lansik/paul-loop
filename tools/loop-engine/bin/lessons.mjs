@@ -45,6 +45,19 @@
 //                   (Phase 4, TERMINAL) retire an accepted+codified lesson from the promotion pool so it
 //                   stops re-surfacing (promote listing / --codify / loop-doctor). Fail closed: only a
 //                   verified lesson with a recorded `challenge --verdict accept` may retire.
+//   lessons invalidate --id <key> [--reason "<why>"] [--superseded-by <id2>] [--by "<who>"] [--lessons <dir>]
+//                   Mark a lesson WRONG (the lesson itself was incorrect) — distinct from `retire`
+//                   (the lesson was RIGHT but is now superseded/codified). An invalidated lesson is
+//                   EXCLUDED, fail-closed, from every downstream surface: recall (never recalled, even
+//                   if verified) and promote (candidates listing / --codify). --superseded-by (optional)
+//                   fail-closed-checks the target id exists before writing.
+//   lessons mark-clean --gate "<verify cmd>" [--lessons <dir>]
+//                   Exit-code-derived counter: bump clean_pass_count on every lesson attributed to --gate
+//                   (via gate_history) that is neither invalidated nor retired — how many times that gate
+//                   has passed CLEANLY, i.e. without this lesson's fix being needed again. `record`'s
+//                   fail-recurrence path resets it to 0 (a recurrence means the lesson is NOT stable yet).
+//                   `promote`'s listing annotates lessons crossing CLEAN_RETIRE_THRESHOLD as retirement
+//                   candidates — informational only, never auto-invalidates/retires.
 //   lessons stats   [--category engineering|domain] [--lessons <dir>]
 //
 // category: `engineering` (process/tooling lesson, the default) or `domain` (product/domain lesson).
@@ -61,7 +74,7 @@ import { sanitizeText } from '../lib/sanitize.mjs'   // BAC-628 기록 시점 re
 // 전체를 무음 무력화). loop-fix가 record를 `>/dev/null 2>&1`+`&&` 체인으로, recall을 `2>/dev/null`+
 // exit 무시로 부르므로(loop-fix.sh:373-376·452) 정적 import 크래시는 루프 메모리의 기록·회상 두 경로를
 // 소리 없이 죽인다. 이 의존체는 promote --runs(옵트인)와 --gate 정규화에만 필요 — 실패 시 그 둘만
-// 강등(경고 1줄)하고 본연 명령(record/recall/promote/stats/challenge/retire)은 산다.
+// 강등(경고 1줄)하고 본연 명령(record/recall/promote/stats/challenge/retire/invalidate/mark-clean)은 산다.
 let regressionSignals = null
 try {
   regressionSignals = await import('../lib/regression-signals.mjs')
@@ -71,15 +84,15 @@ try {
 
 function usage(msg) {
   if (msg) process.stderr.write(`lessons: ${msg}\n`)
-  process.stderr.write('Usage: lessons <record|recall|promote|retire|stats> [options]  (see header)\n')
+  process.stderr.write('Usage: lessons <record|recall|promote|stats|challenge|retire|invalidate|mark-clean> [options]  (see header)\n')
   process.exit(2)
 }
 
 const argv = process.argv.slice(2)
 const cmd = argv.shift()
-if (!cmd || !['record', 'recall', 'promote', 'stats', 'challenge', 'retire'].includes(cmd)) usage(`unknown or missing command ${JSON.stringify(cmd || '')}`)
+if (!cmd || !['record', 'recall', 'promote', 'stats', 'challenge', 'retire', 'invalidate', 'mark-clean'].includes(cmd)) usage(`unknown or missing command ${JSON.stringify(cmd || '')}`)
 
-const opt = { lessons: process.env.LESSONS_DIR || '.loop/lessons', sigFile: '', sig: '', fix: '', title: '', source: '', category: '', iterations: null, verified: false, minCount: 3, includeUnverified: false, id: '', verdict: '', reason: '', by: '', ref: '', codify: false, gate: '', runs: '' }
+const opt = { lessons: process.env.LESSONS_DIR || '.loop/lessons', sigFile: '', sig: '', fix: '', title: '', source: '', category: '', iterations: null, verified: false, minCount: 3, includeUnverified: false, id: '', verdict: '', reason: '', by: '', ref: '', codify: false, gate: '', runs: '', supersededBy: '' }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
   const val = () => { if (i + 1 >= argv.length) usage(`${a} requires a value`); return argv[++i] }
@@ -104,6 +117,7 @@ for (let i = 0; i < argv.length; i++) {
     case '--codify': opt.codify = true; break
     case '--gate': opt.gate = val(); break
     case '--runs': opt.runs = val(); break
+    case '--superseded-by': opt.supersededBy = val(); break
     default: usage(`unknown arg ${a}`)
   }
 }
@@ -120,6 +134,7 @@ opt.reason = sanitizeText(opt.reason)
 opt.by = sanitizeText(opt.by)
 opt.ref = sanitizeText(opt.ref)
 opt.gate = sanitizeText(opt.gate)
+opt.supersededBy = sanitizeText(opt.supersededBy)
 // 게이트 키 정규화(BAC-631) — 원장 payload.cmd와 같은 규칙(lib normalizeGateKey: `sh -c ` 래퍼 제거 +
 // 절단 수렴)으로 맞춰야 promote --runs 교차 참조가 어긋나지 않는다. loop-fix 경로의 cmd는
 // "sh -c pnpm verify"로 착지하므로 raw 문자열 비교는 영구 미매칭이었다(리뷰). lib 로드 실패 시엔
@@ -194,6 +209,17 @@ function coerce(l) {
         .filter(([k, v]) => k && v && typeof v === 'object' && Number.isInteger(v.count) && v.count > 0)
         .map(([k, v]) => [k, { count: v.count, first_seen: typeof v.first_seen === 'string' ? v.first_seen : '', last_seen: typeof v.last_seen === 'string' ? v.last_seen : '' }]))
     : {}
+  // invalidation (BAC-571 port, issue #6) — distinct from `retired` (right but unused/superseded):
+  // this marks the lesson itself WRONG. `invalid_at` is authoritative only when it is a non-empty
+  // string (read-time default '' = NOT invalidated) — fail closed, same pattern as retired.at above.
+  l.invalid_at = (typeof l.invalid_at === 'string' && l.invalid_at) ? l.invalid_at : ''
+  l.invalid_reason = typeof l.invalid_reason === 'string' ? l.invalid_reason : ''
+  l.superseded_by = typeof l.superseded_by === 'string' ? l.superseded_by : ''
+  l.invalidated_by = typeof l.invalidated_by === 'string' ? l.invalidated_by : ''
+  // clean_pass_count: exit-code-derived counter (`mark-clean`) of how many times this lesson's gate
+  // passed WITHOUT this lesson's fix being needed again. Missing/corrupt coerces to 0 — read-time
+  // default, no migration needed for pre-existing lessons.
+  l.clean_pass_count = Number.isInteger(l.clean_pass_count) && l.clean_pass_count >= 0 ? l.clean_pass_count : 0
   return l
 }
 function ensureDir() { mkdirSync(opt.lessons, { recursive: true }) }
@@ -236,6 +262,9 @@ if (cmd === 'record') {
     if (existing) {
       existing.count += 1
       existing.last_seen = nowIso()
+      // fail-recurrence: this signature came back, so any "clean since" streak (mark-clean) is no
+      // longer true — a recurrence is evidence the lesson is NOT yet stable. Reset to 0.
+      existing.clean_pass_count = 0
       existing.verified = existing.verified || opt.verified
       if (opt.iterations != null) existing.iterations.push(opt.iterations)
       // Trust fix/title/source updates only from a VERIFIED record (or while the lesson is not yet
@@ -336,10 +365,66 @@ if (cmd === 'retire') {
   process.exit(0)
 }
 
+if (cmd === 'invalidate') {
+  // Mark a lesson WRONG — distinct from `retire` (right but superseded/codified). This is the OTHER
+  // terminal-ish state: unlike retire, invalidate carries no floor (a bad lesson can be caught before
+  // it is ever verified or recurring). Fail closed downstream: an invalidated lesson must never surface
+  // via recall (checked ahead of the verified check), nor via promote (candidates listing / --codify).
+  if (!opt.id) usage('invalidate needs --id <lesson-key> (run "lessons promote" to see ids)')
+  const res = withLock(() => {
+    const l = readLesson(opt.id)
+    if (!l) return { err: 'notfound' }
+    // Fail closed: a --superseded-by pointing at a non-existent id would silently record a dangling
+    // reference (promote/recall trust it as a hint, never dereference it, but a typo here should not
+    // land silently — same "don't write what can't be true" discipline as retire's notcleared gate).
+    if (opt.supersededBy && !readLesson(opt.supersededBy)) return { err: 'supersedednotfound' }
+    l.invalid_at = nowIso()
+    l.invalid_reason = opt.reason || ''
+    l.superseded_by = opt.supersededBy || ''
+    l.invalidated_by = opt.by || 'human'
+    writeLesson(l)
+    return { ok: `invalidated ${opt.id}${opt.reason ? ` — ${opt.reason}` : ''}${opt.supersededBy ? ` (superseded by ${opt.supersededBy})` : ''}` }
+  })
+  if (res.err === 'notfound') usage(`no lesson with id ${opt.id} (run "lessons promote --lessons ${opt.lessons}" to see candidate ids)`)
+  if (res.err === 'supersedednotfound') usage(`superseded-by target ${opt.supersededBy} does not exist`)
+  process.stdout.write(`lessons: ${res.ok}\n`)
+  process.exit(0)
+}
+
+if (cmd === 'mark-clean') {
+  // Exit-code-derived counter: the caller (loop-fix / a gate wrapper) tells us --gate passed CLEANLY
+  // this run, so every lesson attributed to that gate (gate_history) that is still an ACTIVE candidate
+  // (not already invalidated, not already retired) gets its clean_pass_count bumped. `record`'s
+  // fail-recurrence path resets this to 0, so this is genuinely "consecutive clean passes since the
+  // last recurrence" — not a lifetime total.
+  if (!opt.gate) usage('mark-clean needs --gate "<verify cmd>"')
+  const n = withLock(() => {
+    let marked = 0
+    for (const l of allLessons()) {
+      if (Object.hasOwn(l.gate_history, opt.gate) && !l.invalid_at && !l.retired) {
+        l.clean_pass_count += 1
+        writeLesson(l)
+        marked++
+      }
+    }
+    return marked
+  })
+  process.stdout.write(`lessons: marked ${n} lesson(s) clean for gate ${opt.gate}\n`)
+  process.exit(0)
+}
+
 if (cmd === 'recall') {
   const s = signatureOf()
   if (!s) usage('recall needs --signature-file or --signature with at least one FAIL line')
   const l = readLesson(s.key)
+  // Invalidated lessons are NEVER recalled — checked ahead of the verified check, because a WRONG
+  // lesson that happens to also be `verified` must still not surface (fail closed; the whole point of
+  // invalidate is "this was verified once, but it's wrong now"). Same silent-stdout/exit-0 contract as
+  // a plain miss, but the stderr line says INVALIDATED (not "no lesson") so it's diagnosable.
+  if (l && l.invalid_at) {
+    process.stderr.write(`lessons: lesson ${s.key} is INVALIDATED (${l.invalid_reason})${l.superseded_by ? `, superseded by ${l.superseded_by}` : ''} — not recalled\n`)
+    process.exit(0)
+  }
   // Signature recall is an EXACT match on the normalized failure key — no similarity, no ranking
   // (ADR-0062). A miss stays silent on stdout/exit-code (loop-fix pipes this through `2>/dev/null`),
   // but writes ONE stderr line: the key it looked up, and a routing hint since a miss is often a
@@ -360,15 +445,23 @@ if (cmd === 'recall') {
   process.exit(0)
 }
 
+// Informational-only threshold for promote's "retirement candidate" annotation (issue #6): a lesson
+// whose gate has passed this many times CLEANLY (mark-clean) since its last recurrence is a signal the
+// lesson may no longer be needed — never an auto-retire/invalidate, same "signal only" spirit as the
+// --runs REGRESSION annotation below.
+const CLEAN_RETIRE_THRESHOLD = 5
+
 if (cmd === 'promote') {
   // The deterministic FLOOR for the candidate pool: verified (ground-truth) + recurring (count>=N).
   const pool = allLessons()
     .filter(l => l.count >= opt.minCount && (l.verified || opt.includeUnverified))
     .sort((a, b) => b.count - a.count)
-  // Retired lessons have already been codified into a skill/CLAUDE.md — they must not re-surface as
-  // candidates (listing) nor be re-emitted for codification (--codify). Partition them out.
+  // Retired lessons have already been codified into a skill/CLAUDE.md (right but superseded) — they
+  // must not re-surface as candidates (listing) nor be re-emitted for codification (--codify).
+  // Invalidated lessons (WRONG, issue #6) get the same fail-closed exclusion. Partition both out.
   const retiredCount = pool.filter(l => l.retired).length
-  const candidates = pool.filter(l => !l.retired)
+  const invalidatedCount = pool.filter(l => l.invalid_at).length
+  const candidates = pool.filter(l => !l.retired && !l.invalid_at)
 
   if (opt.codify) {
     // The codification OUTPUT (Phase 4): emit ONLY candidates a separate skeptical evaluator has
@@ -379,7 +472,10 @@ if (cmd === 'promote') {
     // that flag may relax recall/listing, but ONLY ground-truth-verified lessons may ever be codified
     // into a skill/guideline (the verifier is the ceiling). A self-reported, never-verified "fix" must
     // not reach write-a-skill / CLAUDE.md even if a skeptic accepted it. Fail closed.
-    const accepted = candidates.filter(l => l.verified === true && l.challenge && l.challenge.verdict === 'accept')
+    // !l.invalid_at is re-asserted here too even though `candidates` already excludes it — this is the
+    // single most safety-critical filter in the file (an invalidated lesson reaching write-a-skill /
+    // CLAUDE.md would codify a KNOWN-WRONG lesson), so it gets defense-in-depth, not just one filter.
+    const accepted = candidates.filter(l => l.verified === true && !l.invalid_at && l.challenge && l.challenge.verdict === 'accept')
     if (accepted.length === 0) {
       process.stdout.write('lessons: 0 candidate(s) cleared for codification — none has a recorded "lessons challenge --verdict accept"\n')
       process.exit(0)
@@ -430,9 +526,9 @@ if (cmd === 'promote') {
   // The LISTING: OPEN candidates (not yet retired) that pass the floor, each with its challenge
   // status, so the skeptical evaluator can accept/reject by id BEFORE anything is codified. Already-
   // retired lessons are hidden (reported as a count only).
-  const retiredNote = retiredCount ? ` (${retiredCount} already retired — codified, out of the pool)` : ''
-  if (candidates.length === 0) { process.stdout.write(`lessons: no open recurring (>=${opt.minCount}×) verified candidates to promote${retiredNote}\n`); writeRegSection(); process.exit(0) }
-  process.stdout.write(`lessons: ${candidates.length} open candidate(s) passing the floor (verified + recurring, not yet retired)${retiredNote}. Challenge each before codifying:\n`)
+  const excludedNote = (retiredCount || invalidatedCount) ? ` (${retiredCount} already retired, ${invalidatedCount} invalidated — excluded)` : ''
+  if (candidates.length === 0) { process.stdout.write(`lessons: no open recurring (>=${opt.minCount}×) verified candidates to promote${excludedNote}\n`); writeRegSection(); process.exit(0) }
+  process.stdout.write(`lessons: ${candidates.length} open candidate(s) passing the floor (verified + recurring, not yet retired)${excludedNote}. Challenge each before codifying:\n`)
   for (const l of candidates) {
     const status = !l.challenge ? 'UNCHALLENGED — needs skeptical review'
       : l.challenge.verdict === 'accept' ? `ACCEPTED by ${l.challenge.by || 'skeptical-evaluator'}${l.challenge.reason ? `: ${l.challenge.reason}` : ''}`
@@ -446,6 +542,12 @@ if (cmd === 'promote') {
       for (const r of reg.regressions) {
         if (Object.hasOwn(l.gate_history, r.gate)) process.stdout.write(`      [REGRESSION: ${r.gate} PASS→FAIL last_pass=${r.last_pass_ts} first_fail=${r.first_fail_ts} — .loop/runs 결정론 집계]\n`)
       }
+    }
+    // Retirement-candidate annotation (issue #6) — purely informational, same spirit as the REGRESSION
+    // annotation above: a signal for a human/skeptic to act on via `lessons invalidate`, never an
+    // automatic delete/invalidate.
+    if (l.clean_pass_count >= CLEAN_RETIRE_THRESHOLD) {
+      process.stdout.write(`      [RETIREMENT CANDIDATE: clean_pass_count=${l.clean_pass_count} — gate가 이 교훈 없이도 ${l.clean_pass_count}회 깨끗하게 통과함. superseded/무관해졌다면 "lessons invalidate"로 표시할 것]\n`)
     }
   }
   writeRegSection()
@@ -466,17 +568,20 @@ if (cmd === 'stats') {
   const verified = all.filter(l => l.verified)
   const recurring = all.filter(l => l.count >= 2)
   const retired = all.filter(l => l.retired)
-  // open_candidates = the ACTIONABLE promotion backlog: verified + recurring, and in NEITHER terminal
-  // state — not already retired (codified, out of the pool) and not rejected (skeptic decided no). This is
-  // what loop-doctor reports as "승격 후보"; it falls to 0 once every recurring lesson is either
-  // codified+retired or rejected, instead of the raw recurring count that never falls (a permanent
+  const invalidated = all.filter(l => l.invalid_at)
+  // open_candidates = the ACTIONABLE promotion backlog: verified + recurring, and in NONE of the
+  // terminal/excluded states — not already retired (codified, out of the pool), not invalidated (WRONG,
+  // issue #6 — same exclusion as promote's `candidates`, so this count never claims more "승격 후보"
+  // than `promote` would actually list), and not rejected (skeptic decided no). This is what loop-doctor
+  // reports as "승격 후보"; it falls to 0 once every recurring lesson is either codified+retired,
+  // invalidated, or rejected, instead of the raw recurring count that never falls (a permanent
   // false-nag pre-retire). A rejected lesson re-opens automatically if it recurs with changed content
   // (record clears the stale verdict), so excluding it here loses nothing.
-  const openCandidates = all.filter(l => l.verified && l.count >= 2 && !l.retired && !(l.challenge && l.challenge.verdict === 'reject'))
+  const openCandidates = all.filter(l => l.verified && l.count >= 2 && !l.retired && !l.invalid_at && !(l.challenge && l.challenge.verdict === 'reject'))
   const iters = verified.flatMap(l => l.iterations)
   const a = avg(iters)
   process.stdout.write('=== lessons stats ===\n')
-  process.stdout.write(`total=${all.length} verified=${verified.length} recurring(>=2x)=${recurring.length} retired=${retired.length} open_candidates=${openCandidates.length} total_recurrences=${all.reduce((x, l) => x + l.count, 0)}\n`)
+  process.stdout.write(`total=${all.length} verified=${verified.length} recurring(>=2x)=${recurring.length} retired=${retired.length} invalidated=${invalidated.length} open_candidates=${openCandidates.length} total_recurrences=${all.reduce((x, l) => x + l.count, 0)}\n`)
   process.stdout.write(`by_category: engineering=${byCategory.engineering} domain=${byCategory.domain}\n`)
   process.stdout.write(`avg_iterations_to_green=${a == null ? 'n/a' : a.toFixed(2)} (over ${iters.length} verified convergence(s))\n`)
   const top = all.slice().sort((a, b) => b.count - a.count).slice(0, 5)
