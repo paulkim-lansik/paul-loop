@@ -92,7 +92,8 @@ looping sentinel 등)는 구조적으로 **이 플러그인들을 설치해 자�
 ## 참고
 
 - 이슈 #32. 근거: `docs/audits/2026-08-20-harness-maturity-audit.md`의 ".loop operational data"
-  차원(L0, §2·§3·§5) 및 "loop-engine code" 차원의 gap #7(§3 Minor 목록).
+  차원(L0, §2·§3·§5) 및 같은 차원에서 파생된 gap #7(§3 Minor 목록 — "loop-engine code" 차원이 아니라
+  ".loop operational data" 차원 소속).
 - `.gitignore`(4번째 줄, `.loop/`), `.github/workflows/loop-engine-test.yml`,
   `.github/workflows/loop-memory-test.yml`, `tools/loop-engine/test/run.sh`,
   `tools/loop-memory/package.json`(`npm test`).
