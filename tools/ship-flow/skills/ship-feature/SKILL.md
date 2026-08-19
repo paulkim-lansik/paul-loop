@@ -250,7 +250,11 @@ CLAUDE.md/`.claude/**` from this session.
 ## Failures and conflicts (handled autonomously)
 - Gate red → loop back on that step autonomously. Only call a human if the agent can't resolve it itself.
 - Human-side merge reports out-of-date/CONFLICTING → in the worktree, **standalone** `git fetch origin
-  <base>` → **standalone** `git rebase origin/<base>` → re-verify → `git push --force-with-lease`.
-  `<base>` is **that PR's base** (the integration branch, or the release branch for a release PR). **Run
-  each command as its own independent call** — chaining `git merge`/`git pull` with anything else is
-  liable to trip a merge guardrail hook regardless of direction, if this repo has one.
+  <base>` → **standalone** `git rebase origin/<base>` → re-verify. Then hand the retry push off to
+  `publisher` the same way step 5 does (ADR-0003) — this is still the Builder session, still holding the
+  same untrusted-input history from steps 0-4, so it must not run the push itself. Assemble the exact
+  branch name as a literal value and give `publisher` the exact command to run:
+  `git push --force-with-lease origin <branch>`. `<base>` is **that PR's base** (the integration branch,
+  or the release branch for a release PR). **Run each command as its own independent call** — chaining
+  `git merge`/`git pull` with anything else is liable to trip a merge guardrail hook regardless of
+  direction, if this repo has one.
