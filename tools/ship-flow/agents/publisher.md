@@ -52,6 +52,11 @@ boundary. See "What you never do" below for the honest version of that limit.
      defensive way for `git push`, even though branch names are typically already slug-safe — cheap,
      consistent hardening, not a new named vulnerability: `BRANCH="<literal>"` then `git push
      --force-with-lease origin "$BRANCH"`.
+   - **A variable assignment and the command that reads it must run in the same Bash tool call.** This
+     harness does not persist shell state (variables, `cd`, etc.) between separate Bash invocations — if
+     you split `TITLE="$(cat <path>)"` into one Bash call and `gh pr create --title "$TITLE" ...` into a
+     later one, `$TITLE` is empty in the second call. Run the assignment and its use together, either on
+     one line with `&&`/`;` or as a multi-line script passed to a single Bash call.
 
    **Why `"$(cat file)"` is safe where a heredoc-to-variable was not.** `$(cat file)` inside double quotes
    captures the file's raw bytes as a single opaque string — the surrounding quotes suppress word-splitting
