@@ -196,12 +196,22 @@ Right before opening the PR, get the final verdict against the real diff: `<loop
 classify-risk.sh> --from-git --stage pr --action "PR→<base>" --render-md` — paste the output markdown
 block (verdict table + its audit marker, if the classifier emits one) **verbatim into the PR body**
 rather than transcribing it by hand. If it's REQUIRE, put the reason at the very top of the PR body —
-what a human needs to see is exactly why the gate called for them.
+what a human needs to see is exactly why the gate called for them. This session still composes that PR
+body (summary, verification evidence, gate verdict, any SKIP reasons) and the tracked-issue comment text
+— composing text isn't an external state change.
 
-`git push -u origin <branch>` → open the PR against this repo's integration branch (summary, verification
-evidence, gate verdict, any SKIP reasons) → **comment the PR link on the tracked issue**. **Stop here** —
-a human reviews and merges. If this PR doesn't trigger CI, the PR body is the only verification record a
-human will see, so make sure step 2's gate results are actually in it.
+**This session does not run the `git push`, PR-open, or tracked-issue comment itself** (ADR-0003, issue
+#15 — this session has been reading untrusted issue/web content and holding full worktree access since
+step 0-4, so it must not also be the one executing the external action that publishes the result of that
+work). Instead, hand off to this plugin's `publisher` agent with everything it needs already assembled as
+literal values: the exact branch name, the exact PR title and body as already-finished text, the
+tracked-issue id and exact comment text, and the exact commands to run them with — `git push -u origin
+<branch>`, `gh pr create` (or this repo's tracker-appropriate equivalent) with the title/body already
+filled in, and the tracked-issue comment command. `publisher` only executes what it's handed — it doesn't
+read files, fetch content, or write its own PR/comment text — and reports back the PR URL and each
+command's exit code. **Stop here** — a human reviews and merges. If this PR doesn't trigger CI, the PR
+body is the only verification record a human will see, so make sure step 2's gate results are actually
+in it.
 → **After a human merges:** clean up the worktree/branch (remove any dedicated deep-gate resources first
 if this repo uses per-worktree isolated containers for them, confirm no stash leftovers) + update the
 tracked issue (status, merge SHA) → **step 6**. Release (`integrationBranch → releaseBranch`) is a
