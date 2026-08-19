@@ -8,10 +8,11 @@
 # loop-fix.sh) unmodified. This includes ${LOOP_DIR:-.loop}/verdict-state.json — coupled to OUR
 # --log-dir via an explicit `export LOOP_DIR="$LOG_DIR"` (see below) so a non-default --log-dir
 # isn't silently ignored: each per-AC verdict-run.sh sub-call writes that shared file with ITS OWN
-# pass/fail (existing, unmodified last-writer-wins contract). An EXIT trap (registered right after
-# LOG_DIR is finalized, see below) makes one corrective sync call on EVERY exit path this script
-# can take — normal completion AND any early exit (usage errors, a verdict-run.sh exit-2 hit
-# mid-run, or any exit path added later) — so it is always the last writer: the true aggregate on
+# pass/fail (existing, unmodified last-writer-wins contract). An EXIT trap (armed at the very top
+# of the script, before argument parsing even begins, see below) makes one corrective sync call on
+# EVERY exit path this script can take — normal completion AND any early exit (usage errors
+# including ones during argument parsing itself, a verdict-run.sh exit-2 hit mid-run, or any exit
+# path added later) — so it is always the last writer: the true aggregate on
 # normal completion, a fail-closed default on any early exit. A Stop-hook-style freshness gate
 # reading that file always sees ac-verify.sh's true result for THIS run, never a stale leftover
 # from an earlier AC or an earlier unrelated run.
@@ -67,6 +68,67 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VERDICT_RUN="$HERE/verdict-run.sh"
+
+# ---- fail-closed corrective verdict-state.json sync via an EXIT trap — armed FIRST, before ANY
+# possible exit path (round-3 adversarial finding: the trap used to be registered AFTER the
+# argument-parsing while-loop below, so a usage error DURING parsing itself — an unknown flag,
+# `--log-dir` given with no value, a stray extra positional argument — called `exit 2` before the
+# trap was ever armed, leaving a stale earlier verdict-state.json completely untouched). Nothing
+# below this point may run any command that can exit before `trap ... EXIT` on the next line has
+# executed — so this block only ever does plain variable assignments and function *definitions*
+# (which cannot themselves fail/exit), never a command invocation.
+#
+# LOG_DIR gets its safe default here (matches verdict-run.sh's own ${LOOP_DIR:-.loop} convention)
+# so the trap has a real target even if a usage error strikes before the argument-parsing loop
+# below ever runs. That loop still overrides LOG_DIR via --log-dir when given (unchanged), and
+# re-derives LOGSUBDIR from the finalized value right after — since the trap's handler reads
+# SYNC_LOG (and SYNC_VERDICT_EXIT) at the moment it actually FIRES, not at registration time (bash
+# closures over the current value of a global variable), it continues to target wherever LOG_DIR
+# ends up being by the time of any given exit, exactly as it already did for the exit paths that
+# were already covered.
+#
+# ac-verify.sh has multiple exit paths — normal completion, usage errors (now including ones
+# during argument parsing itself), and a per-AC verdict-run.sh sub-call's own exit-2 refusal
+# encountered mid-run (see the header comment, and any exit path added later). A sync call placed
+# only at normal completion leaves every early-exit path with whatever an earlier AC's OWN
+# sub-call happened to leave in verdict-state.json (last-writer-wins) — a stale, unrelated
+# pass/fail for a run that never actually finished. Fixing this per call-site doesn't scale (the
+# next new early-exit path reopens the same gap) — so instead ONE trap fires on every exit, no
+# matter which code path reaches it, and makes one corrective verdict-run.sh sync call
+# (stdout+stderr discarded) whose only purpose is to be the last writer.
+#
+# SYNC_VERDICT_EXIT starts fail-closed (1 = FAIL) BEFORE the trap is registered — "treat this run
+# as failed/incomplete unless proven otherwise". Only the normal-completion path far below (once
+# the true aggregate $code has actually been computed) updates SYNC_VERDICT_EXIT to that real
+# value, right before the script's final `exit "$code"` — which is what fires the trap. Every
+# other exit reaches the trap with the untouched fail-closed default. The handler never calls
+# `exit` itself (that would clobber the real exit code this script is trying to return) — it only
+# runs its side effect and lets the original exit code propagate.
+LOG_DIR="${LOOP_DIR:-.loop}"   # matches verdict-run.sh's own ${LOOP_DIR:-.loop} default convention
+LOGSUBDIR="$LOG_DIR/ac-verify"
+SYNC_VERDICT_EXIT=1
+SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
+
+# Single-quote-escape $1 for safe embedding inside a single-quoted `sh -c` argument (used by the
+# verdict-state.json aggregate-sync call below — the plan path may contain spaces/quotes). Classic
+# close-quote/escaped-quote/reopen-quote trick. Note: BSD/macOS sed drops a lone backslash before a
+# non-special replacement char, so this needs FOUR backslashes in the double-quoted sed argument
+# (bash's own double-quote parsing folds 4 -> 2, then sed's `\\` -> one literal backslash escape
+# folds 2 -> 1) to land a single literal backslash in the output — verified empirically on macOS.
+# Defined here (not further below with the other small helpers) because sync_verdict_state_on_exit
+# calls it directly — a plain assignment/def block like this one can't itself exit, so defining it
+# ahead of the trap registration below is safe (PLAN is still unset at trap-registration time; the
+# handler reads its CURRENT value, empty string, when it actually fires).
+shquote() {
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+}
+
+sync_verdict_state_on_exit() {
+  sync_desc="ac-verify.sh aggregate result for '$(shquote "${PLAN:-}")'"
+  "$VERDICT_RUN" --log "$SYNC_LOG" -- sh -c ": $sync_desc; exit $SYNC_VERDICT_EXIT" >/dev/null 2>&1
+}
+trap sync_verdict_state_on_exit EXIT
+
 SEP=$'\x1e'   # rare separator used only to split on literal " | " without touching pipes elsewhere in a token
 
 need2() { [ "$1" -ge 2 ] || { echo "ac-verify.sh: $2 requires a value" >&2; exit 2; }; }
@@ -87,19 +149,8 @@ join_semicolon() {
   printf '%s' "$out"
 }
 
-# Single-quote-escape $1 for safe embedding inside a single-quoted `sh -c` argument (used by the
-# verdict-state.json aggregate-sync call below — the plan path may contain spaces/quotes). Classic
-# close-quote/escaped-quote/reopen-quote trick. Note: BSD/macOS sed drops a lone backslash before a
-# non-special replacement char, so this needs FOUR backslashes in the double-quoted sed argument
-# (bash's own double-quote parsing folds 4 -> 2, then sed's `\\` -> one literal backslash escape
-# folds 2 -> 1) to land a single literal backslash in the output — verified empirically on macOS.
-shquote() {
-  printf '%s' "$1" | sed "s/'/'\\\\''/g"
-}
-
 # ---- parse args ----
 PLAN=""
-LOG_DIR="${LOOP_DIR:-.loop}"   # matches verdict-run.sh's own ${LOOP_DIR:-.loop} default convention
 while [ $# -gt 0 ]; do
   case "$1" in
     --log-dir) need2 $# "$1"; LOG_DIR="$2"; shift 2 ;;
@@ -111,7 +162,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# ---- LOG_DIR is now finalized (flag parsed, default applied) ----
+# ---- LOG_DIR is now finalized (flag parsed, default applied). Re-derive its dependents (the
+# trap above already covered every exit up to this point using the pre-parse default) ----
+LOGSUBDIR="$LOG_DIR/ac-verify"
+SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
 
 # Couple verdict-run.sh's own ${LOOP_DIR:-.loop} default to OUR --log-dir (issue #23 round-2
 # finding: they were previously decoupled — verdict-run.sh's write_state() derives
@@ -123,34 +177,6 @@ done
 # --log-dir. Both default to the literal ".loop", so this is a no-op for every caller that doesn't
 # pass --log-dir.
 export LOOP_DIR="$LOG_DIR"
-
-LOGSUBDIR="$LOG_DIR/ac-verify"
-
-# ---- fail-closed corrective verdict-state.json sync via an EXIT trap ----
-# ac-verify.sh has multiple exit paths — this normal-completion path, plus early exits on usage
-# errors and on a per-AC verdict-run.sh sub-call's own exit-2 refusal encountered mid-run (see the
-# header comment, and any exit path added later). A sync call placed only at normal completion
-# leaves every early-exit path with whatever an earlier AC's OWN sub-call happened to leave in
-# verdict-state.json (last-writer-wins) — a stale, unrelated pass/fail for a run that never
-# actually finished. Fixing this per call-site doesn't scale (the next new early-exit path
-# reopens the same gap) — so instead ONE trap fires on every exit, no matter which code path
-# reaches it, and makes one corrective verdict-run.sh sync call (stdout+stderr discarded) whose
-# only purpose is to be the last writer.
-#
-# SYNC_VERDICT_EXIT starts fail-closed (1 = FAIL) BEFORE the trap is registered — "treat this run
-# as failed/incomplete unless proven otherwise". Only the normal-completion path below (once the
-# true aggregate $code has actually been computed) updates SYNC_VERDICT_EXIT to that real value,
-# right before the script's final `exit "$code"` — which is what fires the trap. Every other exit
-# reaches the trap with the untouched fail-closed default. The handler never calls `exit` itself
-# (that would clobber the real exit code this script is trying to return) — it only runs its side
-# effect and lets the original exit code propagate.
-SYNC_VERDICT_EXIT=1
-SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
-sync_verdict_state_on_exit() {
-  sync_desc="ac-verify.sh aggregate result for '$(shquote "$PLAN")'"
-  "$VERDICT_RUN" --log "$SYNC_LOG" -- sh -c ": $sync_desc; exit $SYNC_VERDICT_EXIT" >/dev/null 2>&1
-}
-trap sync_verdict_state_on_exit EXIT
 
 if [ -z "$PLAN" ]; then
   echo "ac-verify.sh: a plan file is required. Usage: ac-verify.sh <plan-file> [--log-dir <dir>]" >&2

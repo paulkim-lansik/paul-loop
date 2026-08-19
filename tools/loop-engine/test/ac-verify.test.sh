@@ -221,6 +221,55 @@ printf '%s' "$OUT_Q" | grep -qE '^SUMMARY: passed=1 failed=0 skipped=1 ' || fail
 printf '%s' "$ERR_Q" | grep -q 'unrecognized field-like segment' || fail "(q): expected a warning on stderr naming the unrecognized segment even without a colon, got stderr: $ERR_Q"
 printf '%s' "$ERR_Q" | grep -q 'verify exit 9' || fail "(q): expected the warning to name the unrecognized segment verbatim ('verify exit 9'), got stderr: $ERR_Q"
 
+# ==== (r) FIX round-3 regression: the EXIT trap must be armed BEFORE argument parsing itself, not
+# just after it. Pre-fix, the trap was registered AFTER the flag-parsing while-loop, so a usage
+# error DURING parsing (an unknown flag, `--log-dir` with no following value, an extra stray
+# positional argument) called `exit 2` before the trap was ever armed — leaving a stale earlier
+# verdict-state.json completely untouched (last-writer-wins from a PRIOR, unrelated normal run).
+# For each of the three shapes: seed a real PASS via a normal prior run in the same log-dir, then
+# re-run with the bad arguments and assert (a) exit 2, (b) the seeded PASS is corrected to FAIL by
+# the now-earlier-armed trap — proving there is no exit path, from the very first line onward,
+# that can occur before the trap has already been registered. ====
+SUB="$DIR/r"; mkdir -p "$SUB"; cd "$SUB" || fail "cd r"
+printf -- '- AC: seed pass | verify: true\n' > plan.md
+STATE_FILE_R="$SUB/.loop/verdict-state.json"
+
+# ---- (r1) unknown/bogus flag ----
+rm -rf .loop
+run_ac_verify plan.md .loop >/dev/null 2>&1; SEED_CODE_R1=$?
+[ "$SEED_CODE_R1" -eq 0 ] || fail "(r1): seed run expected exit 0, got $SEED_CODE_R1"
+grep -q '"verdict":"PASS"' "$STATE_FILE_R" || fail "(r1): expected the seed run to leave verdict-state.json at PASS, got: $(cat "$STATE_FILE_R" 2>&1)"
+OUT_R1="$("$AC_VERIFY" plan.md --log-dir .loop --bogus-flag 2>&1)"; CODE_R1=$?
+[ "$CODE_R1" -eq 2 ] || fail "(r1): expected exit 2 (unknown flag), got $CODE_R1: $OUT_R1"
+[ -f "$STATE_FILE_R" ] || fail "(r1): expected verdict-state.json to still exist at $STATE_FILE_R"
+STATE_CONTENT_R1="$(cat "$STATE_FILE_R")"
+printf '%s' "$STATE_CONTENT_R1" | grep -q '"verdict":"PASS"' && fail "(r1): the seeded PASS must NOT survive an unknown-flag usage error (the EXIT trap must already be armed during argument parsing), got: $STATE_CONTENT_R1"
+printf '%s' "$STATE_CONTENT_R1" | grep -q '"verdict":"FAIL"' || fail "(r1): expected verdict-state.json to be corrected to FAIL by the trap, got: $STATE_CONTENT_R1"
+
+# ---- (r2) --log-dir given with no following value ----
+rm -rf .loop
+run_ac_verify plan.md .loop >/dev/null 2>&1; SEED_CODE_R2=$?
+[ "$SEED_CODE_R2" -eq 0 ] || fail "(r2): seed run expected exit 0, got $SEED_CODE_R2"
+grep -q '"verdict":"PASS"' "$STATE_FILE_R" || fail "(r2): expected the seed run to leave verdict-state.json at PASS, got: $(cat "$STATE_FILE_R" 2>&1)"
+OUT_R2="$("$AC_VERIFY" plan.md --log-dir .loop --log-dir 2>&1)"; CODE_R2=$?
+[ "$CODE_R2" -eq 2 ] || fail "(r2): expected exit 2 (--log-dir with no value), got $CODE_R2: $OUT_R2"
+[ -f "$STATE_FILE_R" ] || fail "(r2): expected verdict-state.json to still exist at $STATE_FILE_R"
+STATE_CONTENT_R2="$(cat "$STATE_FILE_R")"
+printf '%s' "$STATE_CONTENT_R2" | grep -q '"verdict":"PASS"' && fail "(r2): the seeded PASS must NOT survive a missing-value --log-dir usage error (the EXIT trap must already be armed during argument parsing), got: $STATE_CONTENT_R2"
+printf '%s' "$STATE_CONTENT_R2" | grep -q '"verdict":"FAIL"' || fail "(r2): expected verdict-state.json to be corrected to FAIL by the trap, got: $STATE_CONTENT_R2"
+
+# ---- (r3) extra stray positional argument after the plan file ----
+rm -rf .loop
+run_ac_verify plan.md .loop >/dev/null 2>&1; SEED_CODE_R3=$?
+[ "$SEED_CODE_R3" -eq 0 ] || fail "(r3): seed run expected exit 0, got $SEED_CODE_R3"
+grep -q '"verdict":"PASS"' "$STATE_FILE_R" || fail "(r3): expected the seed run to leave verdict-state.json at PASS, got: $(cat "$STATE_FILE_R" 2>&1)"
+OUT_R3="$("$AC_VERIFY" plan.md extra-arg --log-dir .loop 2>&1)"; CODE_R3=$?
+[ "$CODE_R3" -eq 2 ] || fail "(r3): expected exit 2 (extra positional argument), got $CODE_R3: $OUT_R3"
+[ -f "$STATE_FILE_R" ] || fail "(r3): expected verdict-state.json to still exist at $STATE_FILE_R"
+STATE_CONTENT_R3="$(cat "$STATE_FILE_R")"
+printf '%s' "$STATE_CONTENT_R3" | grep -q '"verdict":"PASS"' && fail "(r3): the seeded PASS must NOT survive an extra-positional-argument usage error (the EXIT trap must already be armed during argument parsing), got: $STATE_CONTENT_R3"
+printf '%s' "$STATE_CONTENT_R3" | grep -q '"verdict":"FAIL"' || fail "(r3): expected verdict-state.json to be corrected to FAIL by the trap, got: $STATE_CONTENT_R3"
+
 cd "$ORIG_PWD" || true
-echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync via an EXIT trap covering early-exit paths too (not last-writer-wins, not just the normal-completion path), --log-dir/LOOP_DIR coupling (isolated verdict-state.json per --log-dir), case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning (both colon-containing and colon-omitted typos)"
+echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync via an EXIT trap covering early-exit paths too (not last-writer-wins, not just the normal-completion path, and now armed BEFORE argument parsing itself), --log-dir/LOOP_DIR coupling (isolated verdict-state.json per --log-dir), case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning (both colon-containing and colon-omitted typos)"
 exit 0
