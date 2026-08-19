@@ -1,0 +1,8 @@
+{
+  "id": "loop-fix-pass-first-try",
+  "input": "loop-fix-pass-first-try",
+  "note": "verify가 첫 회부터 PASS면 loop-fix.sh는 fixer 없이 exit 0 + 'SUCCESS in 1 iteration'으로 끝나야 한다.",
+  "assert": {
+    "contains": ["EXIT_CODE=0", "SUCCESS in 1 iteration"]
+  }
+}

@@ -250,6 +250,7 @@ tools/loop-engine/
   .claude-plugin/plugin.json      # this plugin's manifest
   bin/                            # commands, auto-registered on PATH when the plugin loads
   lib/                            # shared helpers bin/ scripts import
+  eval/tier0/                     # golden dataset for the tier0 harness-self smoke gate (#7)
   test/                           # self-test suite (bash + node, no docker) — test/run.sh runs all of it
   docs/                           # verdict contract, lessons model, eval-gate, otel notes
 tools/ship-flow/                  # delivery-loop skills — see the plugin's own skills/ for docs

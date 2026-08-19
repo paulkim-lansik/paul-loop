@@ -83,3 +83,32 @@ full LLM-judged suites every PR are uneconomical (research nuance).
   (no committed workflow yet; add one when a golden dataset lands).
 - **Loop:** `loop-fix.sh --verify "bin/eval-gate.sh --dataset ... --target ..."` drives a fix loop
   whose ground truth is the eval gate itself.
+
+## Tier 0: the harness-self smoke gate (#7)
+
+`eval-gate` was originally aimed at prompts (STDIN → agent output → STDOUT). `eval/tier0/` +
+`bin/tier0-run.sh` aim the same pattern at the **harness itself**: does `loop-fix.sh` /
+`lessons.mjs` still behave per their own documented contracts (max-iter stops, verified lessons
+get recorded on convergence, `lessons record` fails closed on a missing signature, …)? No LLM is
+called — every case runs the real scripts deterministically in an isolated temp workspace, which
+is what makes this the cheapest ("tier 0") gate: pure bash + node, no docker, safe to run on every
+`verify:loop`-adjacent change.
+
+`bin/tier0-run.sh` is the `--target` adapter: it reads a scenario id from STDIN (the case's
+`input`), runs it, and prints the underlying command's real exit code plus the relevant log/file
+content to STDOUT tagged as `EXIT_CODE=N` — the golden case's `contains`/`not_contains` assertions
+then grade that text. The adapter's own exit code only means "the scenario ran"; an unrecognized
+scenario id is a hard failure (exit 1) so a typo in a case file can't silently no-op.
+
+Run it:
+
+```bash
+node bin/eval-gate.mjs --dataset eval/tier0 --target "bash bin/tier0-run.sh" --log .loop/eval-revisit-call.log
+```
+
+Regression-locked by `test/eval-gate-tier0.test.sh` (part of `test/run.sh`). One case
+(`lessons-record-signature-only`) documents that `lessons record` succeeds on a hand-typed
+`--signature` alone, without `--signature-file` and without `--verified`. This case is unaffected
+by #9 ("증거 무결성 계약"): #9 only fails closed when `--verified` is combined with a hand-typed
+`--signature` and no `--signature-file` — unverified records (this case's scenario) are explicitly
+out of scope for that change, so no update is needed here once #9 lands.

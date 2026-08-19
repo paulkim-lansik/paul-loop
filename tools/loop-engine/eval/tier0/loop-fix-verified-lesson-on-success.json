@@ -1,0 +1,8 @@
+{
+  "id": "loop-fix-verified-lesson-on-success",
+  "input": "loop-fix-verified-lesson-on-success",
+  "note": "verify가 FAIL -> PASS로 수렴하면 --lessons 디렉터리에 verified:true인 lesson 파일이 기록되어야 한다(Phase 3).",
+  "assert": {
+    "contains": ["EXIT_CODE=0", "\"verified\": true"]
+  }
+}
