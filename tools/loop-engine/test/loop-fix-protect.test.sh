@@ -25,6 +25,15 @@
 # loop-fix.sh's own process memory (PROTECT_SNAP_DATA / PROTECT_FILES_DATA / PROTECT_MODES_DATA),
 # never written to a file — a --fix child subprocess structurally cannot write into its parent
 # shell's variables, so there is nothing left on disk to forge or delete.
+#
+# Round 4 (independent adversarial review of the round-3 fix, case 11): closes a separate,
+# pre-existing, CRITICAL, 100%-reliable bypass that predates round 3 — check_protected() was only
+# ever invoked on the FAIL path (right before looping back to the next verify), never on the path
+# that declares PASS and exits 0. A fixer could background a detached mutation of a protected file
+# timed to land AFTER that FAIL-path check but BEFORE the next verify call: the poisoned bytes are
+# what the next verify reads, verify reports PASS, and the loop declared SUCCESS with the protected
+# file left cheated — no PROTECTED FILE MODIFIED line, no restore, no compromise marker. Fixed by
+# also calling check_protected() on the PASS path, immediately before declaring success.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOOPFIX="$HERE/../bin/loop-fix.sh"
@@ -303,5 +312,54 @@ grep -q "restored 1 protected file(s) to their pre-run state" .loop/history.log 
 cmp -s guard-file.txt original-guard-file.txt \
   || fail "case10: protected file bytes were NOT restored to the exact pre-run content"
 
-echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, and cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk)"
+# ── case 11: fixer backgrounds a delayed mutation timed to land AFTER the FAIL-path check but ──
+# BEFORE the next verify reads the file (round-4 adversarial finding) ───────────────────────────
+# check_protected() used to run ONLY on the FAIL path (right before looping back to the next
+# verify) — never on the PASS path. A fixer that returns immediately without touching the protected
+# file synchronously (so the FAIL-path check right after it sees no violation), but backgrounds a
+# detached job that mutates the file a little later, gets the poisoned bytes in place by the time
+# the NEXT verify call reads them. If that verify does not care about the file's content (as here —
+# it just reports PASS on its second invocation), the loop used to declare SUCCESS with the
+# protected file left corrupted, no PROTECTED FILE MODIFIED line, no restore, no compromise marker.
+# The synthetic verify sleeps briefly on its PASS call to give the backgrounded mutation (a much
+# shorter delay) reliable margin to land before the new PASS-path check_protected() call runs —
+# widening the window on the test side rather than relying on a hair-trigger race, so this assertion
+# is not flaky.
+C="$WORK/c11"; mkdir -p "$C"; cd "$C" || fail "cd c11"
+printf 'ORIGINAL-CONTENT-c11\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-verify-race.sh <<'EOF'
+#!/bin/sh
+if [ -f .verify-called-once ]; then
+  # Second+ call: sleep briefly so the fixer's backgrounded mutation (a much shorter delay) has
+  # landed well before this verify — and therefore the loop's PASS-path check — completes.
+  sleep 0.2
+  echo "PASS on iteration >=2 (delayed on purpose, see case11 comment)"
+  exit 0
+else
+  touch .verify-called-once
+  echo "FAILED forcing fixer invocation"
+  exit 1
+fi
+EOF
+cat > fake-fix-race.sh <<'EOF'
+#!/bin/sh
+( sleep 0.05; printf 'CHEAT-STRING-c11\n' >> guard-file.txt ) &
+true
+EOF
+
+"$LOOPFIX" --verify 'sh fake-verify-race.sh' --fix 'sh fake-fix-race.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case11: expected exit 3 (PROTECTED-VIOLATION) for a mutation backgrounded to land after the FAIL-path check but before the next verify, got $code — round-4 PASS-path gap is NOT closed"
+grep -q "done: SUCCESS" .loop/history.log \
+  && fail "case11: must NOT report false SUCCESS — the protected file was left corrupted by a timed background mutation"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  || fail "case11: expected the PROTECTED FILE MODIFIED marker from the new PASS-path check"
+grep -q "done: PROTECTED-VIOLATION" .loop/history.log || fail "case11: expected the PROTECTED-VIOLATION done marker"
+grep -q "restored 1 protected file(s) to their pre-run state" .loop/history.log \
+  || fail "case11: expected a log line confirming the restore"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case11: protected file bytes were NOT restored to the exact pre-run content"
+
+echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk), and now also catches a mutation backgrounded to land after the FAIL-path check but before the next verify (round-4: check_protected() runs on the PASS path too)"
 exit 0

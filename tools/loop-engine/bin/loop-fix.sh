@@ -111,6 +111,12 @@
 # symlink to an external path, the restored bytes land at the symlink's target and the file is
 # left as a symlink (content is correct, file type/identity is not) — this does not defeat
 # detection or let a rerun report false success, it is a restoration-fidelity gap, not a bypass.
+# Round-4 fix, narrow residual: check_protected() now also runs on the PASS path (right before
+# declaring success), not just the FAIL path — closing a bypass where a fixer backgrounded a
+# detached mutation timed to land after the FAIL-path check but before the next verify call; a
+# narrower window still remains (a background job timed to land in the handful of shell statements
+# between the new PASS-path check and the actual exit 0 — likely low milliseconds, not the whole
+# verify runtime) and is knowingly not chased further, same as the other narrow gaps in this section.
 # Stall caveat: stall detection is reliable when the verifier emits recognizable failure markers
 # or changing pass/fail counts; the hard guarantee against runaway is --max-iter.
 #
@@ -423,6 +429,21 @@ cleanup_rogue_protected() {
   done
 }
 
+# Shared PROTECTED-VIOLATION response — invoked from BOTH call sites: the FAIL-path check (after the
+# fixer runs, before looping back to the next verify) and the PASS-path check (round-4, right before
+# declaring success). Same reaction either way: log loudly, show the diff, restore + clean up, and
+# exit 3. Factored out so the PASS-path addition below cannot drift from the FAIL-path behaviour it
+# is mirroring. Never returns.
+handle_protect_violation() {
+  log "iter $iter: PROTECTED FILE MODIFIED by the fixer. This is reward hacking — aborting."
+  log "Changed vs snapshot:"
+  diff <(printf '%s' "$PROTECT_SNAP_DATA") <(printf '%s' "$PROTECT_NOW_DATA") 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
+  restore_protected
+  cleanup_rogue_protected
+  log "=== loop-fix done: PROTECTED-VIOLATION ==="
+  exit 3
+}
+
 # ── BAC-626 ①: 전체 LOG의 러너 요약줄 합산 카운트 ──────────────────────────────────────────
 # verdict-run SUMMARY는 tail-60의 마지막 매치라 turbo 병렬 출력에선 "어느 한 패키지의 숫자"로
 # 회차마다 흔들린다(비결정 순서). 전체 LOG의 'Tests' 요약줄(vitest3 "Tests  3 failed | 245 passed"
@@ -637,6 +658,17 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   cat "$VERDICT_FILE"
 
   if [ "$vcode" -eq 0 ]; then
+    # ---- reward-hacking guard, PASS path (issue #34 round-4 adversarial finding) ----
+    # check_protected() used to run ONLY on the FAIL path below (right before looping back to the
+    # next verify) — never here. A fixer could background a detached mutation of a protected file
+    # timed to land AFTER that FAIL-path check but BEFORE the next verify call: the poisoned bytes
+    # would then be what verify reads, verify reports PASS, and this branch declared SUCCESS with no
+    # PROTECTED-VIOLATION log line, no restore, no compromise marker — the same silent-false-SUCCESS
+    # signature as every other bug this file exists to close. Must run before ANY success signal
+    # (including the "PASS — stopping" log line just below), not just before the exit 0.
+    if ! check_protected; then
+      handle_protect_violation
+    fi
     log "iter $iter: PASS — stopping (success)."
     # mark-clean wiring (issue #9): bump clean_pass_count on every lesson tied to this gate BEFORE
     # record — record's existing-lesson merge path resets clean_pass_count to 0 for the lesson that
@@ -784,13 +816,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
 
   # ---- reward-hacking guard: protected files must be untouched ----
   if ! check_protected; then
-    log "iter $iter: PROTECTED FILE MODIFIED by the fixer. This is reward hacking — aborting."
-    log "Changed vs snapshot:"
-    diff <(printf '%s' "$PROTECT_SNAP_DATA") <(printf '%s' "$PROTECT_NOW_DATA") 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
-    restore_protected
-    cleanup_rogue_protected
-    log "=== loop-fix done: PROTECTED-VIOLATION ==="
-    exit 3
+    handle_protect_violation
   fi
 done
 
