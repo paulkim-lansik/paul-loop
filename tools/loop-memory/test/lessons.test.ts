@@ -77,6 +77,38 @@ describe('readLessonRecords — retiredRef 추출', () => {
   });
 });
 
+describe('readLessonRecords — count/lastSeen 파싱(decay 랭킹용, lessons.mjs top-level 필드와 동일 coerce)', () => {
+  it('lessons.mjs가 쓰는 top-level count/last_seen을 그대로 읽는다', () => {
+    write('with-decay-meta', { count: 7, last_seen: '2026-08-01T00:00:00.000Z' });
+    const rec = readLessonRecords(dir)[0];
+    expect(rec?.count).toBe(7);
+    expect(rec?.lastSeen).toBe('2026-08-01T00:00:00.000Z');
+  });
+
+  it('필드가 없으면 count=0·lastSeen=""(정보 없음 = decay 페널티 없음의 기본값)', () => {
+    write('no-decay-meta', {});
+    const rec = readLessonRecords(dir)[0];
+    expect(rec?.count).toBe(0);
+    expect(rec?.lastSeen).toBe('');
+  });
+
+  it('count가 정수가 아니거나 음수면 0으로 fail-closed 처리(lessons.mjs coerce와 동일 방향)', () => {
+    write('bad-count-negative', { count: -3 });
+    write('bad-count-float', { count: 1.5 });
+    write('bad-count-string', { count: 'not-a-number' });
+    const byId = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
+    expect(byId.get('bad-count-negative')?.count).toBe(0);
+    expect(byId.get('bad-count-float')?.count).toBe(0);
+    expect(byId.get('bad-count-string')?.count).toBe(0);
+  });
+
+  it('last_seen이 문자열이 아니면 빈 문자열로 fail-closed 처리', () => {
+    write('bad-last-seen', { last_seen: 12345 });
+    const rec = readLessonRecords(dir)[0];
+    expect(rec?.lastSeen).toBe('');
+  });
+});
+
 describe('decideLessonReap — 순수 미러-싱크 결정(BAC-580)', () => {
   it('rec이 undefined면(이 호출이 그 파일을 못 봄) 항상 keep — 부분/빈 디렉터리 호출이 무관한 노트를 지우지 않는다', () => {
     expect(decideLessonReap('아무 내용', undefined)).toEqual({ op: 'keep' });

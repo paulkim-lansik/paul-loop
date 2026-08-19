@@ -29,6 +29,13 @@ export interface LessonFile {
   fix: string;
   source: string;
   signature: string[];
+  /** lessons.mjs가 유지하는 top-level 재발 횟수(`count`). decay 랭킹(아래 decayedScore)이 "자주 재발하는
+   *  교훈은 오래돼도 덜 감쇠"에 쓴다. 파일에 없거나 손상돼 있으면 0(정보 없음 = 반감기 가산 없음 —
+   *  decayedScore 쪽에서 이 기본값이 "감쇠 완화 없음"으로 자연히 처리된다). */
+  count: number;
+  /** lessons.mjs가 유지하는 top-level `last_seen`(ISO8601). 파일에 없거나 손상돼 있으면 빈 문자열
+   *  (decayedScore가 "정보 없음 = age 0(페널티 없음)"으로 처리 — fail-open: 모르는 걸 벌하지 않는다). */
+  lastSeen: string;
 }
 
 /**
@@ -94,6 +101,10 @@ export function readLessonRecords(dir: string): LessonRecord[] {
       signature: Array.isArray(l.signature)
         ? l.signature.filter((s): s is string => typeof s === 'string')
         : [],
+      // count/last_seen: lessons.mjs와 동일한 fail-closed coerce(§166-168 참고) — 손상/수기편집 필드가
+      // 조용히 decay 계산을 오염시키지 못하게.
+      count: Number.isInteger(l.count) && (l.count as number) >= 0 ? (l.count as number) : 0,
+      lastSeen: typeof l.last_seen === 'string' ? l.last_seen : '',
       verified: l.verified === true,
       rejected: challenge?.verdict === 'reject',
       retired,
@@ -112,7 +123,15 @@ export function readLessonRecords(dir: string): LessonRecord[] {
 export function readVerifiedLessons(dir: string): LessonFile[] {
   return readLessonRecords(dir)
     .filter(isGraduationEligible)
-    .map(({ id, title, fix, source, signature }) => ({ id, title, fix, source, signature }));
+    .map(({ id, title, fix, source, signature, count, lastSeen }) => ({
+      id,
+      title,
+      fix,
+      source,
+      signature,
+      count,
+      lastSeen,
+    }));
 }
 
 /** 교훈 → 임베딩 대상 텍스트. 실패의 *의미*와 고친 방법을 함께 담아 의미검색이 걸리게 한다. */
@@ -312,13 +331,23 @@ export async function graduateLessons(
  * 남긴다 — 서명 없음(직접 SQL INSERT 등 secret을 모르는 쓰기)이나 content-서명 불일치(예: content만
  * 바뀌고 재서명 안 된 stale 서명)는 injection 후보에서 제외된다.
  */
-export async function recallLessons(
+interface RecallHitWithKeywords extends RecallHit {
+  keywords: string[];
+}
+
+/**
+ * recallLessons의 실제 질의 본체 — keywords까지 포함해 반환한다(내부 전용). `recallLessonsDecayed`가
+ * lesson id(→ 파일 lastSeen/count) 매칭에 keywords가 필요해 분리했다. `recallLessons`는 이 함수를
+ * keywords만 벗겨 감싼 얇은 래퍼 — 외부 계약(핫패스, UserPromptSubmit 훅)은 그대로 두면서 SQL을
+ * 중복시키지 않는다.
+ */
+async function recallLessonsRaw(
   db: LoopDb,
   embedder: Embedder,
   query: string,
   signingKey: string | undefined,
-  k = 5,
-): Promise<RecallHit[]> {
+  k: number,
+): Promise<RecallHitWithKeywords[]> {
   // signingKey 없으면 결과는 항상 []다 — 임베드 API 호출·DB 질의를 낼 필요 없이 여기서 바로 반환한다.
   if (!signingKey) return [];
   const literal = toVectorLiteral(await embedder.embed(query));
@@ -329,6 +358,7 @@ export async function recallLessons(
       content: memoryNote.content,
       distance,
       provenance: memoryNote.provenance,
+      keywords: memoryNote.keywords,
     })
     .from(memoryNote)
     .where(
@@ -342,5 +372,294 @@ export async function recallLessons(
     .limit(k);
   return rows
     .filter((r) => verifySignature(r.content, signingKey, r.provenance))
-    .map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance) }));
+    .map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance), keywords: r.keywords }));
+}
+
+export async function recallLessons(
+  db: LoopDb,
+  embedder: Embedder,
+  query: string,
+  signingKey: string | undefined,
+  k = 5,
+): Promise<RecallHit[]> {
+  const rows = await recallLessonsRaw(db, embedder, query, signingKey, k);
+  return rows.map(({ id, content, distance }) => ({ id, content, distance }));
+}
+
+// ── Sleep-time consolidation (BAC/paul-loop #12) ────────────────────────────────────────────────
+//
+// 아래 3개 배치는 이 파일 위쪽의 졸업(graduate)·회수(reap)와 달리 **실시간 요청 경로가 아니다** —
+// SessionStart/UserPromptSubmit 훅이 부르는 게 아니라, 사람 또는 주기 실행(cron/CLI `consolidate`
+// 서브커맨드)이 굴리는 정리 작업이다. 셋 다 lessons.mjs의 실패-시그니처 *정확* 해시 매칭을 넘어,
+// 이미 졸업된 lesson 노트들의 pgvector 임베딩을 봐야만 알 수 있는 *의미적* 신호를 뽑아낸다:
+//
+//   1. findDuplicateLessons  — 거의 같은 노트가 서로 다른 lesson id로 중복 졸업됐는지 표시(자동 병합 없음).
+//   2. scorePromotionCandidates — "의미적으로 비슷한 실패가 몇 번 나타났는가"를 승격 보조 신호로 채점.
+//   3. decayedScore/recallLessonsDecayed — 오래되고 최근 재발 없는 교훈은 랭킹에서 감쇠.
+//
+// 1·2는 전체 lesson 코퍼스를 한 번 스캔해 순수 함수(clusterBySimilarity)로 클러스터링만 할 뿐 아무것도
+// 쓰지 않는다(read-only) — graduateLessons/syncKnowledge와 달리 advisory lock이 필요 없다(동시에 여러
+// 세션이 돌려도 서로의 쓰기를 밟을 게 없다). 병합·삭제·승격의 최종 판단은 여전히 사람/스켑틱(lessons.mjs의
+// challenge/retire)이 한다 — 이 배치는 후보를 "표시"만 한다.
+
+/** 코사인 거리 — pgvector `<=>` 연산자와 같은 공식(1 - cosine similarity). 순수 JS라 DB 없이도
+ *  clusterBySimilarity를 단위테스트할 수 있다. */
+function cosineDistance(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 1 : 1 - dot / denom;
+}
+
+export interface LessonEmbeddingRow {
+  /** memory_note.id */
+  noteId: string;
+  /** `lesson:<id>` keyword에서 뽑은 원 lesson id. */
+  lessonId: string;
+  embedding: number[];
+}
+
+export interface SimilarityCluster {
+  noteIds: string[];
+  lessonIds: string[];
+}
+
+/**
+ * 순수 함수: 서로 코사인 거리 < threshold인 노트들을 union-find로 묶어 클러스터를 낸다. dedup(#1, 타이트한
+ * threshold)과 pre-scoring(#3, 느슨한 threshold)이 이 함수 하나를 threshold만 다르게 재사용한다 — "얼마나
+ * 가까워야 같은 클러스터로 볼지"만 다를 뿐 클러스터링 자체는 같은 문제라서. 크기 1인 클러스터(다른 어떤
+ * 노트와도 안 묶인 단독)는 결과에서 뺀다 — 신호가 없다.
+ */
+export function clusterBySimilarity(
+  rows: LessonEmbeddingRow[],
+  threshold: number,
+): SimilarityCluster[] {
+  const parent = rows.map((_, i) => i);
+  function find(i: number): number {
+    while (parent[i] !== i) {
+      const p = parent[i] as number;
+      parent[i] = parent[p] as number;
+      i = p;
+    }
+    return i;
+  }
+  function union(i: number, j: number): void {
+    const ri = find(i);
+    const rj = find(j);
+    if (ri !== rj) parent[ri] = rj;
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const a = rows[i]?.embedding;
+      const b = rows[j]?.embedding;
+      if (a && b && cosineDistance(a, b) < threshold) union(i, j);
+    }
+  }
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < rows.length; i++) {
+    const root = find(i);
+    const arr = groups.get(root);
+    if (arr) arr.push(i);
+    else groups.set(root, [i]);
+  }
+  const clusters: SimilarityCluster[] = [];
+  for (const idxs of groups.values()) {
+    if (idxs.length < 2) continue;
+    clusters.push({
+      noteIds: idxs.map((i) => rows[i]?.noteId as string),
+      lessonIds: idxs.map((i) => rows[i]?.lessonId as string),
+    });
+  }
+  return clusters;
+}
+
+/** 얇은 shell — 활성 lesson 노트 전부(임베딩 포함)를 읽는다. dedup·pre-scoring 둘 다 같은 스캔을
+ *  공유해 DB 왕복을 하나로 줄인다(consolidateLessonMemory). */
+async function fetchLessonEmbeddings(db: LoopDb): Promise<LessonEmbeddingRow[]> {
+  const notes = await db
+    .select({ id: memoryNote.id, keywords: memoryNote.keywords, embedding: memoryNote.embedding })
+    .from(memoryNote)
+    .where(
+      and(
+        isNull(memoryNote.deletedAt),
+        sql`${LESSON_TAG} = any(${memoryNote.tags})`,
+        sql`${memoryNote.embedding} is not null`,
+      ),
+    );
+  const out: LessonEmbeddingRow[] = [];
+  for (const n of notes) {
+    const lessonId = n.keywords
+      .find((k) => k.startsWith(LESSON_KEY_PREFIX))
+      ?.slice(LESSON_KEY_PREFIX.length);
+    if (!lessonId || !n.embedding) continue;
+    out.push({ noteId: n.id, lessonId, embedding: n.embedding });
+  }
+  return out;
+}
+
+/** 노트 간 사실상 동일(코사인 거리 < threshold)로 보는 기본 문턱값. */
+const DEDUP_DISTANCE_THRESHOLD = 0.05;
+/** "의미적으로 비슷한 실패"로 보는 기본 문턱값 — dedup보다 훨씬 느슨하다(사실상 동일이 아니라 같은
+ *  주제군인지만 본다). */
+const PROMOTION_DISTANCE_THRESHOLD = 0.2;
+
+export interface DuplicateCandidate {
+  noteIds: string[];
+  lessonIds: string[];
+}
+
+/**
+ * 배치(#1, dedup): 졸업된 lesson 노트 중 임베딩이 사실상 같은(코사인 거리 < threshold) 서로 다른 lesson
+ * id 노트들을 병합 후보로 표시한다. **자동 병합/삭제하지 않는다** — lessons.mjs의 retire/challenge와
+ * 같은 정신으로 사람/스켑틱이 최종 판단해야 한다(호출자가 이 목록을 보고 `lessons challenge` 등으로 이어간다).
+ */
+export async function findDuplicateLessons(
+  db: LoopDb,
+  threshold = DEDUP_DISTANCE_THRESHOLD,
+): Promise<DuplicateCandidate[]> {
+  const rows = await fetchLessonEmbeddings(db);
+  return clusterBySimilarity(rows, threshold);
+}
+
+export interface PromotionSignal {
+  lessonId: string;
+  /** 자신을 포함한 클러스터 크기 — "의미적으로 비슷한 실패가 몇 번 나타났는가". */
+  clusterSize: number;
+  /** 같은 클러스터의 다른 lesson id들. */
+  peerLessonIds: string[];
+}
+
+function toPromotionSignals(clusters: SimilarityCluster[]): PromotionSignal[] {
+  const out: PromotionSignal[] = [];
+  for (const c of clusters) {
+    for (const lessonId of c.lessonIds) {
+      out.push({
+        lessonId,
+        clusterSize: c.lessonIds.length,
+        peerLessonIds: c.lessonIds.filter((id) => id !== lessonId),
+      });
+    }
+  }
+  return out.sort((a, b) => b.clusterSize - a.clusterSize);
+}
+
+/**
+ * 배치(#3, pre-scoring): "의미적으로 비슷한 실패가 여러 번 나타났다"는 신호를 loop-memory 쪽에서
+ * 사전 채점한다 — lessons.mjs의 promote(정확 시그니처 재발 `count` 기반)와는 독립된 보조 신호다. 실제
+ * 승격 판단(verified+recurring+challenge 게이트)은 여전히 lessons.mjs 몫 — 이 함수는 계산해서
+ * 반환할 뿐 어디에도 자동 반영하지 않는다.
+ */
+export async function scorePromotionCandidates(
+  db: LoopDb,
+  threshold = PROMOTION_DISTANCE_THRESHOLD,
+): Promise<PromotionSignal[]> {
+  const rows = await fetchLessonEmbeddings(db);
+  return toPromotionSignals(clusterBySimilarity(rows, threshold));
+}
+
+export interface ConsolidationReport {
+  duplicates: DuplicateCandidate[];
+  promotionSignals: PromotionSignal[];
+}
+
+/**
+ * findDuplicateLessons + scorePromotionCandidates를 한 번의 스캔으로 묶은 편의 배치 — 둘 다 같은 활성
+ * lesson 임베딩 집합 위에서 clusterBySimilarity를 threshold만 다르게 두 번 돌릴 뿐이라, DB 왕복을
+ * 하나로 줄인다(CLI `consolidate` 서브커맨드가 이걸 부른다). decay 랭킹(#2)은 질의(query)가 있어야
+ * 의미가 있는 recall 계열이라 여기 안 묶고 `recallLessonsDecayed`로 별도로 둔다.
+ */
+export async function consolidateLessonMemory(
+  db: LoopDb,
+  dedupThreshold = DEDUP_DISTANCE_THRESHOLD,
+  promotionThreshold = PROMOTION_DISTANCE_THRESHOLD,
+): Promise<ConsolidationReport> {
+  const rows = await fetchLessonEmbeddings(db);
+  return {
+    duplicates: clusterBySimilarity(rows, dedupThreshold),
+    promotionSignals: toPromotionSignals(clusterBySimilarity(rows, promotionThreshold)),
+  };
+}
+
+/** decay 반감기 기본값(일) — count=0인 교훈이 이 기간마다 거리 페널티 2배. */
+const DEFAULT_DECAY_HALF_LIFE_DAYS = 30;
+
+export interface DecayInput {
+  /** 원 코사인 거리(pgvector `<=>`). */
+  distance: number;
+  /** lessons.mjs top-level `last_seen`(ISO8601). 빈 문자열/파싱 불가 = 정보 없음. */
+  lastSeen: string;
+  /** lessons.mjs top-level `count`(재발 횟수). 정보 없으면 0. */
+  count: number;
+}
+
+/**
+ * 순수 함수: decay-adjusted 랭킹 스코어. distance와 같은 방향(낮을수록 더 관련 있음 — 오름차순 정렬).
+ * 오래 안 쓰인(lastSeen이 오래된) 교훈일수록 거리에 페널티를 곱해 랭킹에서 밀어낸다. count가 높을수록
+ * (자주 재발) 반감기가 늘어나 감쇠가 완만해진다 — 자주 재발하는 교훈은 오래돼도 덜 밀린다.
+ * lastSeen이 없으면(빈 문자열/파싱 불가) age=0으로 취급해 페널티를 주지 않는다 — 정보가 없다고 불리하게
+ * 두지 않는 fail-open 방향(이 배치는 삭제가 아니라 랭킹 보조 신호일 뿐이라, 모르는 걸 벌하면 파일에
+ * count/last_seen이 없는 수기 작성 교훈이 부당하게 밀린다).
+ */
+export function decayedScore(
+  input: DecayInput,
+  now: Date,
+  halfLifeDays = DEFAULT_DECAY_HALF_LIFE_DAYS,
+): number {
+  const seenAt = input.lastSeen ? new Date(input.lastSeen) : null;
+  const ageDays =
+    seenAt && !Number.isNaN(seenAt.getTime())
+      ? Math.max(0, (now.getTime() - seenAt.getTime()) / 86_400_000)
+      : 0;
+  const effectiveHalfLife = halfLifeDays * (1 + Math.max(0, input.count));
+  const decayFactor = 2 ** (ageDays / effectiveHalfLife);
+  return input.distance * decayFactor;
+}
+
+export interface DecayedRecallHit extends RecallHit {
+  score: number;
+}
+
+/**
+ * 배치(#2, decay 랭킹): recallLessons과 같은 lesson 코퍼스 질의를 하되, 파일 쪽 count/lastSeen으로
+ * decay-랭크해 반환한다. 실시간 recall 훅 경로(recallLessons, cli.ts의 UserPromptSubmit 결선)는 전혀
+ * 안 건드린다 — 이 함수는 별도 배치/진단 엔트리(CLI `recall --decay`)로, 오래되고 최근 재발 없는 교훈이
+ * 순수 최근접 거리만으로 상위를 차지하는 걸 완화해서 보여준다.
+ * raw 후보를 k보다 넉넉히(`max(k*4, 20)`) 뽑아 재정렬 후 상위 k만 남긴다 — decay가 순서를 뒤집을 수
+ * 있어 raw top-k만 보면 재정렬 여지가 없다.
+ */
+export async function recallLessonsDecayed(
+  db: LoopDb,
+  embedder: Embedder,
+  query: string,
+  signingKey: string | undefined,
+  dir: string,
+  k = 5,
+  now: Date = new Date(),
+  halfLifeDays = DEFAULT_DECAY_HALF_LIFE_DAYS,
+): Promise<DecayedRecallHit[]> {
+  const candidates = await recallLessonsRaw(db, embedder, query, signingKey, Math.max(k * 4, 20));
+  const meta = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
+  return candidates
+    .map((h) => {
+      const lessonId = h.keywords
+        .find((kw) => kw.startsWith(LESSON_KEY_PREFIX))
+        ?.slice(LESSON_KEY_PREFIX.length);
+      const m = lessonId ? meta.get(lessonId) : undefined;
+      const score = decayedScore(
+        { distance: h.distance, lastSeen: m?.lastSeen ?? '', count: m?.count ?? 0 },
+        now,
+        halfLifeDays,
+      );
+      return { id: h.id, content: h.content, distance: h.distance, score };
+    })
+    .sort((a, b) => a.score - b.score)
+    .slice(0, k);
 }

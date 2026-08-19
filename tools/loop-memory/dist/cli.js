@@ -13007,6 +13007,10 @@ function readLessonRecords(dir) {
       fix: typeof l.fix === "string" ? l.fix : "",
       source: typeof l.source === "string" && l.source ? l.source : "manual",
       signature: Array.isArray(l.signature) ? l.signature.filter((s) => typeof s === "string") : [],
+      // count/last_seen: lessons.mjs와 동일한 fail-closed coerce(§166-168 참고) — 손상/수기편집 필드가
+      // 조용히 decay 계산을 오염시키지 못하게.
+      count: Number.isInteger(l.count) && l.count >= 0 ? l.count : 0,
+      lastSeen: typeof l.last_seen === "string" ? l.last_seen : "",
       verified: l.verified === true,
       rejected: challenge?.verdict === "reject",
       retired,
@@ -13016,7 +13020,15 @@ function readLessonRecords(dir) {
   return out;
 }
 function readVerifiedLessons(dir) {
-  return readLessonRecords(dir).filter(isGraduationEligible).map(({ id, title, fix, source, signature }) => ({ id, title, fix, source, signature }));
+  return readLessonRecords(dir).filter(isGraduationEligible).map(({ id, title, fix, source, signature, count, lastSeen }) => ({
+    id,
+    title,
+    fix,
+    source,
+    signature,
+    count,
+    lastSeen
+  }));
 }
 function lessonContent(l) {
   return [l.title, l.fix ? `fix: ${l.fix}` : "", l.signature.join(" | ")].map((s) => s.trim()).filter(Boolean).join("\n");
@@ -13098,7 +13110,7 @@ async function graduateLessons(db, pool, embedder, dir, signingKey) {
     client.release();
   }
 }
-async function recallLessons(db, embedder, query, signingKey, k = 5) {
+async function recallLessonsRaw(db, embedder, query, signingKey, k) {
   if (!signingKey) return [];
   const literal = toVectorLiteral(await embedder.embed(query));
   const distance = sql`${memoryNote.embedding} <=> ${literal}::vector`;
@@ -13106,7 +13118,8 @@ async function recallLessons(db, embedder, query, signingKey, k = 5) {
     id: memoryNote.id,
     content: memoryNote.content,
     distance,
-    provenance: memoryNote.provenance
+    provenance: memoryNote.provenance,
+    keywords: memoryNote.keywords
   }).from(memoryNote).where(
     and(
       isNull(memoryNote.deletedAt),
@@ -13114,7 +13127,124 @@ async function recallLessons(db, embedder, query, signingKey, k = 5) {
       sql`${LESSON_TAG} = any(${memoryNote.tags})`
     )
   ).orderBy(distance).limit(k);
-  return rows.filter((r) => verifySignature(r.content, signingKey, r.provenance)).map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance) }));
+  return rows.filter((r) => verifySignature(r.content, signingKey, r.provenance)).map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance), keywords: r.keywords }));
+}
+async function recallLessons(db, embedder, query, signingKey, k = 5) {
+  const rows = await recallLessonsRaw(db, embedder, query, signingKey, k);
+  return rows.map(({ id, content, distance }) => ({ id, content, distance }));
+}
+function cosineDistance(a, b) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 1 : 1 - dot / denom;
+}
+function clusterBySimilarity(rows, threshold) {
+  const parent = rows.map((_, i) => i);
+  function find(i) {
+    while (parent[i] !== i) {
+      const p = parent[i];
+      parent[i] = parent[p];
+      i = p;
+    }
+    return i;
+  }
+  function union2(i, j) {
+    const ri = find(i);
+    const rj = find(j);
+    if (ri !== rj) parent[ri] = rj;
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const a = rows[i]?.embedding;
+      const b = rows[j]?.embedding;
+      if (a && b && cosineDistance(a, b) < threshold) union2(i, j);
+    }
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (let i = 0; i < rows.length; i++) {
+    const root = find(i);
+    const arr = groups.get(root);
+    if (arr) arr.push(i);
+    else groups.set(root, [i]);
+  }
+  const clusters = [];
+  for (const idxs of groups.values()) {
+    if (idxs.length < 2) continue;
+    clusters.push({
+      noteIds: idxs.map((i) => rows[i]?.noteId),
+      lessonIds: idxs.map((i) => rows[i]?.lessonId)
+    });
+  }
+  return clusters;
+}
+async function fetchLessonEmbeddings(db) {
+  const notes = await db.select({ id: memoryNote.id, keywords: memoryNote.keywords, embedding: memoryNote.embedding }).from(memoryNote).where(
+    and(
+      isNull(memoryNote.deletedAt),
+      sql`${LESSON_TAG} = any(${memoryNote.tags})`,
+      sql`${memoryNote.embedding} is not null`
+    )
+  );
+  const out = [];
+  for (const n of notes) {
+    const lessonId = n.keywords.find((k) => k.startsWith(LESSON_KEY_PREFIX))?.slice(LESSON_KEY_PREFIX.length);
+    if (!lessonId || !n.embedding) continue;
+    out.push({ noteId: n.id, lessonId, embedding: n.embedding });
+  }
+  return out;
+}
+var DEDUP_DISTANCE_THRESHOLD = 0.05;
+var PROMOTION_DISTANCE_THRESHOLD = 0.2;
+function toPromotionSignals(clusters) {
+  const out = [];
+  for (const c of clusters) {
+    for (const lessonId of c.lessonIds) {
+      out.push({
+        lessonId,
+        clusterSize: c.lessonIds.length,
+        peerLessonIds: c.lessonIds.filter((id) => id !== lessonId)
+      });
+    }
+  }
+  return out.sort((a, b) => b.clusterSize - a.clusterSize);
+}
+async function consolidateLessonMemory(db, dedupThreshold = DEDUP_DISTANCE_THRESHOLD, promotionThreshold = PROMOTION_DISTANCE_THRESHOLD) {
+  const rows = await fetchLessonEmbeddings(db);
+  return {
+    duplicates: clusterBySimilarity(rows, dedupThreshold),
+    promotionSignals: toPromotionSignals(clusterBySimilarity(rows, promotionThreshold))
+  };
+}
+var DEFAULT_DECAY_HALF_LIFE_DAYS = 30;
+function decayedScore(input, now, halfLifeDays = DEFAULT_DECAY_HALF_LIFE_DAYS) {
+  const seenAt = input.lastSeen ? new Date(input.lastSeen) : null;
+  const ageDays = seenAt && !Number.isNaN(seenAt.getTime()) ? Math.max(0, (now.getTime() - seenAt.getTime()) / 864e5) : 0;
+  const effectiveHalfLife = halfLifeDays * (1 + Math.max(0, input.count));
+  const decayFactor = 2 ** (ageDays / effectiveHalfLife);
+  return input.distance * decayFactor;
+}
+async function recallLessonsDecayed(db, embedder, query, signingKey, dir, k = 5, now = /* @__PURE__ */ new Date(), halfLifeDays = DEFAULT_DECAY_HALF_LIFE_DAYS) {
+  const candidates = await recallLessonsRaw(db, embedder, query, signingKey, Math.max(k * 4, 20));
+  const meta = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
+  return candidates.map((h) => {
+    const lessonId = h.keywords.find((kw) => kw.startsWith(LESSON_KEY_PREFIX))?.slice(LESSON_KEY_PREFIX.length);
+    const m = lessonId ? meta.get(lessonId) : void 0;
+    const score = decayedScore(
+      { distance: h.distance, lastSeen: m?.lastSeen ?? "", count: m?.count ?? 0 },
+      now,
+      halfLifeDays
+    );
+    return { id: h.id, content: h.content, distance: h.distance, score };
+  }).sort((a, b) => a.score - b.score).slice(0, k);
 }
 
 // src/cli.ts
@@ -13183,6 +13313,8 @@ var opt = {
   k: 5,
   json: false,
   allowStub: false,
+  decay: false,
+  // recall --decay: lessons 코퍼스를 decay 랭킹(BAC/paul-loop #12)으로 재정렬
   hits: ""
   // record-recall: [{id, distance?, corpus?}, ...] JSON 문자열 (BAC-586)
 };
@@ -13229,6 +13361,9 @@ for (let i = 0; i < argv.length; i++) {
       break;
     case "--allow-stub":
       opt.allowStub = true;
+      break;
+    case "--decay":
+      opt.decay = true;
       break;
     case "--hits":
       opt.hits = val();
@@ -13317,6 +13452,42 @@ async function runRecordRecall(hitsJson) {
     await pool.end();
   }
 }
+async function runConsolidate(json2) {
+  const { db, pool } = createLoopDb();
+  try {
+    const report = await consolidateLessonMemory(db);
+    if (json2) {
+      process.stdout.write(`${JSON.stringify(report)}
+`);
+      return;
+    }
+    process.stdout.write("loop-memory consolidate:\n");
+    if (report.duplicates.length === 0) {
+      process.stdout.write("  duplicates: (none)\n");
+    } else {
+      process.stdout.write(`  duplicates (${report.duplicates.length} cluster(s)):
+`);
+      for (const c of report.duplicates) {
+        process.stdout.write(`    - ${c.lessonIds.join(", ")}
+`);
+      }
+    }
+    if (report.promotionSignals.length === 0) {
+      process.stdout.write("  promotion signals: (none)\n");
+    } else {
+      process.stdout.write(`  promotion signals (${report.promotionSignals.length}):
+`);
+      for (const s of report.promotionSignals) {
+        process.stdout.write(
+          `    - ${s.lessonId} (cluster size ${s.clusterSize}, peers: ${s.peerLessonIds.join(", ")})
+`
+        );
+      }
+    }
+  } finally {
+    await pool.end();
+  }
+}
 async function main() {
   if (cmd === "stats") {
     await runStats(opt.json);
@@ -13326,8 +13497,14 @@ async function main() {
     await runRecordRecall(opt.hits);
     return;
   }
+  if (cmd === "consolidate") {
+    await runConsolidate(opt.json);
+    return;
+  }
   if (cmd !== "graduate" && cmd !== "recall") {
-    process.stderr.write("Usage: loop-memory <graduate|recall|stats|record-recall> [options]\n");
+    process.stderr.write(
+      "Usage: loop-memory <graduate|recall|consolidate|stats|record-recall> [options]\n"
+    );
     process.exit(2);
   }
   const embedder = pickEmbedder(opt.allowStub);
@@ -13393,7 +13570,7 @@ async function main() {
     }
     const memo = memoizeEmbedder(embedder);
     const [lessons, knowledge] = await Promise.all([
-      recallLessons(db, memo, q, signingKey, opt.k),
+      opt.decay ? recallLessonsDecayed(db, memo, q, signingKey, opt.lessons, opt.k) : recallLessons(db, memo, q, signingKey, opt.k),
       recallKnowledge(db, memo, q, opt.k)
     ]);
     if (opt.json) {
