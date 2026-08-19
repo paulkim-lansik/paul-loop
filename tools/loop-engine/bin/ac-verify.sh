@@ -150,10 +150,31 @@ join_semicolon() {
 }
 
 # ---- parse args ----
+# --log-dir's dependents (LOGSUBDIR/SYNC_LOG/the LOOP_DIR export coupling verdict-run.sh's own
+# state-file location to ours, issue #23 round-2 finding) are applied INLINE, the instant --log-dir
+# itself is parsed — not deferred to after the loop finishes. Round-4 adversarial finding: a
+# post-loop "finalize" step left a window where a LATER usage error in the same invocation (e.g.
+# `plan.md --log-dir custom-dir --bogus-flag`) could exit before that finalize step ever ran, so
+# the trap's corrective sync silently fell back to the unrelated default `.loop/` instead of the
+# just-parsed --log-dir target — reproduced, the exact stale-state failure mode every prior round
+# exists to prevent, just relocated to a value that hadn't been "applied" yet. Applying it the
+# moment it's parsed removes the window entirely: there is no longer a separate "parsed but not
+# yet applied" state for --log-dir to be caught in when a later argument in the same command line
+# errors out.
 PLAN=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --log-dir) need2 $# "$1"; LOG_DIR="$2"; shift 2 ;;
+    --log-dir)
+      need2 $# "$1"
+      case "$2" in
+        -*) echo "ac-verify.sh: --log-dir requires a directory path, not another flag ('$2')" >&2; exit 2 ;;
+      esac
+      LOG_DIR="$2"
+      LOGSUBDIR="$LOG_DIR/ac-verify"
+      SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
+      export LOOP_DIR="$LOG_DIR"
+      shift 2
+      ;;
     --*)       echo "ac-verify.sh: unknown flag $1" >&2; exit 2 ;;
     *)
       if [ -z "$PLAN" ]; then PLAN="$1"; shift
@@ -161,22 +182,6 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
-
-# ---- LOG_DIR is now finalized (flag parsed, default applied). Re-derive its dependents (the
-# trap above already covered every exit up to this point using the pre-parse default) ----
-LOGSUBDIR="$LOG_DIR/ac-verify"
-SYNC_LOG="$LOGSUBDIR/aggregate-sync.log"
-
-# Couple verdict-run.sh's own ${LOOP_DIR:-.loop} default to OUR --log-dir (issue #23 round-2
-# finding: they were previously decoupled — verdict-run.sh's write_state() derives
-# verdict-state.json's path purely from ITS OWN process's LOOP_DIR env var, which ac-verify.sh
-# never set, so a non-default --log-dir silently got its state file written to the unrelated
-# default ./.loop/ instead, and two parallel --log-dir runs with no manually-exported LOOP_DIR
-# would clobber the same shared default file). Exporting here makes every verdict-run.sh sub-call
-# below (per-AC calls and the corrective sync call) inherit a LOOP_DIR guaranteed to match
-# --log-dir. Both default to the literal ".loop", so this is a no-op for every caller that doesn't
-# pass --log-dir.
-export LOOP_DIR="$LOG_DIR"
 
 if [ -z "$PLAN" ]; then
   echo "ac-verify.sh: a plan file is required. Usage: ac-verify.sh <plan-file> [--log-dir <dir>]" >&2
