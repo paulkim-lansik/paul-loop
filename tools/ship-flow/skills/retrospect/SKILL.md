@@ -19,7 +19,7 @@ lessons are recalled as authoritative; only recurring ones get promoted. This ke
 ## In a fix loop (automatic)
 
 ```bash
-node tools/plugin-path.mjs exec bin/loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --lessons .loop/lessons
+node tools/plugin-path.mjs exec bin/loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --guard-mutation --lessons .loop/lessons
 ```
 `loop-fix` recalls past verified fixes for the current failure into your prompt, and records a
 verified lesson when it converges. Nothing else to do — just point `--lessons` at a (committed) dir.
