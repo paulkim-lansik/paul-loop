@@ -191,12 +191,15 @@ tools/loop-engine/
 
 ## 개발 상태
 
-- **살균은 끝났지만 아직 공개 전.** M0은 원본 모노레포 안에서만 말이 되던 것들을 전부 제거했다 —
-  외부 import를 가진 훅 하나, 그 레포 자신의 CI/훅 배선을 단정하는 테스트들, 그리고 프로덕션
-  코드베이스의 실제(시크릿만 제거된) PR 제목·파일 경로를 담고 있던 fixture 파일 하나. 남은 건
-  독립 실행된다 — `tools/loop-engine/test/run.sh`가 이 저장소 밖의 것 없이 15/15 그린이다.
-- CI(`.github/workflows/`)가 매 `main` push마다 `gitleaks`와 자체 테스트 스위트 +
-  `claude plugin validate --strict`를 돌린다.
+- **공개됨.** M0은 원본 모노레포 안에서만 말이 되던 것들을 전부 제거했다 — 외부 import를 가진 훅
+  하나, 그 레포 자신의 CI/훅 배선을 단정하는 테스트들, 그리고 프로덕션 코드베이스의 실제(시크릿만
+  제거된) PR 제목·파일 경로를 담고 있던 fixture 파일 하나. 남은 건 독립 실행된다 —
+  `tools/loop-engine/test/run.sh`가 이 저장소 밖의 것 없이 15/15 그린이다. 저장소 자체는 M1에서
+  비공개 → 공개로 전환됐다.
+- CI(`.github/workflows/`)가 `loop-engine`에 대해 매 `main` push마다 `gitleaks`와 자체 테스트
+  스위트 + `claude plugin validate --strict`를 돌린다. `loop-memory`는 별도 워크플로를 갖는다(단위
+  테스트 + 매니페스트 검증 — docker로 게이트된 통합 테스트 스위트는 필수 CI 게이트가 아니라
+  로컬/수동 체크다, 원본 레포가 자기 자신의 동형 스위트에 적용하던 것과 같은 절제).
 - **버저닝: 흐르는 SHA 채널이 아니라 명시적 semver.** Claude Code 자체의 버전 해석 순서
   ([Plugins reference § Version management](https://code.claude.com/docs/en/plugins-reference#version-management)
   참고)는 `plugin.json`과 마켓 엔트리 둘 다에서 `version`을 생략했을 때만 "해석된 커밋이 바뀔 때마다
@@ -210,15 +213,16 @@ tools/loop-engine/
 
 - **M0(완료)** — 비공개 스캐폴드: 시크릿/PII 스윕 + gitleaks CI + `loop-engine` bin·test 무수정
   이식 + `claude plugin validate --strict` 그린 + `--plugin-dir` dogfood `verdict-run` 1회 완주.
-- **M1(현재)** — `loop-engine` 공개: `docs/`에 남은 한국어 프로즈 영어화(완료), `classify-risk`의
+- **M1(완료)** — `loop-engine` 공개: `docs/`에 남은 한국어 프로즈 영어화(완료), `classify-risk`의
   룰 테이블을 소비자가 `--rules`/`CLASSIFY_RISK_RULES`/레포 루트 `risk-rules.json`으로 직접 넣을 수
   있게 외부화(완료), 저장소 비공개 → 공개 전환은 명시적 semver로([개발 상태](#개발-상태)에 SHA 채널
   대신 이걸 택한 이유).
-- **M2** — `ship-flow`(배달 루프 스킬 묶음) + `templates/`(소비 레포에 setup 스킬이 배선하는 헌법
-  층 템플릿 — 플러그인 루트 `CLAUDE.md`는 Claude Code가 프로젝트 컨텍스트로 로드하지 않아, 파일
-  하나로 플러그인 안에 그냥 두는 걸로는 안 됨).
-- **M3(선택)** — `loop-memory`(pgvector 의미 회상, opt-in/`defaultEnabled: false`) +
-  `anthropics/claude-plugins-community` 제출 검토.
+- **M2(완료)** — `ship-flow`(배달 루프 스킬 묶음) + `templates/`(소비 레포에 setup 스킬이 배선하는
+  헌법 층 템플릿 — 플러그인 루트 `CLAUDE.md`는 Claude Code가 프로젝트 컨텍스트로 로드하지 않아,
+  파일 하나로 플러그인 안에 그냥 두는 걸로는 안 됨).
+- **M3(진행 중, 선택)** — `loop-memory`(pgvector 의미 회상, opt-in/`defaultEnabled: false` — 스캐폴드
+  완료, 이 섹션이 그걸 문서화한다)와 `anthropics/claude-plugins-community` 제출(아직 열려있음 — 이
+  레포에서 내려진 결정이 아니라 사람 결정 사항).
 
 ## 라이선스
 

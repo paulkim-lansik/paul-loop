@@ -22,6 +22,26 @@ and refer to `loop-engine` only (see the un-prefixed version numbers).
   userConfig with no default paths — the plugin makes no assumption about a consuming repo's doc
   layout unless explicitly pointed at one.
 
+## ship-flow 0.1.0 — M2
+
+- Initial `ship-flow` scaffold (`tools/ship-flow/`) registered in the marketplace, depending on
+  `loop-engine`, with its first skill `hotfix` — lands an already-verified fix through worktree
+  isolation → verify → PR → merge, with human confirmation checkpoints at merge and deploy.
+- Review agent stack ported from glucofit-partners (ADR-0079/BAC-623): 4 self-owned agents
+  (`planner`, `code-reviewer`, `test-hunter`, `verifier-integrity-hunter`) + 3 named workflows
+  (`adversarial-review`, `harness-audit`, `trends-research`) — self-contained review capability, no
+  external `pr-review-toolkit`-style dependency.
+- `templates/` (CLAUDE.md constitution template, CI workflow template, branch-protection script, a
+  turbo-verify wiring reference doc) + a `setup` skill that interviews a consuming repo's user and
+  installs them — a plugin's own root `CLAUDE.md` isn't loaded as project context, so this can't
+  just be a file sitting in the plugin.
+- Remaining category-B skills ported and generalized: `grill-with-docs`, `retrospect`, `deps-audit`,
+  `to-issues`, `to-prd`, `resolving-merge-conflicts`, `harness-maturity-audit`,
+  `improve-codebase-architecture`, `tdd`, and `ship-feature` — the flagship plan-to-PR autonomous
+  delivery loop and this plugin's single entrypoint. All glucofit-partners-specific pointers
+  (`BAC-nnn`/`ADR-00nn` citations, hardcoded script/wrapper paths) replaced with either plain-prose
+  descriptions or config-driven lookups (`.claude/ship-flow.config.json`'s `trackerName`, etc.).
+
 ## loop-engine 0.2.0 — M1 (public release)
 
 - `docs/otel.md` and the remaining Korean prose in `docs/lessons.md` translated to English.
