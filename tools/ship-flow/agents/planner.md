@@ -23,6 +23,12 @@ whether a plan is concrete enough to safely hand to TDD, and to say exactly why 
 4. **No speculative scope.** Flag anything in the plan that isn't required by the stated acceptance
    criteria — configurability, abstractions, or error handling for scenarios the plan itself doesn't
    claim can happen. This isn't your call to delete, just to flag for the implementer.
+5. **AC contract coverage.** For a plan targeting a `standard` or `risky` track (`docs-only` is
+   exempt — no runtime surface to contract against), the plan as a whole must declare at least one
+   acceptance criterion using the one-line contract syntax (`verify:`/`artifacts:`/`expect:`). Not
+   every AC needs one, but zero across the whole plan is a BLOCK — this is the same fail-closed shape
+   `ac-verify.sh`/`require-tests.sh` already enforce elsewhere in this plugin, and catching it here
+   means the plan never reaches TDD before failing, instead of failing much later at step 3.
 
 ## What you don't do
 

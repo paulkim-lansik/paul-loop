@@ -155,6 +155,27 @@ planned paths directly: `<loop-engine classify-risk.sh> --no-gate --path <planne
 resulting `TRACK:`/`DEEP_GATES:` scope the remaining steps.
 → **Gate:** success criteria (what "done" verifiably means) has to be written down before moving on.
 
+**Express acceptance criteria as one-line AC contracts** — this is what makes step 3's gate below
+machine-checkable instead of self-reported (ADR-0104). Syntax (quoted verbatim — matches
+`ac-verify.sh`'s parser exactly, an optional leading markdown list marker like `- ` is tolerated):
+
+```
+AC: <description> | verify: <command> | artifacts: <path1>,<path2> | expect: <substring>
+```
+
+Only `AC: <description>` is required — `verify:`, `artifacts:`, and `expect:` are each optional, may
+appear in any combination or order, and are separated by ` | `. `artifacts:` paths are
+**comma-separated** (not space-separated — a path may itself contain spaces). Example:
+
+```
+AC: login rejects a wrong password | verify: pnpm --filter api test -- auth.spec.ts | expect: 401
+```
+
+For a `standard` or `risky` track (anything with a runtime surface — `docs-only` is exempt, since
+step 3 is already skipped for it per the TRACK table above), **the plan as a whole must express at
+least one AC with a machine-checkable contract** (a `verify:` and/or `artifacts:`/`expect:` field) —
+not every AC needs one, but zero across the whole plan means step 3 (Runtime verify) will fail closed.
+
 **If the plan itself exceeds one session's budget** (the scope is too large to pin down a single
 verifiable "done"), don't jump straight to implementation — split the issue into a map of decision
 tickets first: one separate tracked issue per still-open question (blocked-by links pointing at
@@ -177,7 +198,10 @@ actual diff with `--from-git`). Red loops back autonomously.
 ### 3. Runtime verify
 Build and run the app, drive the changed surface (CLI/API/GUI — whatever applies) through it, and
 confirm **what was intended actually works**. This produces runtime evidence, not a re-run of the test
-suite.
+suite. When step 1's plan has any AC contracts, this is now formalized via `<however this repo invokes
+its installed loop-engine plugin's bin scripts> ac-verify.sh <plan-file>` (ADR-0104) — deterministic
+subprocess judgment (verify exit code, artifact existence, output substring) per contracted AC,
+composing with — not replacing — the observe-the-running-app check above.
 → **Gate:** PASS. FAIL → **loop back to step 2**. SKIP (no runtime surface exists) passes with a
 one-line reason.
 
