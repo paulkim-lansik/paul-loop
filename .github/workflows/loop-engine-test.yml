@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # Explicit types (default is opened/synchronize/reopened only): also re-run on `edited` so a
+    # PR base-branch retarget triggers a fresh run instead of leaving a stale green check from the
+    # old base in place. Tradeoff: `edited` also fires on title/body/label edits with no code
+    # change — an acceptable cost for closing the base-retarget staleness gap.
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   selftest:
@@ -21,3 +26,17 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           claude plugin validate --strict .
           claude plugin validate --strict tools/loop-engine
+
+  verifier-pinned-review:
+    # base가 있어야 성립하는 pinned-baseline 체크 — pull_request 이벤트에서만 의미가 있다
+    # (issue #14, ADR-0002).
+    if: "${{ github.event_name == 'pull_request' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: run verifier-pinned-review against the PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash tools/loop-engine/bin/verifier-pinned-review.sh --base "$BASE_SHA"
