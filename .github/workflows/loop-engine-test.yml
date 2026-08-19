@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # Explicit types (default is opened/synchronize/reopened only): also re-run on `edited` so a
+    # PR base-branch retarget triggers a fresh run instead of leaving a stale green check from the
+    # old base in place. Tradeoff: `edited` also fires on title/body/label edits with no code
+    # change — an acceptable cost for closing the base-retarget staleness gap.
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   selftest:

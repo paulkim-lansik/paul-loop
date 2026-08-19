@@ -67,8 +67,14 @@ if [ ! -s "$SENSITIVE_FILE" ]; then
 fi
 
 # ---- 2) diff base...HEAD (3-dot: what HEAD introduced since it diverged from base) ----
+# --no-renames: without it, a commit that `git mv`s a sensitive-path file to a non-sensitive
+# location while also editing its content gets reported by git as a rename, and --name-only then
+# prints only the NEW path — the old sensitive path never appears in the diff output, so the
+# prefix-matching sensitivity scan below never fires on it. Forcing rename detection off makes
+# git report the same change as a plain delete of the old path + add of the new one, so both
+# paths show up in --name-only and the old (sensitive) one still trips the scan.
 CHANGED_FILE="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || { echo "verifier-pinned-review.sh: mktemp failed" >&2; exit 2; }
-if ! git -C "$REPO_ROOT" diff --name-only "${BASE}...HEAD" > "$CHANGED_FILE" 2>/dev/null; then
+if ! git -C "$REPO_ROOT" diff --no-renames --name-only "${BASE}...HEAD" > "$CHANGED_FILE" 2>/dev/null; then
   echo "verifier-pinned-review.sh: 'git diff ${BASE}...HEAD' failed — is '${BASE}' a valid ref reachable from this repo?" >&2
   exit 2
 fi

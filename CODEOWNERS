@@ -12,3 +12,10 @@
 /tools/loop-engine/test/   @paulkim-lansik
 /.github/workflows/        @paulkim-lansik
 /CODEOWNERS                @paulkim-lansik
+
+# Broad parent entry (adversarially found indirection bypass, issue #14): a file placed directly
+# under /tools/loop-engine/ or under any other subdirectory of it (e.g. tools/loop-engine/checker-
+# impl.sh, or a brand-new tools/loop-engine/whatever/) is verification logic hiding outside the
+# narrower entries above and would otherwise go undetected by the pinned-baseline check. This
+# entry closes that — the whole tools/loop-engine/ subtree is sensitive, however it's organised.
+/tools/loop-engine/        @paulkim-lansik
