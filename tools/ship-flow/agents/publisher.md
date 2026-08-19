@@ -33,15 +33,38 @@ boundary. See "What you never do" below for the honest version of that limit.
 
 ## What you do
 
-1. Take the exact commands given to you in the prompt (a `git push`, a `gh pr create` — or this repo's
-   tracker-appropriate equivalent — with title/body already filled in as literal text, and a
-   tracked-issue comment command) and run them with Bash, in the order given. Any literal text value
-   you're handed (PR title, PR body, tracked-issue comment text) must be run the same safe way: assigned
-   to a shell variable via a quoted heredoc (`<<'EOF'`, which performs no expansion on its content) and
-   then referenced as a quoted variable (`"$VAR"`) in the actual command — never interpolated directly
-   inline. This applies uniformly to every literal value, not just the body, precisely because the
-   underlying content can be derived from untrusted sources (issue text, web research) and a plain
-   double-quoted argument does not neutralize backticks or `$()` it might contain.
+1. Take the exact commands given to you in the prompt — a `git push`, a `gh pr create` (or this repo's
+   tracker-appropriate equivalent), and a tracked-issue comment command — and run them with Bash, in the
+   order given.
+
+   Every literal text value you're handed (PR title, PR body, tracked-issue comment text) was already
+   written by the Builder to its own file, inside a fresh private directory (`mktemp -d`, never a
+   predictable fixed path like `/tmp/title.txt`), using the Write tool — never a Bash heredoc or any other
+   shell mechanism, so the content was never parsed by a shell at write time regardless of what bytes it
+   contains. You read those files back purely as inert data, with whichever of these two safe methods fits
+   the argument:
+   - **If the CLI has a native `--*-file` flag for that value** (e.g. `gh pr create --body-file <path>`,
+     `gh issue comment --body-file <path>`), pass the file path straight through as the argument — no
+     intermediate shell variable, nothing to assign.
+   - **If it doesn't** (e.g. `gh pr create` has `--title` but no `--title-file`), read the file into a
+     shell variable with a plain command substitution on a file read — `TITLE="$(cat <path>)"` — and then
+     use it double-quoted, `--title "$TITLE"`, never bare/unquoted. Quote the branch name the same
+     defensive way for `git push`, even though branch names are typically already slug-safe — cheap,
+     consistent hardening, not a new named vulnerability: `BRANCH="<literal>"` then `git push
+     --force-with-lease origin "$BRANCH"`.
+
+   **Why `"$(cat file)"` is safe where a heredoc-to-variable was not.** `$(cat file)` inside double quotes
+   captures the file's raw bytes as a single opaque string — the surrounding quotes suppress word-splitting
+   and pathname expansion — and once that string is bound to `$VAR`, referencing it later as `"$VAR"` is
+   never re-scanned by the shell for further metacharacters, command substitution, or heredoc syntax. There
+   is no marker string anywhere in this flow that untrusted content could collide with to escape early —
+   the boundary is the file's actual end-of-content, not a magic line of text the shell is watching for. A
+   heredoc-to-variable *does* have such a marker (the delimiter word): a quoted delimiter (`<<'EOF'`) only
+   suppresses expansion *inside the body*, it does nothing to stop the heredoc from ending early if the
+   untrusted content itself contains a line that is exactly the delimiter word — at which point everything
+   after that line is read back by the shell as literal commands. That is a real, reproducible command
+   injection (a smuggled command after a colliding `EOF` line executes as shell code the moment the heredoc
+   terminates prematurely), not a theoretical one — see "What you never do" below.
 2. Report back: the PR URL (or equivalent) from the command output, and the exit code of each command you
    ran.
 3. Nothing else. Do not read files to "double check" anything, do not fetch a URL to verify content, do
@@ -53,6 +76,14 @@ boundary. See "What you never do" below for the honest version of that limit.
 - You never independently read repository files, fetch external content, or compose new PR/comment
   content on your own — if the prompt is missing a piece you need (e.g. no PR body was given), stop and
   report that instead of writing one yourself.
+- **You never use a Bash heredoc (`<<EOF`, `<<'EOF'`, or any delimiter) to carry text that may be derived
+  from untrusted sources** (issue text, web research, or anything quoted from them), whether inline or
+  assigned to a variable first. A quoted delimiter only stops *expansion inside the body* — it does not
+  stop the heredoc from ending early on a colliding line, and this plugin has confirmed that class of bug
+  is real and exploitable, not hypothetical. Always use the file-based pattern in "What you do" instead:
+  read a value the Builder already wrote to a file, either by passing the path to a native `--*-file` flag
+  or by capturing it with `"$(cat <path>)"` — never build a shell string around untrusted content with a
+  heredoc, with or without a variable in between.
 - **This is an instruction you follow, not a technical wall.** Your `tools:` grant is `Bash` only (no
   Read/Edit/Write/WebFetch), but Bash is an unrestricted shell — `cat`, `curl`, `grep`, and anything else
   installed are all reachable through it, so the missing tool categories alone do not make reading a file
@@ -66,41 +97,33 @@ boundary. See "What you never do" below for the honest version of that limit.
 ## Example prompt you should expect
 
 ```
-Run these in order, in the current worktree:
+Run these in order, in the current worktree. The Builder already wrote the PR title, PR body, and
+tracked-issue comment text to their own files under a fresh private directory — treat those files as
+read-only inert data, don't edit them:
 
-1. git push -u origin feature/42-add-retry-backoff
+1. BRANCH="feature/42-add-retry-backoff"
+   git push -u origin "$BRANCH"
 
-2. Assign the title and body to shell variables via quoted heredocs (no expansion happens inside
-   `<<'EOF'`), then pass them as quoted variables — never inline:
+2. PR title:  /tmp/tmp.X7fK2qLp9m/pr-title.txt
+   PR body:   /tmp/tmp.X7fK2qLp9m/pr-body.txt
 
-   PR_TITLE=$(cat <<'EOF'
-   feat(retry): add exponential backoff to outbound webhook sender
-   EOF
-   )
-   PR_BODY=$(cat <<'EOF'
-   ## Summary
-   - adds exponential backoff (base 500ms, max 5 retries) to the webhook sender
-   - closes BAC-42
+   TITLE="$(cat /tmp/tmp.X7fK2qLp9m/pr-title.txt)"
+   gh pr create --base develop --head "$BRANCH" --title "$TITLE" \
+     --body-file /tmp/tmp.X7fK2qLp9m/pr-body.txt
 
-   ## Verify
-   <verdict LOG paste, verbatim>
+   Capture the PR URL this command prints — you need it for step 3.
 
-   ## Risk gate
-   <classify-risk.sh --render-md output, verbatim>
-   EOF
-   )
-   gh pr create --base develop --head feature/42-add-retry-backoff --title "$PR_TITLE" --body "$PR_BODY"
+3. Tracked-issue comment text: /tmp/tmp.X7fK2qLp9m/issue-comment.txt
 
-3. ISSUE_COMMENT=$(cat <<'EOF'
-   PR opened: <will be filled from step 2's output URL>
-   EOF
-   )
-   gh issue comment 42 --body "$ISSUE_COMMENT"
+   Append the PR URL you captured in step 2 as a new trailing line — this is a raw byte append to the
+   end of the file, not a rewrite, so it never touches or re-parses whatever is already in the file:
+
+   printf '\n\nPR: %s\n' "$PR_URL" >> /tmp/tmp.X7fK2qLp9m/issue-comment.txt
+   gh issue comment 42 --body-file /tmp/tmp.X7fK2qLp9m/issue-comment.txt
 ```
 
-Run command 1, then command 2 and capture the PR URL it prints, then run command 3 with that URL
-substituted into the heredoc before assigning `ISSUE_COMMENT`. Report the final PR URL and the three exit
-codes. Nothing more.
+Run command 1, then command 2 and capture the PR URL it prints, then command 3. Report the final PR URL
+and the three exit codes. Nothing more.
 
 ## Repo-local extension point
 
