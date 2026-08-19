@@ -103,6 +103,14 @@ fi
 
 # 5a) detached worktree of the PR's current (new) code
 WORKTREE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || { echo "verifier-pinned-review.sh: mktemp -d failed" >&2; exit 2; }
+# Canonicalize (resolve symlinks, e.g. macOS /var -> /private/var) before it's used anywhere
+# else. Some pinned test files re-derive their own script directory via `cd "$(dirname "$0")" &&
+# pwd`, then join it with a relative `../../..` to locate lib/ scripts they invoke with `node`.
+# If WORKTREE_DIR still carries a symlinked prefix, that literal (non-realpath'd) node invocation
+# path can end up disagreeing with Node's own realpath'd `import.meta.url`, breaking the common
+# `import.meta.url === pathToFileURL(process.argv[1]).href` "run as main" guard and making the
+# script silently no-op — a false FAIL unrelated to anything this mechanism is meant to catch.
+WORKTREE_DIR="$(cd -P "$WORKTREE_DIR" && pwd)" || { echo "verifier-pinned-review.sh: cannot canonicalize worktree dir" >&2; exit 2; }
 if ! WT_ERR="$(git -C "$REPO_ROOT" worktree add --detach "$WORKTREE_DIR" HEAD 2>&1)"; then
   echo "verifier-pinned-review.sh: git worktree add failed: $WT_ERR" >&2
   exit 2
