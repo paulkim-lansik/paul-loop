@@ -7,7 +7,9 @@ import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createLoopDb, LOOP_DATABASE_URL } from '../src/client';
 import { stubEmbedder } from '../src/embedding';
+import { LESSON_TAG } from '../src/lessons';
 import { addNote, softDeleteNote } from '../src/ops';
+import { signContent } from '../src/provenance';
 import { memoryNote, memoryOp } from '../src/schema/memory';
 
 // 통합(docker pgvector): 실제 CLI 서브프로세스를 굴려 graduate/recall JSON 계약을 end-to-end 증명한다.
@@ -35,7 +37,8 @@ cliEnv.LOOP_DATABASE_URL = LOOP_DATABASE_URL; // 서브프로세스가 같은 DB
 // write-path provenance(BAC-619) — 없으면 lesson recall이 fail-closed로 항상 빈 배열이라(README
 // "위협모델"), 이 CLI 서브프로세스 테스트도 고정 테스트 secret을 명시로 심어준다(실 dev 워크스테이션의
 // .env 값이 있어도 덮어써 결정적으로).
-cliEnv.LOOP_MEMORY_SIGNING_KEY = 'bac-619-cli-test-signing-key';
+const SIGNING_KEY = 'bac-619-cli-test-signing-key'; // gitleaks:allow — fixed test fixture
+cliEnv.LOOP_MEMORY_SIGNING_KEY = SIGNING_KEY;
 
 const tsx = join(import.meta.dirname, '..', 'node_modules', '.bin', 'tsx');
 const cli = join(import.meta.dirname, '..', 'src', 'cli.ts');
@@ -215,5 +218,213 @@ describe('cli — record-recall (계측, 임베더 불필요)', () => {
   it('--hits가 없거나 빈 배열이면 아무 것도 쓰지 않고 exit 0(no-op, fail-open과 일관)', () => {
     const r = runCli(['record-recall', '--hits', '[]']);
     expect(r.status).toBe(0);
+  });
+});
+
+// consolidate 서브커맨드(BAC/paul-loop #12, sleep-time consolidation) — 임베더가 필요 없다(이미 저장된
+// 임베딩끼리 코사인 거리를 재는 것뿐). 노트는 addNote로 직접 심어 정확한 거리를 통제한다(graduate를
+// 거치지 않는다 — consolidate.integration.test.ts와 같은 패턴).
+describe('cli — consolidate (sleep-time consolidation, 서브프로세스 end-to-end)', () => {
+  it('LOOP_MEMORY_SIGNING_KEY가 있으면 사실상 동일한 서명된 노트 쌍을 dedup 후보로 보고한다', async () => {
+    const idA = randomUUID();
+    const idB = randomUUID();
+    const contentA = `consolidate cli fixture A ${run}`;
+    const contentB = `consolidate cli fixture B (사실상 동일) ${run}`;
+    const stub = stubEmbedder();
+    const embedding = await stub.embed(`consolidate cli shared vector ${run}`);
+    const noteA = await addNote(db, stub, {
+      content: contentA,
+      keywords: [`lesson:${idA}`],
+      tags: [LESSON_TAG, 'manual'],
+      context: 'manual',
+      embedding,
+      provenance: signContent(contentA, SIGNING_KEY),
+    });
+    const noteB = await addNote(db, stub, {
+      content: contentB,
+      keywords: [`lesson:${idB}`],
+      tags: [LESSON_TAG, 'manual'],
+      context: 'manual',
+      embedding, // A와 완전히 같은 벡터 — distance=0, dedup 문턱(기본 0.05) 안.
+      provenance: signContent(contentB, SIGNING_KEY),
+    });
+    try {
+      const r = runCli(['consolidate', '--json']);
+      expect(r.status).toBe(0);
+      const line = r.stdout.split('\n').find((l) => l.trim().startsWith('{'));
+      expect(line, `expected a JSON object line, got: ${r.stdout}`).toBeDefined();
+      const report = JSON.parse(line as string) as {
+        duplicates: Array<{ lessonIds: string[] }>;
+        promotionSignals: Array<{ lessonId: string; peerLessonIds: string[] }>;
+      };
+      expect(
+        report.duplicates.some((c) => c.lessonIds.includes(idA) && c.lessonIds.includes(idB)),
+      ).toBe(true);
+    } finally {
+      await softDeleteNote(db, noteA.id, 'test cleanup');
+      await softDeleteNote(db, noteB.id, 'test cleanup');
+    }
+  });
+
+  it('LOOP_MEMORY_SIGNING_KEY 없으면 duplicate 후보가 실제로 있어도 빈 결과(fail-closed, BAC-619)', () => {
+    // signingKey를 안 준 별도 env — cliEnv를 그대로 복제하되 이 값만 비운다(다른 테스트에 영향 없음).
+    const envNoKey: NodeJS.ProcessEnv = { ...cliEnv, LOOP_MEMORY_SIGNING_KEY: '' };
+    const r = spawnSync(tsx, [cli, 'consolidate', '--json'], {
+      encoding: 'utf8',
+      env: envNoKey,
+      timeout: 30000,
+    });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(/LOOP_MEMORY_SIGNING_KEY not set/);
+    const line = (r.stdout ?? '').split('\n').find((l) => l.trim().startsWith('{'));
+    expect(line, `expected a JSON object line, got: ${r.stdout}`).toBeDefined();
+    const report = JSON.parse(line as string) as {
+      duplicates: unknown[];
+      promotionSignals: unknown[];
+    };
+    // DB에 실제로 어떤 signed duplicate가 있든(다른 테스트가 동시에 심었더라도) signingKey 없으면
+    // consolidateLessonMemory가 아예 아무것도 안 읽으므로 결과는 항상 빈 배열이다.
+    expect(report.duplicates).toEqual([]);
+    expect(report.promotionSignals).toEqual([]);
+  });
+});
+
+// recall --decay(BAC/paul-loop #12) — lessons 코퍼스만 decay 랭킹으로 재정렬한다. 쿼리 텍스트를 실제로
+// CLI가 쓰는 stubEmbedder로 미리 임베드해(같은 함수를 이 테스트 프로세스에서도 그대로 호출) 정확한
+// raw distance를 통제한다 — 그람-슈미트로 그 벡터와 직교하는 축을 뽑아 코사인 유사도를 정확한 값으로
+// 섞는다(consolidate.integration.test.ts의 basis/mix와 같은 발상, 다만 기준벡터가 임의값이라 직접 만든다).
+function dot(a: number[], b: number[]): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += (a[i] ?? 0) * (b[i] ?? 0);
+  return s;
+}
+function normalizeVec(v: number[]): number[] {
+  const n = Math.sqrt(dot(v, v)) || 1;
+  return v.map((x) => x / n);
+}
+function orthogonalUnit(v: number[]): number[] {
+  const dim = v.length;
+  const seed = new Array(dim).fill(0);
+  const axis = Math.abs(v[0] ?? 0) < 0.9 ? 0 : 1; // v의 지배축을 피해 시작축을 고른다.
+  seed[axis] = 1;
+  const proj = dot(seed, v);
+  return normalizeVec(seed.map((x, i) => x - proj * (v[i] ?? 0)));
+}
+/** v(단위벡터)와 코사인 유사도가 정확히 cosTheta인 단위벡터. distance = 1 - cosTheta가 정확히 보장된다. */
+function mixToward(v: number[], cosTheta: number): number[] {
+  const w = orthogonalUnit(v);
+  const sinTheta = Math.sqrt(Math.max(0, 1 - cosTheta * cosTheta));
+  return v.map((x, i) => cosTheta * x + sinTheta * (w[i] ?? 0));
+}
+
+describe('cli — recall --decay (서브프로세스 end-to-end)', () => {
+  it('JSON 출력은 score(decay-adjusted)로 정렬되고, 텍스트 출력도 raw distance가 아니라 그 score를 찍는다', async () => {
+    const idOld = randomUUID(); // raw로 더 가깝지만(강한 매칭) 아주 오래 전 마지막 재발
+    const idRecent = randomUUID(); // raw로는 더 멀지만(약한 매칭) 방금 재발
+    const queryText = `decay cli fixture 질의 ${run}`;
+    const stub = stubEmbedder();
+    const queryVec = normalizeVec(await stub.embed(queryText));
+    const oldVec = mixToward(queryVec, 0.95); // distance = 0.05(강한 매칭)
+    const recentVec = mixToward(queryVec, 0.8); // distance = 0.2(약한 매칭)
+    const contentOld = `decay cli fixture old ${run}`;
+    const contentRecent = `decay cli fixture recent ${run}`;
+
+    const noteOld = await addNote(db, stub, {
+      content: contentOld,
+      keywords: [`lesson:${idOld}`],
+      tags: [LESSON_TAG, 'manual'],
+      context: 'manual',
+      embedding: oldVec,
+      provenance: signContent(contentOld, SIGNING_KEY),
+    });
+    const noteRecent = await addNote(db, stub, {
+      content: contentRecent,
+      keywords: [`lesson:${idRecent}`],
+      tags: [LESSON_TAG, 'manual'],
+      context: 'manual',
+      embedding: recentVec,
+      provenance: signContent(contentRecent, SIGNING_KEY),
+    });
+
+    const decayLessonsDir = mkdtempSync(join(tmpdir(), 'loop-cli-decay-'));
+    // count=0·halfLifeDays=30(CLI 기본값) 기준 90일 전 → decayFactor=2^3=8 → score=0.05*8=0.4(idRecent의
+    // raw 0.2보다 크다 — raw로는 idOld가 이기지만 decay로는 idRecent가 이기도록 뒤집는다).
+    const oldLastSeen = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    writeFileSync(
+      join(decayLessonsDir, `${idOld}.json`),
+      JSON.stringify({ id: idOld, title: 'old', verified: true, count: 0, last_seen: oldLastSeen }),
+    );
+    writeFileSync(
+      join(decayLessonsDir, `${idRecent}.json`),
+      JSON.stringify({
+        id: idRecent,
+        title: 'recent',
+        verified: true,
+        count: 0,
+        last_seen: new Date().toISOString(),
+      }),
+    );
+
+    try {
+      const jsonR = runCli([
+        'recall',
+        '--query',
+        queryText,
+        '--json',
+        '--decay',
+        '--k',
+        '5',
+        '--lessons',
+        decayLessonsDir,
+        '--allow-stub',
+      ]);
+      expect(jsonR.status).toBe(0);
+      const line = jsonR.stdout.split('\n').find((l) => l.trim().startsWith('{'));
+      expect(line, `expected a JSON object line, got: ${jsonR.stdout}`).toBeDefined();
+      const parsed = JSON.parse(line as string) as {
+        lessons: Array<{ id: string; content: string; distance: number; score: number }>;
+      };
+      const hitOld = parsed.lessons.find((h) => h.id === noteOld.id);
+      const hitRecent = parsed.lessons.find((h) => h.id === noteRecent.id);
+      expect(hitOld, `expected idOld in lessons, got: ${JSON.stringify(parsed.lessons)}`).toBeDefined();
+      expect(hitRecent).toBeDefined();
+      // raw distance는 idOld가 더 작다(더 가깝다)지만, decayed score는 뒤집힌다.
+      expect(hitOld?.distance).toBeLessThan(hitRecent?.distance ?? Number.POSITIVE_INFINITY);
+      expect(hitOld?.score).toBeGreaterThan(hitRecent?.score ?? 0);
+      // JSON 배열 순서 자체가 score 오름차순 — idRecent가 idOld보다 앞선다.
+      const idxOld = parsed.lessons.findIndex((h) => h.id === noteOld.id);
+      const idxRecent = parsed.lessons.findIndex((h) => h.id === noteRecent.id);
+      expect(idxRecent).toBeLessThan(idxOld);
+
+      // 텍스트(non-JSON) 출력 — 리뷰 지적(고칠 것 2): 정렬에 쓰인 decayed score를 찍어야지 raw distance를
+      // 찍으면 안 된다. idOld 줄의 표시값이 score(0.4 근방)여야지 raw distance(0.05)면 버그.
+      const textR = runCli([
+        'recall',
+        '--query',
+        queryText,
+        '--decay',
+        '--k',
+        '5',
+        '--lessons',
+        decayLessonsDir,
+        '--allow-stub',
+      ]);
+      expect(textR.status).toBe(0);
+      const lessonsSection = textR.stdout.split('knowledge:')[0] ?? '';
+      const lineFor = (marker: string) =>
+        lessonsSection.split('\n').find((l) => l.includes(marker));
+      const oldLine = lineFor('fixture old');
+      const recentLine = lineFor('fixture recent');
+      expect(oldLine, `expected a text line for idOld, got: ${lessonsSection}`).toBeDefined();
+      expect(recentLine).toBeDefined();
+      const numOf = (l: string) => Number(l.match(/\(([\d.]+)\)/)?.[1]);
+      expect(numOf(oldLine as string)).toBeCloseTo(hitOld?.score as number, 2);
+      expect(numOf(oldLine as string)).not.toBeCloseTo(hitOld?.distance as number, 2);
+      expect(numOf(recentLine as string)).toBeCloseTo(hitRecent?.score as number, 2);
+    } finally {
+      await softDeleteNote(db, noteOld.id, 'test cleanup');
+      await softDeleteNote(db, noteRecent.id, 'test cleanup');
+      rmSync(decayLessonsDir, { recursive: true, force: true });
+    }
   });
 });

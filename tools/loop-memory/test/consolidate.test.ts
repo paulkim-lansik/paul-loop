@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { clusterBySimilarity, decayedScore, type LessonEmbeddingRow } from '../src/lessons';
+import {
+  clusterBySimilarity,
+  decayedScore,
+  type LessonEmbeddingRow,
+  type SimilarityCluster,
+  toPromotionSignals,
+} from '../src/lessons';
 
 // 순수 로직 단위 테스트(DB 불필요) — sleep-time consolidation(BAC/paul-loop #12)의 핵심 결정 함수 둘:
 // clusterBySimilarity(dedup #1·pre-scoring #3가 공유하는 클러스터링)와 decayedScore(decay 랭킹 #2).
@@ -99,6 +105,34 @@ describe('clusterBySimilarity — dedup(#1)·pre-scoring(#3)이 공유하는 순
       ['lesson-a', 'lesson-b'],
       ['lesson-c', 'lesson-d'],
     ]);
+  });
+});
+
+describe('toPromotionSignals — scorePromotionCandidates의 순수 코어(clusterSize 내림차순 정렬)', () => {
+  it('클러스터가 여럿이면 clusterSize가 큰 클러스터의 신호부터 나온다', () => {
+    const clusters: SimilarityCluster[] = [
+      { noteIds: ['n1', 'n2'], lessonIds: ['a', 'b'] }, // size 2
+      { noteIds: ['n3', 'n4', 'n5', 'n6'], lessonIds: ['c', 'd', 'e', 'f'] }, // size 4
+      { noteIds: ['n7', 'n8', 'n9'], lessonIds: ['g', 'h', 'i'] }, // size 3
+    ];
+    const signals = toPromotionSignals(clusters);
+    const sizes = signals.map((s) => s.clusterSize);
+    expect(sizes).toEqual([...sizes].sort((a, b) => b - a));
+    expect(signals[0]?.clusterSize).toBe(4);
+    expect(signals.at(-1)?.clusterSize).toBe(2);
+  });
+
+  it('클러스터 하나 안에서는 각 lessonId가 자기 자신을 뺀 나머지를 peerLessonIds로 갖는다', () => {
+    const clusters: SimilarityCluster[] = [{ noteIds: ['n1', 'n2', 'n3'], lessonIds: ['x', 'y', 'z'] }];
+    const signals = toPromotionSignals(clusters);
+    expect(signals).toHaveLength(3);
+    const byId = new Map(signals.map((s) => [s.lessonId, s]));
+    expect(byId.get('x')?.peerLessonIds.sort()).toEqual(['y', 'z']);
+    expect(byId.get('x')?.clusterSize).toBe(3);
+  });
+
+  it('빈 클러스터 목록은 빈 신호 목록', () => {
+    expect(toPromotionSignals([])).toEqual([]);
   });
 });
 

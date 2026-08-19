@@ -55,6 +55,7 @@ import {
 import {
   type ConsolidationReport,
   consolidateLessonMemory,
+  type DecayedRecallHit,
   graduateLessons,
   recallLessons,
   recallLessonsDecayed,
@@ -287,11 +288,13 @@ async function runRecordRecall(hitsJson: string): Promise<void> {
 /** consolidate: sleep-time consolidation 배치(BAC/paul-loop #12, read-only) — dedup 병합 후보 +
  *  승격 사전 채점 신호를 한 번의 스캔으로 보고한다. 임베더/키가 필요 없다(이미 저장된 임베딩끼리
  *  코사인 거리를 재는 것뿐, 새 텍스트를 임베드하지 않는다) — stats와 같은 이유로 pickEmbedder를 거치지
- *  않는다. 아무것도 쓰지 않는다: 병합/삭제/승격은 사람 또는 lessons.mjs(retire/challenge) 몫. */
-async function runConsolidate(json: boolean): Promise<void> {
+ *  않는다. 아무것도 쓰지 않는다: 병합/삭제/승격은 사람 또는 lessons.mjs(retire/challenge) 몫.
+ *  write-path provenance(BAC-619) — `signingKey` 없으면 lesson 코퍼스를 fail-closed로 아무것도 못
+ *  읽어(consolidateLessonMemory 참고) duplicates/promotionSignals 둘 다 항상 빈 배열로 나온다. */
+async function runConsolidate(json: boolean, signingKey: string | undefined): Promise<void> {
   const { db, pool } = createLoopDb();
   try {
-    const report: ConsolidationReport = await consolidateLessonMemory(db);
+    const report: ConsolidationReport = await consolidateLessonMemory(db, signingKey);
     if (json) {
       process.stdout.write(`${JSON.stringify(report)}\n`);
       return;
@@ -330,7 +333,15 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === 'consolidate') {
-    await runConsolidate(opt.json);
+    // write-path provenance(BAC-619) — graduate/recall과 같은 경고: 없으면 lesson 코퍼스 읽기가
+    // fail-closed로 항상 빈 결과다(runConsolidate 참고). knowledge 코퍼스 개념은 consolidate에 없다.
+    const signingKey = signingKeyFromEnv();
+    if (!signingKey) {
+      process.stderr.write(
+        'loop-memory: LOOP_MEMORY_SIGNING_KEY not set — consolidate returns empty (fail-closed, BAC-619 write-path provenance)\n',
+      );
+    }
+    await runConsolidate(opt.json, signingKey);
     return;
   }
   if (cmd !== 'graduate' && cmd !== 'recall') {
@@ -425,7 +436,13 @@ async function main(): Promise<void> {
     const fmt = (h: { distance: number; content: string }) =>
       `- (${h.distance.toFixed(3)}) ${h.content.replace(/\n/g, ' / ')}\n`;
     process.stdout.write('lessons:\n');
-    for (const h of lessons) process.stdout.write(fmt(h));
+    for (const h of lessons) {
+      // --decay: 정렬에 실제로 쓰인 건 decayed score(raw distance 아님) — 텍스트 출력도 그 값을 보여줘야
+      // 사람이 읽는 순서와 표시값이 일치한다(그렇지 않으면 --json은 score로 정렬해놓고 텍스트는 distance를
+      // 찍어, distance 오름차순이 아닌 것처럼 보이는 줄이 섞인다).
+      const shown = opt.decay ? (h as DecayedRecallHit).score : h.distance;
+      process.stdout.write(`- (${shown.toFixed(3)}) ${h.content.replace(/\n/g, ' / ')}\n`);
+    }
     process.stdout.write('knowledge:\n');
     for (const h of knowledge) process.stdout.write(fmt(h));
   } finally {

@@ -13186,8 +13186,15 @@ function clusterBySimilarity(rows, threshold) {
   }
   return clusters;
 }
-async function fetchLessonEmbeddings(db) {
-  const notes = await db.select({ id: memoryNote.id, keywords: memoryNote.keywords, embedding: memoryNote.embedding }).from(memoryNote).where(
+async function fetchLessonEmbeddings(db, signingKey) {
+  if (!signingKey) return [];
+  const notes = await db.select({
+    id: memoryNote.id,
+    keywords: memoryNote.keywords,
+    embedding: memoryNote.embedding,
+    content: memoryNote.content,
+    provenance: memoryNote.provenance
+  }).from(memoryNote).where(
     and(
       isNull(memoryNote.deletedAt),
       sql`${LESSON_TAG} = any(${memoryNote.tags})`,
@@ -13196,6 +13203,7 @@ async function fetchLessonEmbeddings(db) {
   );
   const out = [];
   for (const n of notes) {
+    if (!verifySignature(n.content, signingKey, n.provenance)) continue;
     const lessonId = n.keywords.find((k) => k.startsWith(LESSON_KEY_PREFIX))?.slice(LESSON_KEY_PREFIX.length);
     if (!lessonId || !n.embedding) continue;
     out.push({ noteId: n.id, lessonId, embedding: n.embedding });
@@ -13217,8 +13225,8 @@ function toPromotionSignals(clusters) {
   }
   return out.sort((a, b) => b.clusterSize - a.clusterSize);
 }
-async function consolidateLessonMemory(db, dedupThreshold = DEDUP_DISTANCE_THRESHOLD, promotionThreshold = PROMOTION_DISTANCE_THRESHOLD) {
-  const rows = await fetchLessonEmbeddings(db);
+async function consolidateLessonMemory(db, signingKey, dedupThreshold = DEDUP_DISTANCE_THRESHOLD, promotionThreshold = PROMOTION_DISTANCE_THRESHOLD) {
+  const rows = await fetchLessonEmbeddings(db, signingKey);
   return {
     duplicates: clusterBySimilarity(rows, dedupThreshold),
     promotionSignals: toPromotionSignals(clusterBySimilarity(rows, promotionThreshold))
@@ -13452,10 +13460,10 @@ async function runRecordRecall(hitsJson) {
     await pool.end();
   }
 }
-async function runConsolidate(json2) {
+async function runConsolidate(json2, signingKey) {
   const { db, pool } = createLoopDb();
   try {
-    const report = await consolidateLessonMemory(db);
+    const report = await consolidateLessonMemory(db, signingKey);
     if (json2) {
       process.stdout.write(`${JSON.stringify(report)}
 `);
@@ -13498,7 +13506,13 @@ async function main() {
     return;
   }
   if (cmd === "consolidate") {
-    await runConsolidate(opt.json);
+    const signingKey2 = signingKeyFromEnv();
+    if (!signingKey2) {
+      process.stderr.write(
+        "loop-memory: LOOP_MEMORY_SIGNING_KEY not set \u2014 consolidate returns empty (fail-closed, BAC-619 write-path provenance)\n"
+      );
+    }
+    await runConsolidate(opt.json, signingKey2);
     return;
   }
   if (cmd !== "graduate" && cmd !== "recall") {
@@ -13581,7 +13595,11 @@ async function main() {
     const fmt = (h) => `- (${h.distance.toFixed(3)}) ${h.content.replace(/\n/g, " / ")}
 `;
     process.stdout.write("lessons:\n");
-    for (const h of lessons) process.stdout.write(fmt(h));
+    for (const h of lessons) {
+      const shown = opt.decay ? h.score : h.distance;
+      process.stdout.write(`- (${shown.toFixed(3)}) ${h.content.replace(/\n/g, " / ")}
+`);
+    }
     process.stdout.write("knowledge:\n");
     for (const h of knowledge) process.stdout.write(fmt(h));
   } finally {

@@ -481,11 +481,29 @@ export function clusterBySimilarity(
   return clusters;
 }
 
-/** 얇은 shell — 활성 lesson 노트 전부(임베딩 포함)를 읽는다. dedup·pre-scoring 둘 다 같은 스캔을
- *  공유해 DB 왕복을 하나로 줄인다(consolidateLessonMemory). */
-async function fetchLessonEmbeddings(db: LoopDb): Promise<LessonEmbeddingRow[]> {
+/**
+ * 얇은 shell — 활성 lesson 노트 전부(임베딩 포함)를 읽는다. dedup·pre-scoring 둘 다 같은 스캔을
+ * 공유해 DB 왕복을 하나로 줄인다(consolidateLessonMemory).
+ *
+ * write-path provenance 필터(BAC-619, README "위협모델" 참고) — recallLessonsRaw와 같은 신뢰경계:
+ * `signingKey`가 없으면 아무 서명도 검증할 수 없으므로 **전부 제외**(fail-closed — 서명 없이 클러스터링
+ * 하느니 아무것도 안 하는 쪽이 안전. dedup·승격 신호는 사람 판단의 입력이 되므로, 서명 안 된/위조된
+ * 노트가 섞이면 그 판단 자체가 오염된다). `signingKey`가 있으면 `memory_note.provenance`가 그 content를
+ * 실제로 서명한 값과 일치하는 노트만 남긴다.
+ */
+async function fetchLessonEmbeddings(
+  db: LoopDb,
+  signingKey: string | undefined,
+): Promise<LessonEmbeddingRow[]> {
+  if (!signingKey) return [];
   const notes = await db
-    .select({ id: memoryNote.id, keywords: memoryNote.keywords, embedding: memoryNote.embedding })
+    .select({
+      id: memoryNote.id,
+      keywords: memoryNote.keywords,
+      embedding: memoryNote.embedding,
+      content: memoryNote.content,
+      provenance: memoryNote.provenance,
+    })
     .from(memoryNote)
     .where(
       and(
@@ -496,6 +514,7 @@ async function fetchLessonEmbeddings(db: LoopDb): Promise<LessonEmbeddingRow[]> 
     );
   const out: LessonEmbeddingRow[] = [];
   for (const n of notes) {
+    if (!verifySignature(n.content, signingKey, n.provenance)) continue;
     const lessonId = n.keywords
       .find((k) => k.startsWith(LESSON_KEY_PREFIX))
       ?.slice(LESSON_KEY_PREFIX.length);
@@ -520,12 +539,15 @@ export interface DuplicateCandidate {
  * 배치(#1, dedup): 졸업된 lesson 노트 중 임베딩이 사실상 같은(코사인 거리 < threshold) 서로 다른 lesson
  * id 노트들을 병합 후보로 표시한다. **자동 병합/삭제하지 않는다** — lessons.mjs의 retire/challenge와
  * 같은 정신으로 사람/스켑틱이 최종 판단해야 한다(호출자가 이 목록을 보고 `lessons challenge` 등으로 이어간다).
+ *
+ * `signingKey` 없으면 fail-closed로 빈 배열(fetchLessonEmbeddings 참고, BAC-619).
  */
 export async function findDuplicateLessons(
   db: LoopDb,
+  signingKey: string | undefined,
   threshold = DEDUP_DISTANCE_THRESHOLD,
 ): Promise<DuplicateCandidate[]> {
-  const rows = await fetchLessonEmbeddings(db);
+  const rows = await fetchLessonEmbeddings(db, signingKey);
   return clusterBySimilarity(rows, threshold);
 }
 
@@ -537,7 +559,9 @@ export interface PromotionSignal {
   peerLessonIds: string[];
 }
 
-function toPromotionSignals(clusters: SimilarityCluster[]): PromotionSignal[] {
+/** clusterBySimilarity 결과 → PromotionSignal 변환의 순수 코어(scorePromotionCandidates가 감싸는
+ *  DB-free 부분) — clusterSize 내림차순 정렬을 DB 없이 단위테스트할 수 있도록 export한다. */
+export function toPromotionSignals(clusters: SimilarityCluster[]): PromotionSignal[] {
   const out: PromotionSignal[] = [];
   for (const c of clusters) {
     for (const lessonId of c.lessonIds) {
@@ -556,12 +580,15 @@ function toPromotionSignals(clusters: SimilarityCluster[]): PromotionSignal[] {
  * 사전 채점한다 — lessons.mjs의 promote(정확 시그니처 재발 `count` 기반)와는 독립된 보조 신호다. 실제
  * 승격 판단(verified+recurring+challenge 게이트)은 여전히 lessons.mjs 몫 — 이 함수는 계산해서
  * 반환할 뿐 어디에도 자동 반영하지 않는다.
+ *
+ * `signingKey` 없으면 fail-closed로 빈 배열(fetchLessonEmbeddings 참고, BAC-619).
  */
 export async function scorePromotionCandidates(
   db: LoopDb,
+  signingKey: string | undefined,
   threshold = PROMOTION_DISTANCE_THRESHOLD,
 ): Promise<PromotionSignal[]> {
-  const rows = await fetchLessonEmbeddings(db);
+  const rows = await fetchLessonEmbeddings(db, signingKey);
   return toPromotionSignals(clusterBySimilarity(rows, threshold));
 }
 
@@ -575,13 +602,17 @@ export interface ConsolidationReport {
  * lesson 임베딩 집합 위에서 clusterBySimilarity를 threshold만 다르게 두 번 돌릴 뿐이라, DB 왕복을
  * 하나로 줄인다(CLI `consolidate` 서브커맨드가 이걸 부른다). decay 랭킹(#2)은 질의(query)가 있어야
  * 의미가 있는 recall 계열이라 여기 안 묶고 `recallLessonsDecayed`로 별도로 둔다.
+ *
+ * `signingKey` 없으면 fail-closed로 duplicates/promotionSignals 둘 다 빈 배열(fetchLessonEmbeddings
+ * 참고, BAC-619).
  */
 export async function consolidateLessonMemory(
   db: LoopDb,
+  signingKey: string | undefined,
   dedupThreshold = DEDUP_DISTANCE_THRESHOLD,
   promotionThreshold = PROMOTION_DISTANCE_THRESHOLD,
 ): Promise<ConsolidationReport> {
-  const rows = await fetchLessonEmbeddings(db);
+  const rows = await fetchLessonEmbeddings(db, signingKey);
   return {
     duplicates: clusterBySimilarity(rows, dedupThreshold),
     promotionSignals: toPromotionSignals(clusterBySimilarity(rows, promotionThreshold)),
