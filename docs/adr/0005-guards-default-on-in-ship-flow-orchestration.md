@@ -1,4 +1,4 @@
-# ADR-0004: 원시 가드는 opt-in 유지, ship-flow 오케스트레이션은 기본으로 둘 다 켠다
+# ADR-0005: 원시 가드는 opt-in 유지, ship-flow 오케스트레이션은 기본으로 둘 다 켠다
 
 **상태**: accepted
 
@@ -23,9 +23,11 @@ verify … verify must not change git-visible state"로 FAIL(exit 1)로 뒤집�
 
 하지만 그 보존 논리가 지키는 건 "임의의 외부 호출자와의 하위호환"이지, "이 레포 자신이 그 가드를 안
 쓸 이유"가 아니다. 실제로 확인해보면 이 레포 안에서 `loop-fix.sh`를 직접 부르는 곳은
-`tools/ship-flow/skills/retrospect/SKILL.md`의 예시 호출 단 한 곳뿐이고, 거기엔 이미 `--protect
-"**/*.test.*"`가 붙어 있는데도 `--guard-mutation`은 빠져 있었다 — 이 스킬 문서를 그대로 따르는 실사용자는
-보상해킹 가드는 얻고 변조 가드는 못 얻는, 아무 근거 없는 비대칭을 그대로 물려받는다.
+`tools/ship-flow/skills/retrospect/SKILL.md`의 예시 호출과, 같은 예시를 그대로 복제해 둔
+`tools/loop-engine/docs/lessons.md`("Wired into the loop" 절) 두 곳뿐이었고(전자가 "Full reference"로
+후자를 가리키므로 둘 다 실사용 경로다), 둘 다 이미 `--protect "**/*.test.*"`가 붙어 있는데도
+`--guard-mutation`은 빠져 있었다 — 이 스킬 문서를 그대로 따르는 실사용자는 보상해킹 가드는 얻고 변조
+가드는 못 얻는, 아무 근거 없는 비대칭을 그대로 물려받는다. 두 곳 모두 고쳤다.
 
 ## 결정
 
