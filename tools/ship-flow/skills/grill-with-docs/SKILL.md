@@ -85,4 +85,12 @@ Only offer to create an ADR when all three are true:
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
 
+### Reopening a settled ADR
+
+If the plan reverses or overrides an existing ADR, that's the same grounded-reopen bar retrospect
+applies to lessons: the user must cite the ADR by id and bring evidence that didn't exist when it was
+written — not "on reflection" or a plain change of preference. Missing either, point back to the
+existing ADR's rationale and ask what the plan does differently. A genuine reversal gets a new ADR that
+supersedes the old one and links back to it — don't rewrite the old ADR in place.
+
 </supporting-info>
