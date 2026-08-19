@@ -79,6 +79,11 @@ a human.
   stops there.
 - **Issues live in this repo's tracker.** Use whatever this repo's `trackerName` config says (Linear is
   the worked example below); don't fall back to ad-hoc GitHub issues if a real tracker is configured.
+- **Verification results are quoted, not paraphrased.** Test runs, gate verdicts, review findings —
+  report these by pasting the actual output (or LOG file) verbatim, the same way step 5 pastes the
+  risk-verdict markdown block into the PR body rather than transcribing it. A hand-summarized paraphrase
+  can silently launder a partial/failing result into an apparent pass; the raw output is the evidence,
+  not a description of it.
 
 ## Risk gate — the rules classify, not the agent
 

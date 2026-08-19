@@ -23,7 +23,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
-node "$LESSONS" record --signature "FAIL: widget exploded at boot" --verified --fix "reboot the widget" --title "widget boot fix" --lessons "$DIR" >/dev/null \
+node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --verified --fix "reboot the widget" --title "widget boot fix" --lessons "$DIR" >/dev/null \
   || fail "record failed"
 
 # 1) HIT: stdout has the lesson, stderr is silent (no noise on the success path).

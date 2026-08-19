@@ -25,6 +25,8 @@
 //                   ledger's payload.cmd are normalized through lib/regression-signals normalizeGateKey
 //                   (leading `sh -c ` wrapper stripped + ledger truncation rule), so "pnpm verify" and the
 //                   loop-fix path's "sh -c pnpm verify" cross-reference as ONE gate in promote --runs.
+//                   --verified requires --signature-file (issue #9, fail-closed): a hand-typed --signature
+//                   string is not acceptable evidence for a verified record — usage error, exit 2.
 //   lessons recall  (--signature-file|--signature) [--include-unverified]
 //                   [--category engineering|domain] [--lessons <dir>]
 //                   A miss (no lesson, or --category mismatch) is silent on stdout (exit 0 unchanged —
@@ -257,6 +259,12 @@ const avg = a => a.length ? (a.reduce((x, y) => x + y, 0) / a.length) : null
 if (cmd === 'record') {
   const s = signatureOf()
   if (!s) usage('record needs --signature-file or --signature with at least one FAIL line')
+  // Evidence integrity (issue #9): a --verified record is a claim that ground truth (the verifier)
+  // confirmed a fix. A hand-typed --signature string carries no evidence trail — anyone can type
+  // any text. Fail closed: --verified requires --signature-file (a real file path, i.e. an actual
+  // verdict/log artifact on disk). Unverified records (no --verified) are unaffected — this is a
+  // constraint on the VERIFIED claim only, not on record() in general.
+  if (opt.verified && !opt.sigFile) usage('refusing --verified record without --signature-file — hand-typed --signature text is not acceptable evidence for a verified lesson (fail-closed, evidence must be a file). Use --signature-file <path> instead, or drop --verified.')
   const msg = withLock(() => {
     const existing = readLesson(s.key)
     if (existing) {

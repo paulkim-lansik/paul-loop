@@ -57,7 +57,7 @@ printf '%s' "$ERR" | grep -q "no lesson with id doesnotexist1234" || fail "inval
 
 # ==== 3) invalidate: success path sets invalid_at/invalid_reason/invalidated_by, leaves superseded_by
 #         empty when --superseded-by is omitted. ====
-L record --signature "FAIL: hygiene widget-inv" --verified --title "hygiene lesson widget-inv" >/dev/null || fail "record widget-inv failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene widget-inv") --verified --title "hygiene lesson widget-inv" >/dev/null || fail "record widget-inv failed"
 WID="$(id_for "$DIR" "hygiene lesson widget-inv")"
 [ -n "$WID" ] || fail "could not extract widget-inv id"
 OUT3="$(L invalidate --id "$WID" --reason "root cause was misattributed" --by "paul" 2>&1)"
@@ -71,7 +71,7 @@ grep -qE '"invalid_at": "[^"]+"' "$DIR/$WID.json" || fail "invalid_at must be se
 grep -q '"invalid_at": ""' "$DIR/$WID.json" && fail "invalid_at must not be empty after invalidate: $(cat "$DIR/$WID.json")"
 
 # ==== 4) invalidate: --by defaults to "human" when omitted, --reason defaults to "" ====
-L record --signature "FAIL: hygiene gadget-inv2" --verified --title "hygiene lesson gadget-inv2" >/dev/null || fail "record gadget-inv2 failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene gadget-inv2") --verified --title "hygiene lesson gadget-inv2" >/dev/null || fail "record gadget-inv2 failed"
 GID="$(id_for "$DIR" "hygiene lesson gadget-inv2")"
 [ -n "$GID" ] || fail "could not extract gadget-inv2 id"
 OUT4="$(L invalidate --id "$GID" 2>&1)"
@@ -82,7 +82,7 @@ grep -q '"invalid_reason": ""' "$DIR/$GID.json" || fail "invalid_reason must def
 
 # ==== 5) invalidate --superseded-by: a dangling (nonexistent) target is refused, fail closed — the
 #         lesson being invalidated must NOT be mutated. ====
-L record --signature "FAIL: hygiene super-target-missing" --verified --title "hygiene lesson super-target-missing" >/dev/null || fail "record super-target-missing failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene super-target-missing") --verified --title "hygiene lesson super-target-missing" >/dev/null || fail "record super-target-missing failed"
 SID="$(id_for "$DIR" "hygiene lesson super-target-missing")"
 [ -n "$SID" ] || fail "could not extract super-target-missing id"
 rc=0; ERR5="$(L invalidate --id "$SID" --superseded-by "nonexistentxxxxxx" 2>&1 >/dev/null)" || rc=$?
@@ -93,10 +93,10 @@ printf '%s' "$ERR5" | grep -q "superseded-by target nonexistentxxxxxx does not e
 grep -q '"invalid_at"' "$DIR/$SID.json" && fail "a refused invalidate must NOT mutate the lesson (invalid_at key must not appear): $(cat "$DIR/$SID.json")"
 
 # ==== 6) invalidate --superseded-by: an existing target succeeds and is recorded. ====
-L record --signature "FAIL: hygiene super-source" --verified --title "hygiene lesson super-source" >/dev/null || fail "record super-source failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene super-source") --verified --title "hygiene lesson super-source" >/dev/null || fail "record super-source failed"
 SUP="$(id_for "$DIR" "hygiene lesson super-source")"
 [ -n "$SUP" ] || fail "could not extract super-source id"
-L record --signature "FAIL: hygiene super-old" --verified --title "hygiene lesson super-old" >/dev/null || fail "record super-old failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene super-old") --verified --title "hygiene lesson super-old" >/dev/null || fail "record super-old failed"
 OLD="$(id_for "$DIR" "hygiene lesson super-old")"
 [ -n "$OLD" ] || fail "could not extract super-old id"
 OUT6="$(L invalidate --id "$OLD" --superseded-by "$SUP" --reason "replaced by a newer lesson" 2>&1)"
@@ -107,10 +107,10 @@ grep -q "\"superseded_by\": \"$SUP\"" "$DIR/$OLD.json" || fail "superseded_by no
 # ==== 7) recall(): an invalidated lesson is NEVER recalled, even though it is verified — checked ahead
 #         of the verified check. stdout stays empty/exit 0 (unchanged miss contract); stderr names it
 #         INVALIDATED with the reason and the superseded-by pointer. ====
-L record --signature "FAIL: hygiene recall superseder" --verified --title "hygiene lesson recall superseder" >/dev/null || fail "record recall superseder failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene recall superseder") --verified --title "hygiene lesson recall superseder" >/dev/null || fail "record recall superseder failed"
 RSUP="$(id_for "$DIR" "hygiene lesson recall superseder")"
 [ -n "$RSUP" ] || fail "could not extract recall superseder id"
-L record --signature "FAIL: hygiene recall probe" --verified --title "hygiene lesson recall probe" >/dev/null || fail "record recall probe failed"
+L record --signature-file <(printf '%s\n' "FAIL: hygiene recall probe") --verified --title "hygiene lesson recall probe" >/dev/null || fail "record recall probe failed"
 L invalidate --id "$(id_for "$DIR" "hygiene lesson recall probe")" --reason "stale" --superseded-by "$RSUP" >/dev/null || fail "invalidate recall probe failed"
 OUT7="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")"; ERR7="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")"
 L recall --signature "FAIL: hygiene recall probe" >"$OUT7" 2>"$ERR7"
@@ -134,17 +134,17 @@ echo "PASS §1-8 (invalidate/recall/coerce hygiene)"
 #         beyond what promote would list — even a PREVIOUSLY-ACCEPTED lesson disappears once
 #         invalidated (the safety-critical case: a challenge --verdict accept does NOT protect a
 #         lesson later discovered to be wrong). ====
-for i in 1 2 3; do L2 record --signature "FAIL: hygiene pool lesson A" --verified --title "hygiene pool lesson A" --gate "pnpm verify" >/dev/null || fail "record pool A #$i failed"; done
+for i in 1 2 3; do L2 record --signature-file <(printf '%s\n' "FAIL: hygiene pool lesson A") --verified --title "hygiene pool lesson A" --gate "pnpm verify" >/dev/null || fail "record pool A #$i failed"; done
 LA="$(id_for "$DIR2" "hygiene pool lesson A")"
 [ -n "$LA" ] || fail "could not extract pool lesson A id"
 
-for i in 1 2 3; do L2 record --signature "FAIL: hygiene pool lesson B (accept then invalidate)" --verified --title "hygiene pool lesson B (accept then invalidate)" >/dev/null || fail "record pool B #$i failed"; done
+for i in 1 2 3; do L2 record --signature-file <(printf '%s\n' "FAIL: hygiene pool lesson B (accept then invalidate)") --verified --title "hygiene pool lesson B (accept then invalidate)" >/dev/null || fail "record pool B #$i failed"; done
 LB="$(id_for "$DIR2" "hygiene pool lesson B (accept then invalidate)")"
 [ -n "$LB" ] || fail "could not extract pool lesson B id"
 L2 challenge --id "$LB" --verdict accept --reason "looked solid at the time" >/dev/null || fail "challenge accept B failed"
 L2 invalidate --id "$LB" --reason "later found to be a red herring" >/dev/null || fail "invalidate accepted lesson B failed"
 
-for i in 1 2 3; do L2 record --signature "FAIL: hygiene pool lesson C (retired)" --verified --title "hygiene pool lesson C (retired)" >/dev/null || fail "record pool C #$i failed"; done
+for i in 1 2 3; do L2 record --signature-file <(printf '%s\n' "FAIL: hygiene pool lesson C (retired)") --verified --title "hygiene pool lesson C (retired)" >/dev/null || fail "record pool C #$i failed"; done
 LC="$(id_for "$DIR2" "hygiene pool lesson C (retired)")"
 [ -n "$LC" ] || fail "could not extract pool lesson C id"
 L2 challenge --id "$LC" --verdict accept --reason "real fix" >/dev/null || fail "challenge accept C failed"
@@ -174,16 +174,16 @@ echo "PASS §9 (promote/stats invalidated exclusion, incl. previously-accepted l
 # ==== 10) mark-clean: bumps clean_pass_count only for lessons attributed (gate_history) to --gate,
 #          and only if they are NOT invalidated and NOT retired. record()'s fail-recurrence path
 #          resets the counter to 0. ====
-L3 record --signature "FAIL: hygiene mc lesson-match-1" --verified --title "hygiene mc lesson-match-1" --gate "pnpm verify" >/dev/null || fail "record mc match-1 failed"
+L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-match-1") --verified --title "hygiene mc lesson-match-1" --gate "pnpm verify" >/dev/null || fail "record mc match-1 failed"
 MC1="$(id_for "$DIR3" "hygiene mc lesson-match-1")"
-L3 record --signature "FAIL: hygiene mc lesson-match-2" --verified --title "hygiene mc lesson-match-2" --gate "pnpm verify" >/dev/null || fail "record mc match-2 failed"
+L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-match-2") --verified --title "hygiene mc lesson-match-2" --gate "pnpm verify" >/dev/null || fail "record mc match-2 failed"
 MC2="$(id_for "$DIR3" "hygiene mc lesson-match-2")"
-L3 record --signature "FAIL: hygiene mc lesson-other-gate" --verified --title "hygiene mc lesson-other-gate" --gate "pnpm typecheck" >/dev/null || fail "record mc other-gate failed"
+L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-other-gate") --verified --title "hygiene mc lesson-other-gate" --gate "pnpm typecheck" >/dev/null || fail "record mc other-gate failed"
 MC3="$(id_for "$DIR3" "hygiene mc lesson-other-gate")"
-L3 record --signature "FAIL: hygiene mc lesson-invalidated" --verified --title "hygiene mc lesson-invalidated" --gate "pnpm verify" >/dev/null || fail "record mc invalidated failed"
+L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-invalidated") --verified --title "hygiene mc lesson-invalidated" --gate "pnpm verify" >/dev/null || fail "record mc invalidated failed"
 MC4="$(id_for "$DIR3" "hygiene mc lesson-invalidated")"
 L3 invalidate --id "$MC4" --reason "not real" >/dev/null || fail "invalidate mc4 failed"
-for i in 1 2 3; do L3 record --signature "FAIL: hygiene mc lesson-retired" --verified --title "hygiene mc lesson-retired" --gate "pnpm verify" >/dev/null || fail "record mc retired #$i failed"; done
+for i in 1 2 3; do L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-retired") --verified --title "hygiene mc lesson-retired" --gate "pnpm verify" >/dev/null || fail "record mc retired #$i failed"; done
 MC5="$(id_for "$DIR3" "hygiene mc lesson-retired")"
 L3 challenge --id "$MC5" --verdict accept --reason "real fix" >/dev/null || fail "challenge mc5 failed"
 L3 retire --id "$MC5" --ref "CLAUDE.md#hygiene-mc" >/dev/null || fail "retire mc5 failed"
@@ -206,7 +206,7 @@ grep -q '"clean_pass_count": 2' "$DIR3/$MC1.json" || fail "match-1 clean_pass_co
 
 # fail-recurrence: match-1 recurs (record called again on the same signature) -> clean_pass_count
 # resets to 0, even though the gate history / count keeps growing (a recurrence is NOT stability).
-L3 record --signature "FAIL: hygiene mc lesson-match-1" --verified --title "hygiene mc lesson-match-1" --gate "pnpm verify" >/dev/null || fail "re-record match-1 (recurrence) failed"
+L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-match-1") --verified --title "hygiene mc lesson-match-1" --gate "pnpm verify" >/dev/null || fail "re-record match-1 (recurrence) failed"
 grep -q '"clean_pass_count": 0' "$DIR3/$MC1.json" || fail "a recurrence must reset clean_pass_count to 0: $(cat "$DIR3/$MC1.json")"
 grep -q '"count": 2' "$DIR3/$MC1.json" || fail "the recurrence must still increment count: $(cat "$DIR3/$MC1.json")"
 
@@ -216,8 +216,8 @@ echo "PASS §10 (mark-clean selective marking + fail-recurrence reset)"
 # ==== 11) promote(): the informational RETIREMENT CANDIDATE annotation fires only at
 #          clean_pass_count >= CLEAN_RETIRE_THRESHOLD (5), and is purely informational — it does not
 #          remove the lesson from the listing or touch invalid_at/retired. ====
-for i in 1 2 3; do L3 record --signature "FAIL: hygiene mc lesson-clean5" --verified --title "hygiene mc lesson-clean5" --gate "pnpm build" >/dev/null || fail "record clean5 #$i failed"; done
-for i in 1 2 3 4; do L3 record --signature "FAIL: hygiene mc lesson-clean4" --verified --title "hygiene mc lesson-clean4" --gate "pnpm lint" >/dev/null || fail "record clean4 #$i failed"; done
+for i in 1 2 3; do L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-clean5") --verified --title "hygiene mc lesson-clean5" --gate "pnpm build" >/dev/null || fail "record clean5 #$i failed"; done
+for i in 1 2 3 4; do L3 record --signature-file <(printf '%s\n' "FAIL: hygiene mc lesson-clean4") --verified --title "hygiene mc lesson-clean4" --gate "pnpm lint" >/dev/null || fail "record clean4 #$i failed"; done
 for i in 1 2 3 4 5; do L3 mark-clean --gate "pnpm build" >/dev/null || fail "mark-clean build #$i failed"; done
 for i in 1 2 3 4; do L3 mark-clean --gate "pnpm lint" >/dev/null || fail "mark-clean lint #$i failed"; done
 

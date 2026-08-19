@@ -21,7 +21,7 @@ L() { node "$LESSONS" "$@" --lessons "$DIR"; }
 
 # record the same verified lesson 3× → recurring (count=3), clears the promote floor (min-count 3)
 for i in 1 2 3; do
-  L record --signature "FAIL: widget exploded at boot" --verified --fix "reboot the widget" --title "widget boot fix" >/dev/null \
+  L record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --verified --fix "reboot the widget" --title "widget boot fix" >/dev/null \
     || fail "record #$i failed"
 done
 ID="$(L promote 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)"
@@ -52,7 +52,7 @@ printf '%s' "$SOUT" | grep -q "open_candidates=0" || fail "stats must show open_
 
 # 6) a CONTENT change (new fix/title on a verified re-record) clears retirement → the lesson re-enters the
 #    pool for fresh review (the codified guideline is now stale). Fail closed.
-L record --signature "FAIL: widget exploded at boot" --verified --fix "DIFFERENT fix now" --title "widget boot fix v2" >/dev/null \
+L record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --verified --fix "DIFFERENT fix now" --title "widget boot fix v2" >/dev/null \
   || fail "re-record with new content failed"
 SOUT2="$(L stats 2>&1)"
 printf '%s' "$SOUT2" | grep -q "retired=0" || fail "content change must clear retirement (retired=0): $SOUT2"
@@ -61,7 +61,7 @@ printf '%s' "$SOUT2" | grep -q "open_candidates=1" || fail "cleared lesson must 
 # 7) a REJECTED recurring lesson is NOT counted as an open candidate — the skeptic decided no, so it is
 #    terminal (not actionable), same as retired. loop-doctor's "승격 후보" must not nag about it.
 for i in 1 2 3; do
-  L record --signature "FAIL: gadget fizzled at shutdown" --verified --title "gadget fix" >/dev/null || fail "record gadget #$i failed"
+  L record --signature-file <(printf '%s\n' "FAIL: gadget fizzled at shutdown") --verified --title "gadget fix" >/dev/null || fail "record gadget #$i failed"
 done
 GID="$(L promote 2>/dev/null | grep -oE '^  [0-9a-f]{16}' | tr -d ' ' | grep -v "^$ID$" | head -1)"
 [ -n "$GID" ] || fail "could not extract second (gadget) lesson id"
