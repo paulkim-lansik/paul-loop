@@ -7,43 +7,43 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 fails=0
 total=0
 
-# TOCTOU guard (issue #14 adversarial review): the glob below is evaluated once up front, but
-# each file's content is only read at execution time via `bash "$t"`. A test file that is new
-# (not present at the PR base, so never force-restored by verifier-pinned-review.sh's
-# pinned-baseline check) can run early in this loop and overwrite a not-yet-executed sibling
-# *.test.sh file on disk with always-passing content before this loop gets around to running it.
-# Hash every discovered file up front, then re-hash immediately before executing each one — a
-# mismatch means the file's content changed on disk after the initial scan (tamper), so we fail
-# it instead of silently running whatever it now contains. Files stay in place (no copying to a
-# scratch dir) because several test files locate sibling paths via `dirname "$0"`.
-hash_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-
+# TOCTOU guard, round 2 (issue #14 adversarial review): round 1 defended against an early-running
+# sibling *.test.sh overwriting a not-yet-executed sibling on disk by hashing every file up front,
+# then re-hashing immediately before executing each one and comparing. That re-check itself was a
+# TOCTOU: "re-hash" and "execute" were two separate opens of the same path, with a real gap between
+# them for a background process to win — reproduced empirically, a background toggler alternating a
+# victim file's content between clean and malicious won roughly half the time.
+#
+# The fix removes the gap instead of narrowing it. Every *.test.sh file's full content is read into
+# memory with exactly one read, in a pass that completes for every file before any test starts
+# executing — so an early-running test's write to a not-yet-processed sibling's file on disk can
+# never affect what that sibling actually runs; its content was already captured before any test
+# (sabotaging or not) got a chance to run. Execution then runs that captured in-memory string
+# directly via `bash -c "$content" "$t"` — there is no second open of the path at all, so "the
+# content checked" and "the content executed" are the same in-memory string by construction, not
+# two reads that could observe different bytes. There is nothing left to hash-compare, so that
+# logic is gone entirely rather than narrowed.
+#
+# `bash -c "$content" "$t"` sets $0 to the literal path string "$t" (the standard
+# `bash -c script name` idiom — the argument right after the script text becomes $0, with no
+# further positional args here), matching what plain `bash "$t"` used to set $0 to. This matters
+# because most test files in this directory locate sibling fixtures via `dirname "$0"`. `bash -c`
+# reports $BASH_SOURCE differently than direct file execution would (checked first: no current
+# test file in this directory relies on $BASH_SOURCE, only $0).
 files=()
-hashes=()
+contents=()
 for t in "$HERE"/*.test.sh; do
   [ -e "$t" ] || continue
   files+=("$t")
-  hashes+=("$(hash_file "$t")")
+  contents+=("$(cat -- "$t")")
 done
 
 i=0
 for t in "${files[@]}"; do
   total=$((total + 1))
-  recorded="${hashes[$i]}"
+  content="${contents[$i]}"
   i=$((i + 1))
-  current="$(hash_file "$t")"
-  if [ "$current" != "$recorded" ]; then
-    echo "run.sh: TAMPER DETECTED — $t changed on disk after the initial scan (TOCTOU: an earlier test in this run likely overwrote it); not executing it" >&2
-    fails=$((fails + 1))
-    continue
-  fi
-  if ! bash "$t"; then fails=$((fails + 1)); fi
+  if ! bash -c "$content" "$t"; then fails=$((fails + 1)); fi
 done
 echo "loop-engine selftest: $((total - fails))/$total passed"
 [ "$fails" -eq 0 ]
