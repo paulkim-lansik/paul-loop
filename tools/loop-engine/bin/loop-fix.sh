@@ -9,7 +9,8 @@
 #   - The VERIFIER is the ceiling. The verdict comes from verify-cmd's exit code, period.
 #   - GENERATOR != EVALUATOR. The fixer never decides success; only the verifier does.
 #   - HARD STOPPING CRITERIA. --max-iter (always), optional --budget-sec, stall detection.
-#   - NO REWARD HACKING. --protect snapshots verifier/test files; if a fix mutates them, abort.
+#   - NO REWARD HACKING. --protect snapshots verifier/test files; if a fix mutates them, restore
+#     them to their pre-run bytes and abort.
 #   - FILE-BASED HANDOFF. Each iteration writes the verdict, log, and a fix prompt to .loop/.
 #
 # Usage:
@@ -71,7 +72,10 @@
 # Guard scope (read this — the guarantee is narrow): --protect aborts (exit 3) when a file that
 # existed at start AND was matched by --protect is edited or deleted. It does NOT cover files not
 # listed, files absent at start, or other inputs the verifier reads (fixtures, snapshots, config
-# like vitest.config/conftest.py). It detects the mutation AFTER the fact and does not revert it.
+# like vitest.config/conftest.py). It detects the mutation AFTER the fact and, before aborting,
+# restores every protected file to the exact bytes it held when THIS run's snapshot was taken
+# (byte-for-byte from a backup copy — NOT `git checkout`, which would be wrong if a protected file
+# already had a legitimate uncommitted edit before this run even started).
 # Stall caveat: stall detection is reliable when the verifier emits recognizable failure markers
 # or changing pass/fail counts; the hard guarantee against runaway is --max-iter.
 #
@@ -120,6 +124,8 @@ VERDICT_FILE="$LOOP_DIR/last-verdict.txt"
 LOG_FILE="$LOOP_DIR/last-run.log"
 PROMPT_FILE="$LOOP_DIR/fix-prompt.txt"
 PROTECT_SNAP="$LOOP_DIR/protected.sha"
+PROTECT_LIST_FILE="$LOOP_DIR/protected.files"   # relative paths captured at snapshot time (issue #34)
+PROTECT_BACKUP="$LOOP_DIR/protected-backup"     # byte-for-byte copies, mirroring relative paths
 LESSONS_BIN="$HERE/lessons.sh"
 FIRST_VERDICT="$LOOP_DIR/first-verdict.txt"
 rm -f "$FIRST_VERDICT" 2>/dev/null   # reset per run: never inherit a prior run's first failure (sharing --loop-dir)
@@ -147,10 +153,22 @@ protect_files() {
   done
 }
 
+# Snapshots both the sha256 (detection, unchanged) AND a byte-for-byte backup copy of each
+# protected file's current content under $PROTECT_BACKUP (issue #34: without the backup, a
+# detected violation had nothing to restore FROM). Runs once per loop-fix.sh run, before the
+# iteration loop — it must reflect state at run start, not be re-taken every iteration.
 snapshot_protected() {
   : > "$PROTECT_SNAP"
+  : > "$PROTECT_LIST_FILE"
+  rm -rf "$PROTECT_BACKUP"
+  mkdir -p "$PROTECT_BACKUP"
   protect_files | sort -u | while IFS= read -r f; do
-    [ -n "$f" ] && sha_of "$f" >> "$PROTECT_SNAP"
+    [ -n "$f" ] || continue
+    printf '%s\n' "$f" >> "$PROTECT_LIST_FILE"
+    sha_of "$f" >> "$PROTECT_SNAP"
+    _dir="$(dirname "$f")"
+    [ "$_dir" = "." ] || mkdir -p "$PROTECT_BACKUP/$_dir"
+    cp -p "$f" "$PROTECT_BACKUP/$f" 2>/dev/null
   done
 }
 
@@ -163,6 +181,42 @@ check_protected() {
     [ -n "$f" ] && sha_of "$f" >> "$_tmp"
   done
   diff -q "$PROTECT_SNAP" "$_tmp" >/dev/null 2>&1
+}
+
+# Restores every protected file to the bytes captured by snapshot_protected() at run start —
+# called right before the PROTECTED-VIOLATION abort so "detect" becomes "detect and undo" (issue
+# #34). Deliberately restores from $PROTECT_BACKUP, NOT `git checkout`: a protected file may
+# already have had a legitimate uncommitted edit before this loop-fix run even started, and the
+# guarantee is "back to exactly what this run started with," not "back to git HEAD". Handles both
+# a modified file (overwrite from backup) and a deleted file (recreate from backup). Always logs
+# what happened; a per-file restore failure is logged loudly rather than swallowed, but never
+# suppresses the PROTECTED-VIOLATION abort itself (caller still exits 3 regardless).
+restore_protected() {
+  if [ ! -s "$PROTECT_LIST_FILE" ]; then
+    log "  restore: no protected-file list captured — nothing to restore from."
+    return 1
+  fi
+  _restored=0
+  _restore_failed=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    _b="$PROTECT_BACKUP/$f"
+    if [ ! -f "$_b" ]; then
+      log "  RESTORE FAILED for $f: no backup copy at $_b — manual intervention needed."
+      _restore_failed=1
+      continue
+    fi
+    _dir="$(dirname "$f")"
+    [ "$_dir" = "." ] || [ -d "$_dir" ] || mkdir -p "$_dir" 2>/dev/null
+    if cp -p "$_b" "$f" 2>/dev/null; then
+      _restored=$(( _restored + 1 ))
+    else
+      log "  RESTORE FAILED for $f: cp from backup did not succeed — manual intervention needed."
+      _restore_failed=1
+    fi
+  done < "$PROTECT_LIST_FILE"
+  log "  restored $_restored protected file(s) to their pre-run state."
+  [ "$_restore_failed" -eq 0 ]
 }
 
 # ── BAC-626 ①: 전체 LOG의 러너 요약줄 합산 카운트 ──────────────────────────────────────────
@@ -529,6 +583,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     log "iter $iter: PROTECTED FILE MODIFIED by the fixer. This is reward hacking — aborting."
     log "Changed vs snapshot:"
     diff "$PROTECT_SNAP" "$LOOP_DIR/protected.now" 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
+    restore_protected
     log "=== loop-fix done: PROTECTED-VIOLATION ==="
     exit 3
   fi
