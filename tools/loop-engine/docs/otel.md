@@ -16,10 +16,16 @@ rejected.)
 
 | Piece | Role | Locked by |
 |---|---|---|
-| `.claude/settings.json` `env` block | Claude Code process-scoped OTel config (shell-wide export forbidden) | `test/otel-hygiene.test.sh` |
+| `.claude/settings.json` `env` block | Claude Code process-scoped OTel config (shell-wide export forbidden) | consumer-repo hygiene test, if this repo has one† |
 | `bin/otel-receiver.mjs` | OTLP/HTTP(json) receiver — **127.0.0.1-only bind**, zero-dep, 0 docker | `test/otel-receiver.test.sh` |
 | `bin/otel-metrics.mjs` | `.loop/otel/*.jsonl` → H2/C1/C2 aggregation (read-only, missing data = INSUFFICIENT_DATA) | `test/otel-receiver.test.sh` |
-| `bin/loop-doctor.mjs` OTEL row | crit if any content flag is on (dashboard, read-only) | `test/otel-hygiene.test.sh` |
+| `bin/loop-doctor.mjs` OTEL row† | crit if any content flag is on (dashboard, read-only) | consumer-repo hygiene test, if this repo has one† |
+
+† `loop-doctor.mjs` and its `otel-hygiene`-style test are not shipped by this plugin — they're a
+consumer-repo convention (a repo-owned health-check script that reads this plugin's OTel config and
+fails loudly on a content-flag misconfiguration). Build one if this repo wants that guardrail;
+otherwise the `.claude/settings.json` env block and the content-flag discipline below still apply,
+just without a standing machine check.
 
 ## Starting the receiver — opt-in (not started by default)
 

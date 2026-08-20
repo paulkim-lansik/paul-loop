@@ -84,8 +84,9 @@ case "$LOG" in
 esac
 
 # ---- verdict freshness state (BAC-564 AC5) ----
-# Record WHAT this verdict verified — HEAD sha, worktree dirtiness, timestamp, command — so the
-# Stop-hook gate (.claude/hooks/gate-stop-verdict.mjs) can refuse FAIL / stale / dirty PASS
+# Record WHAT this verdict verified — HEAD sha, worktree dirtiness, timestamp, command — so a
+# consumer-repo Stop-hook gate (e.g. .claude/hooks/gate-stop-verdict.mjs, if this repo provides
+# one — this plugin does not ship a Stop hook itself) can refuse FAIL / stale / dirty PASS
 # replays at turn-end (stale-green guard, BAC-581 lineage). Best-effort: a state-write failure
 # never changes the verdict or this wrapper's exit code.
 STATE_FILE="${LOOP_DIR:-.loop}/verdict-state.json"

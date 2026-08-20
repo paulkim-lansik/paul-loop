@@ -63,9 +63,10 @@ results — the contract is the integration point, the script is just one conven
 
 Alongside the stdout block, `verdict-run.sh` writes `.loop/verdict-state.json` on every run:
 `{verdict, exit, sha, dirty, finished_at, cmd, log}` — *what* was verified (HEAD sha at verify
-time, whether the worktree was dirty) and *when*. Consumer: the Stop-hook gate
-(`.claude/hooks/gate-stop-verdict.mjs`) refuses to let a loop-armed (`.loop/looping`) turn end
-unless the state is a **fresh PASS** (PASS ∧ recorded sha == current HEAD ∧ recorded clean ∧
+time, whether the worktree was dirty) and *when*. Consumer: a Stop-hook gate — e.g.
+`.claude/hooks/gate-stop-verdict.mjs` if this repo provides one (this plugin does not ship a
+Stop hook itself) — that refuses to let a loop-armed (`.loop/looping`) turn end unless the state
+is a **fresh PASS** (PASS ∧ recorded sha == current HEAD ∧ recorded clean ∧
 tree clean now) — a stale or dirty PASS (including cache replays) is treated the same as FAIL.
 The state file is listed in `.loop/protect.globs`, so the in-session guard denies an agent
 forging it; that guard is a guardrail, not a boundary (ADR-0036). Do **not** pass

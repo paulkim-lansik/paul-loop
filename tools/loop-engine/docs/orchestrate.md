@@ -15,8 +15,8 @@ nightly runs needed a local cron driver) both collapsed: `/ship-feature` runs th
 plan→implement→verify→review→improve flow autonomously in-session, calling `bin/classify-risk.sh`
 (built on `gate.mjs`) before each stage instead of a `--<stage>-risk` flag, and ADR-0060 moved
 unattended nightly runs to a **cloud routine** that wakes an agent rather than a headless script. See
-[`.claude/skills/ship-feature/SKILL.md`](../../../.claude/skills/ship-feature/SKILL.md) for the
-current driver.
+[`ship-feature/SKILL.md`](../../ship-flow/skills/ship-feature/SKILL.md) (this plugin's `ship-flow`
+package) for the current driver.
 
 ## 1. The gate decision rule (`bin/gate.mjs`)
 

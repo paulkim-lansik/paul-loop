@@ -2,7 +2,8 @@
 // run-metrics.mjs — .loop/runs/*.jsonl 원장 fold 집계 (BAC-570 H1·Q1·Q2). read-only.
 //
 // Usage: node run-metrics.mjs [--runs-dir <dir>] [--json]
-// 항상 exit 0(usage만 2) — 계측 조회가 파이프라인을 깨면 안 된다(loop-doctor 관례).
+// 항상 exit 0(usage만 2) — 계측 조회가 파이프라인을 깨면 안 된다(소비 레포의 health-check 스크립트
+// 관례 — 예: loop-doctor. 이 플러그인이 직접 제공하지는 않는다).
 //
 // 지표(이슈 570a):
 //   H1 = 런당 인간 개입 수 = permission.requested 중 경계 표면(merge/deploy/send) 제외분 —

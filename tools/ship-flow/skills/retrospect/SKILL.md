@@ -9,6 +9,11 @@ Make runs get smarter over time. A failure becomes a lesson (Reflexion); a *recu
 lesson becomes a skill/guideline candidate (Voyager). Full reference: loop-engine@paul-loop's
 docs/lessons.md (in the plugin, not this repo).
 
+> Commands below invoke `bin/<name>.sh` via `node tools/plugin-path.mjs exec bin/<name>.sh` — a
+> resolver/wrapper convention some consuming repos provide (this plugin does not ship
+> `plugin-path.mjs` itself). If this repo doesn't have one, invoke the plugin's installed bin path
+> directly instead.
+
 ## The one rule
 
 **Only the verifier decides what is a lesson.** Record a lesson as `--verified` ONLY when ground

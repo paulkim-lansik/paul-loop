@@ -3,7 +3,8 @@
 // CLI (BAC-631). 로직은 lib/regression-signals.mjs(순수 fold — 계약·신뢰 경계는 그 헤더 필독).
 //
 // Usage: node regression-signals.mjs [--runs-dir <dir>] [--json]
-// 항상 exit 0(usage만 2) — 계측 조회가 파이프라인을 깨면 안 된다(run-metrics/loop-doctor 관례).
+// 항상 exit 0(usage만 2) — 계측 조회가 파이프라인을 깨면 안 된다(run-metrics 관례이자, 소비
+// 레포의 health-check 스크립트 관례 — 예: loop-doctor. 이 플러그인이 직접 제공하지는 않는다).
 // 출력은 게이트명 정렬·키 순서 고정 — 같은 원장에 대한 재실행은 byte-identical(결정론).
 
 import { join } from 'node:path'
