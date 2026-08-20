@@ -34,6 +34,9 @@ const cliEnv: NodeJS.ProcessEnv = { ...process.env };
 cliEnv.OPENAI_API_KEY = '';
 cliEnv.GEMINI_API_KEY = '';
 cliEnv.LOOP_DATABASE_URL = LOOP_DATABASE_URL; // 서브프로세스가 같은 DB를 보게
+// 이슈 #35 — '' (delete 아님, 위 두 키와 같은 이유)로 존재하되 falsy: 이 프로세스를 실행하는 셸에
+// LOOP_MEMORY_SOURCE가 export돼 있어도(예: 사람이 훅 디버깅 중) "source 없음" 테스트들이 결정적이게.
+cliEnv.LOOP_MEMORY_SOURCE = '';
 // write-path provenance(BAC-619) — 없으면 lesson recall이 fail-closed로 항상 빈 배열이라(README
 // "위협모델"), 이 CLI 서브프로세스 테스트도 고정 테스트 secret을 명시로 심어준다(실 dev 워크스테이션의
 // .env 값이 있어도 덮어써 결정적으로).
@@ -183,6 +186,95 @@ describe('cli — graduate/recall knowledge 결선 (서브프로세스 end-to-en
   });
 });
 
+// 이슈 #35: hooks/*.mjs가 CLI 서브프로세스를 spawn할 때만 LOOP_MEMORY_SOURCE=hook을 심고, cli.ts가 그
+// 값을 graduate/record-recall이 쓰는 memory_op 행의 payload.source로 흘려보내는 배관을 CLI 서브프로세스
+// 경계까지 포함해 end-to-end로 증명한다(hooks/*.mjs 자체는 별도 프로세스라 이 테스트가 흉내내는 것이
+// 실제 계약). ⚠️ 이 태그는 자기신고 메타데이터일 뿐이다 — 셸 접근이 있는 누구나 같은 env를 손으로
+// 심어 이 테스트가 검증하는 것과 동일한 payload.source="hook" 행을 만들 수 있다. 이 테스트는 배관이
+// 정확한지를 증명하는 것이지, 실제 라이브 세션에서 훅이 발동했다는 증거를 만드는 게 아니다(이슈 #35의
+// 그 부분은 여전히 미해결).
+describe('cli — LOOP_MEMORY_SOURCE env → memory_op.payload.source (issue #35, 훅 경로 표시 태그 배관)', () => {
+  it('LOOP_MEMORY_SOURCE=hook으로 graduate를 돌리면 ADD 행의 payload.source가 "hook"으로 남는다', async () => {
+    const id = randomUUID();
+    const key = `lesson:${id}`;
+    const dir = mkdtempSync(join(tmpdir(), 'loop-cli-source-tagged-'));
+    writeFileSync(
+      join(dir, `${id}.json`),
+      JSON.stringify({
+        id,
+        title: `source env 확인 교훈 ${run}`,
+        fix: 'LOOP_MEMORY_SOURCE=hook',
+        source: 'manual',
+        verified: true,
+        signature: [`source env fixture ${run}`],
+      }),
+    );
+    try {
+      const r = spawnSync(tsx, [cli, 'graduate', '--lessons', dir, '--allow-stub'], {
+        encoding: 'utf8',
+        env: { ...cliEnv, LOOP_MEMORY_SOURCE: 'hook' },
+        timeout: 30000,
+      });
+      expect(r.status).toBe(0);
+      const [note] = await db
+        .select({ id: memoryNote.id })
+        .from(memoryNote)
+        .where(sql`${key} = any(${memoryNote.keywords})`);
+      expect(note).toBeDefined();
+      const [op] = await db
+        .select({ payload: memoryOp.payload })
+        .from(memoryOp)
+        .where(and(eq(memoryOp.noteId, note?.id as string), eq(memoryOp.op, 'ADD')));
+      expect((op?.payload as Record<string, unknown> | null)?.source).toBe('hook');
+    } finally {
+      const mine = await db
+        .select({ id: memoryNote.id })
+        .from(memoryNote)
+        .where(sql`${key} = any(${memoryNote.keywords})`);
+      for (const n of mine) await softDeleteNote(db, n.id, 'test cleanup');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('LOOP_MEMORY_SOURCE 없이(수동 CLI 호출) graduate를 돌리면 payload에 source 키가 없다', async () => {
+    const id = randomUUID();
+    const key = `lesson:${id}`;
+    const dir = mkdtempSync(join(tmpdir(), 'loop-cli-source-absent-'));
+    writeFileSync(
+      join(dir, `${id}.json`),
+      JSON.stringify({
+        id,
+        title: `source 부재 확인 교훈 ${run}`,
+        fix: '수동 CLI 호출은 LOOP_MEMORY_SOURCE를 안 심는다',
+        source: 'manual',
+        verified: true,
+        signature: [`source absent fixture ${run}`],
+      }),
+    );
+    try {
+      const r = runCli(['graduate', '--lessons', dir, '--allow-stub']); // cliEnv에는 LOOP_MEMORY_SOURCE가 ''(falsy)
+      expect(r.status).toBe(0);
+      const [note] = await db
+        .select({ id: memoryNote.id })
+        .from(memoryNote)
+        .where(sql`${key} = any(${memoryNote.keywords})`);
+      expect(note).toBeDefined();
+      const [op] = await db
+        .select({ payload: memoryOp.payload })
+        .from(memoryOp)
+        .where(and(eq(memoryOp.noteId, note?.id as string), eq(memoryOp.op, 'ADD')));
+      expect(Object.hasOwn((op?.payload ?? {}) as object, 'source')).toBe(false);
+    } finally {
+      const mine = await db
+        .select({ id: memoryNote.id })
+        .from(memoryNote)
+        .where(sql`${key} = any(${memoryNote.keywords})`);
+      for (const n of mine) await softDeleteNote(db, n.id, 'test cleanup');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 // BAC-586 선행 슬라이스: 훅이 실제 주입 확정한 노트 id를 memory_op에 RECALL 행으로 남기는 계측.
 // 임베더가 필요 없다(노트/거리는 훅이 이미 확정한 값을 그대로 적을 뿐) — 키 없이도 동작해야 한다.
 describe('cli — record-recall (계측, 임베더 불필요)', () => {
@@ -212,6 +304,30 @@ describe('cli — record-recall (계측, 임베더 불필요)', () => {
     } finally {
       await softDeleteNote(db, noteA.id, 'test cleanup');
       await softDeleteNote(db, noteB.id, 'test cleanup');
+    }
+  });
+
+  // 이슈 #35: hooks/recall-lessons.mjs가 record-recall 하위프로세스에 LOOP_MEMORY_SOURCE=hook을 심는
+  // 실제 경로 — 그 값이 CLI를 거쳐 payload.source로 남는지 서브프로세스 경계까지 포함해 증명한다.
+  it('LOOP_MEMORY_SOURCE=hook으로 record-recall을 돌리면 RECALL 행의 payload.source가 "hook"으로 남는다', async () => {
+    const stub = stubEmbedder();
+    const note = await addNote(db, stub, { content: `record-recall source 태그 대상 ${run}` });
+    try {
+      const hits = [{ id: note.id, distance: 0.2, corpus: 'lessons' }];
+      const r = spawnSync(tsx, [cli, 'record-recall', '--hits', JSON.stringify(hits)], {
+        encoding: 'utf8',
+        env: { ...cliEnv, LOOP_MEMORY_SOURCE: 'hook' },
+        timeout: 30000,
+      });
+      expect(r.status).toBe(0);
+      const rows = await db
+        .select()
+        .from(memoryOp)
+        .where(and(eq(memoryOp.op, 'RECALL'), eq(memoryOp.noteId, note.id)));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.payload).toEqual({ distance: 0.2, corpus: 'lessons', source: 'hook' });
+    } finally {
+      await softDeleteNote(db, note.id, 'test cleanup');
     }
   });
 

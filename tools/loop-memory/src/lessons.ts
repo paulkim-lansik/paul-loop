@@ -235,6 +235,14 @@ export interface GraduateResult {
  * 모르는 다른 쓰기 경로(직접 SQL INSERT 등)는 이 서명을 위조할 수 없어, `recallLessons`가 구조적으로
  * 걸러낸다. `signingKey`가 없으면(secret 미설정) 서명 없이 그대로 쓴다 — 쓰기 자체를 막지 않는다
  * (fail-closed는 recall 쪽 책임, README 참고).
+ *
+ * 호출 출처 태그(paul-loop 이슈 #35): `source`가 있으면 이 함수가 ADD/스텁 UPDATE하는 memory_op 행의
+ * `payload.source`로 그대로 남는다(ops.ts의 NoteInput.source 참고) — hooks/graduate-lessons.mjs가 실
+ * SessionStart에서 CLI를 spawn할 때만 `LOOP_MEMORY_SOURCE=hook`을 심어 cli.ts가 여기로 흘려보낸다.
+ * 수동 CLI 호출·테스트는 생략하므로 payload에 이 키 자체가 안 남는다. ⚠️ 이건 자기신고 관측용
+ * 메타데이터일 뿐 위조방지 신호가 아니다 — 셸 접근이 있으면 누구든 이 env를 손으로 심어 같은 값을 낼 수
+ * 있다(DB 직접 질의와 같은 신뢰 수준). 이 값의 존재 여부는 "훅 코드 경로로 명시 표시됨"과 "안 됨"만
+ * 구분할 뿐, "훅이 실제로 발동했다"는 증명하지 않는다.
  */
 export async function graduateLessons(
   db: LoopDb,
@@ -242,6 +250,7 @@ export async function graduateLessons(
   embedder: Embedder,
   dir: string,
   signingKey: string | undefined,
+  source?: string,
 ): Promise<GraduateResult> {
   const client = await pool.connect();
   try {
@@ -279,6 +288,7 @@ export async function graduateLessons(
           tags: [LESSON_TAG, l.source],
           context: l.source,
           provenance: signingKey ? signContent(content, signingKey) : undefined,
+          source,
         });
         added++;
       }
@@ -301,6 +311,7 @@ export async function graduateLessons(
           await updateNote(db, embedder, note.id, {
             content: decision.content,
             provenance: signingKey ? signContent(decision.content, signingKey) : undefined,
+            source,
           });
           stubbed++;
         } else if (decision.op === 'purge') {

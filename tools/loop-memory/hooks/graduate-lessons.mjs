@@ -39,6 +39,14 @@ for (const [pluginOpt, plain] of [
 ]) {
   if (!childEnv[plain] && env[pluginOpt]) childEnv[plain] = env[pluginOpt];
 }
+// Source tag (paul-loop issue #35) — self-reported, good-faith metadata for observability/debugging,
+// NOT a security or forgery-proof signal. Anyone with shell access can run `node dist/cli.js graduate`
+// directly and set this same env var by hand, at the same trust level as querying the database
+// directly — there is nothing here that only a real, live-firing hook could produce. This tags rows as
+// "explicitly marked as coming from the hook code path" vs. "not marked", nothing stronger. Always
+// overwrite (this script's own invocation IS that code path — no legitimate reason for an inherited
+// value to survive here).
+childEnv.LOOP_MEMORY_SOURCE = 'hook';
 
 try {
   if (env.LOOP_RECALL_OFF !== '1' && (childEnv.OPENAI_API_KEY || childEnv.GEMINI_API_KEY)) {

@@ -272,6 +272,11 @@ export const LOCK_NAMESPACE = 0x6b6e6c67;
  * 동시 졸업 가드(BAC-367): 함수 진입 시 세션-스코프 advisory lock을 걸고(획득 실패 시 즉시 skip),
  * 이후 쓰기는 여전히 노트별 개별 auto-commit(트랜잭션으로 안 묶음) — 12s SessionStart 타임아웃에
  * 잘려도 그때까지 커밋된 노트는 살아남아 다음 세션이 이어받는다(기존 증분 수렴 설계 유지).
+ *
+ * 호출 출처 태그(paul-loop 이슈 #35): `source`가 있으면 ADD/UPDATE하는 memory_op 행의 `payload.source`로
+ * 남는다(ops.ts의 NoteInput.source 참고) — graduateKnowledge/graduateContext/graduateMarkdownDir이
+ * 그대로 흘려보낸다. NOOP/DELETE는 ops.ts 범위 밖(addNote/updateNote/recordRecall만 payload.source를
+ * 지원) — 그대로 둔다.
  */
 export async function syncKnowledge(
   db: LoopDb,
@@ -279,6 +284,7 @@ export async function syncKnowledge(
   embedder: Embedder,
   tag: string,
   desired: KnowledgeChunk[],
+  source?: string,
 ): Promise<KnowledgeSyncResult> {
   const client = await pool.connect();
   try {
@@ -349,6 +355,7 @@ export async function syncKnowledge(
           tags: [tag],
           context: chunk.context,
           embedding: embeddings[ei++],
+          source,
         });
         result.added++;
       }
@@ -358,6 +365,7 @@ export async function syncKnowledge(
           keywords: noteKeywords(chunk),
           context: chunk.context,
           embedding: embeddings[ei++],
+          source,
         });
         result.updated++;
       }
@@ -394,6 +402,7 @@ export async function graduateKnowledge(
   pool: Pool,
   embedder: Embedder,
   adrDir: string,
+  source?: string,
 ): Promise<KnowledgeSyncResult> {
   const desired: KnowledgeChunk[] = [];
   for (const f of readdirSync(adrDir)) {
@@ -405,7 +414,7 @@ export async function graduateKnowledge(
   // 안전장치: 빈 결과는 잘못 가리킨 디렉토리일 개연이 크다 → 전체 코퍼스를 지우지 않고 no-op.
   // (실 ADR 디렉토리는 항상 비-폐기 ADR을 하나 이상 낸다. 진짜 전량 삭제는 이 경로로 하지 않는다.)
   if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, ADR_TAG, desired);
+  return syncKnowledge(db, pool, embedder, ADR_TAG, desired, source);
 }
 
 /**
@@ -418,10 +427,11 @@ export async function graduateContext(
   pool: Pool,
   embedder: Embedder,
   contextPath: string,
+  source?: string,
 ): Promise<KnowledgeSyncResult> {
   const desired = parseContextChunks(readFileSync(contextPath, 'utf8'));
   if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, desired);
+  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, desired, source);
 }
 
 export interface GraduateMarkdownDirResult extends KnowledgeSyncResult {
@@ -441,6 +451,9 @@ export async function graduateMarkdownDir(
   dir: string,
   tag: string,
   sourceLabel: string,
+  // 호출 출처 태그(paul-loop 이슈 #35, syncKnowledge 참고) — `sourceLabel`(사람이 읽는 문서 출처 접두)과는
+  // 무관한 별개 파라미터. 이름 충돌에 주의.
+  source?: string,
 ): Promise<GraduateMarkdownDirResult> {
   const desired: KnowledgeChunk[] = [];
   const skipped: { file: string; reason: string }[] = [];
@@ -462,7 +475,7 @@ export async function graduateMarkdownDir(
   const result =
     desired.length === 0
       ? { added: 0, updated: 0, deleted: 0, noop: 0 }
-      : await syncKnowledge(db, pool, embedder, tag, desired);
+      : await syncKnowledge(db, pool, embedder, tag, desired, source);
   return { ...result, skipped };
 }
 

@@ -68,6 +68,14 @@ try {
   ]) {
     if (!childEnv[plain] && env[pluginOpt]) childEnv[plain] = env[pluginOpt];
   }
+  // Source tag (paul-loop issue #35) — self-reported, good-faith metadata for observability/debugging,
+  // NOT a security or forgery-proof signal. Anyone with shell access can run the CLI directly and set
+  // this same env var by hand, at the same trust level as querying the database directly — there is
+  // nothing here that only a real, live-firing hook could produce. Tags both subprocesses spawned below
+  // (the `recall` call and the fire-and-forget `record-recall` inside recordInjected, which reuses this
+  // same childEnv) as "explicitly marked as coming from the hook code path" vs. "not marked", nothing
+  // stronger. Always overwrite — this script's own invocation IS that code path.
+  childEnv.LOOP_MEMORY_SOURCE = 'hook';
   dbg(
     `fired: key=${!!(childEnv.OPENAI_API_KEY || childEnv.GEMINI_API_KEY)} off=${env.LOOP_RECALL_OFF === '1'}`,
   );

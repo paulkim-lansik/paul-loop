@@ -10,7 +10,7 @@ import { LOCK_NAMESPACE } from '../src/knowledge';
 import { graduateLessons, LESSON_TAG, lessonStub, recallLessons } from '../src/lessons';
 import { addNote, softDeleteNote } from '../src/ops';
 import { signContent } from '../src/provenance';
-import { memoryNote } from '../src/schema/memory';
+import { memoryNote, memoryOp } from '../src/schema/memory';
 
 // 통합 테스트(docker pgvector 필요): lessons → loop-memory 졸업을 end-to-end로 증명한다.
 // 검증된 교훈만 올라가고(검증기=천장), 재실행은 멱등이며, 의미검색으로 다시 건져진다.
@@ -446,5 +446,85 @@ describe('recallLessons — write-path provenance 방어(BAC-619, SMSR arXiv:260
       for (const n of mine) await softDeleteNote(db, n.id, 'test cleanup');
       rmSync(dir2, { recursive: true, force: true });
     }
+  });
+});
+
+// paul-loop 이슈 #35: hooks/*.mjs가 CLI를 spawn할 때 명시적으로 심는 source 태그(자기신고 메타데이터 —
+// 위조방지 신호 아님, 셸 접근이 있으면 누구든 같은 env를 손으로 심을 수 있다) 배관을 증명한다.
+// graduateLessons(..., source)가 ADD/스텁 UPDATE 행의 payload.source에 그대로 남는지, 생략 시 그
+// 키 자체가 없는지(오도하는 기본값으로 안 채움) 증명한다.
+describe('graduateLessons — source 태그가 memory_op에 남는다(issue #35, 훅 경로 표시 태그)', () => {
+  const taggedId = randomUUID();
+  const untaggedId = randomUUID();
+  const taggedKey = `lesson:${taggedId}`;
+  const untaggedKey = `lesson:${untaggedId}`;
+  let taggedDir: string;
+  let untaggedDir: string;
+
+  beforeAll(() => {
+    taggedDir = mkdtempSync(join(tmpdir(), 'loop-lessons-source-tagged-'));
+    writeFileSync(
+      join(taggedDir, `${taggedId}.json`),
+      JSON.stringify({
+        id: taggedId,
+        title: 'source 태그 대상 교훈',
+        fix: 'graduateLessons(..., source) 스레딩 확인',
+        source: 'manual',
+        verified: true,
+        signature: ['issue-35 source tagging fixture'],
+      }),
+    );
+    untaggedDir = mkdtempSync(join(tmpdir(), 'loop-lessons-source-untagged-'));
+    writeFileSync(
+      join(untaggedDir, `${untaggedId}.json`),
+      JSON.stringify({
+        id: untaggedId,
+        title: 'source 미지정 교훈',
+        fix: 'source 생략 시 payload에 키가 없어야 함',
+        source: 'manual',
+        verified: true,
+        signature: ['issue-35 source omission fixture'],
+      }),
+    );
+  });
+
+  afterAll(async () => {
+    for (const key of [taggedKey, untaggedKey]) {
+      const mine = await db
+        .select({ id: memoryNote.id })
+        .from(memoryNote)
+        .where(sql`${key} = any(${memoryNote.keywords})`);
+      for (const n of mine) await softDeleteNote(db, n.id, 'test cleanup');
+    }
+    rmSync(taggedDir, { recursive: true, force: true });
+    rmSync(untaggedDir, { recursive: true, force: true });
+  });
+
+  async function addOpPayload(key: string): Promise<Record<string, unknown> | null> {
+    const [note] = await db
+      .select({ id: memoryNote.id })
+      .from(memoryNote)
+      .where(sql`${key} = any(${memoryNote.keywords})`);
+    expect(note).toBeDefined();
+    const [op] = await db
+      .select({ payload: memoryOp.payload })
+      .from(memoryOp)
+      .where(and(eq(memoryOp.noteId, note?.id as string), eq(memoryOp.op, 'ADD')));
+    return (op?.payload as Record<string, unknown> | null) ?? null;
+  }
+
+  it('source를 넘기면 ADD 행의 payload.source에 그대로 남는다(예: 훅이 심는 "hook")', async () => {
+    const r = await graduateLessons(db, pool, embedder, taggedDir, SIGNING_KEY, 'hook');
+    expect(r.added).toBe(1);
+    const payload = await addOpPayload(taggedKey);
+    expect(payload?.source).toBe('hook');
+  });
+
+  it('source를 생략하면 payload에 source 키 자체가 없다(오도하는 기본값으로 안 채운다)', async () => {
+    const r = await graduateLessons(db, pool, embedder, untaggedDir, SIGNING_KEY);
+    expect(r.added).toBe(1);
+    const payload = await addOpPayload(untaggedKey);
+    expect(payload).not.toBeNull();
+    expect(payload && Object.hasOwn(payload, 'source')).toBe(false);
   });
 });

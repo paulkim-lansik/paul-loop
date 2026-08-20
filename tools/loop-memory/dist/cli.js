@@ -40,12 +40,12 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var require_postgres_array = __commonJS({
   "node_modules/postgres-array/index.js"(exports) {
     "use strict";
-    exports.parse = function(source, transform) {
-      return new ArrayParser(source, transform).parse();
+    exports.parse = function(source2, transform) {
+      return new ArrayParser(source2, transform).parse();
     };
     var ArrayParser = class _ArrayParser {
-      constructor(source, transform) {
-        this.source = source;
+      constructor(source2, transform) {
+        this.source = source2;
         this.transform = transform || identity;
         this.position = 0;
         this.entries = [];
@@ -135,10 +135,10 @@ var require_arrayParser = __commonJS({
   "node_modules/pg-types/lib/arrayParser.js"(exports, module) {
     var array = require_postgres_array();
     module.exports = {
-      create: function(source, transform) {
+      create: function(source2, transform) {
         return {
           parse: function() {
-            return array.parse(source, transform);
+            return array.parse(source2, transform);
           }
         };
       }
@@ -240,10 +240,10 @@ var require_mutable = __commonJS({
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     function extend(target) {
       for (var i = 1; i < arguments.length; i++) {
-        var source = arguments[i];
-        for (var key in source) {
-          if (hasOwnProperty.call(source, key)) {
-            target[key] = source[key];
+        var source2 = arguments[i];
+        for (var key in source2) {
+          if (hasOwnProperty.call(source2, key)) {
+            target[key] = source2[key];
           }
         }
       }
@@ -9993,9 +9993,9 @@ var PgSelectBuilder = class {
    *
    * {@link https://www.postgresql.org/docs/current/sql-select.html#SQL-FROM | Postgres from documentation}
    */
-  from(source) {
+  from(source2) {
     const isPartialSelect = !!this.fields;
-    const src = source;
+    const src = source2;
     let fields;
     if (this.fields) {
       fields = this.fields;
@@ -11262,8 +11262,8 @@ var PgUpdateBase = class extends QueryPromise {
   tableName;
   joinsNotNullableMap;
   cacheConfig;
-  from(source) {
-    const src = source;
+  from(source2) {
+    const src = source2;
     const tableName = getTableLikeName(src);
     if (typeof tableName === "string") {
       this.joinsNotNullableMap[tableName] = true;
@@ -11453,11 +11453,11 @@ var PgCountBuilder = class _PgCountBuilder extends SQL {
   static [entityKind] = "PgCountBuilder";
   [Symbol.toStringTag] = "PgCountBuilder";
   session;
-  static buildEmbeddedCount(source, filters) {
-    return sql`(select count(*) from ${source}${sql.raw(" where ").if(filters)}${filters})`;
+  static buildEmbeddedCount(source2, filters) {
+    return sql`(select count(*) from ${source2}${sql.raw(" where ").if(filters)}${filters})`;
   }
-  static buildCount(source, filters) {
-    return sql`select count(*) as count from ${source}${sql.raw(" where ").if(filters)}${filters};`;
+  static buildCount(source2, filters) {
+    return sql`select count(*) as count from ${source2}${sql.raw(" where ").if(filters)}${filters};`;
   }
   /** @intrnal */
   setToken(token) {
@@ -11714,8 +11714,8 @@ var PgDatabase = class {
     };
     return { as };
   };
-  $count(source, filters) {
-    return new PgCountBuilder({ source, filters, session: this.session });
+  $count(source2, filters) {
+    return new PgCountBuilder({ source: source2, filters, session: this.session });
   }
   $cache;
   /**
@@ -12653,7 +12653,8 @@ async function addNote(db, embedder, input) {
       keywords: input.keywords,
       tags: input.tags,
       context: input.context,
-      links: input.links
+      links: input.links,
+      source: input.source
     }
   });
   return note;
@@ -12678,7 +12679,8 @@ async function updateNote(db, embedder, noteId, patch) {
       keywords: patch.keywords,
       tags: patch.tags,
       context: patch.context,
-      links: patch.links
+      links: patch.links,
+      source: patch.source
     }
   });
 }
@@ -12831,7 +12833,7 @@ var noteKeywords = (chunk) => [
   `${HASH_PREFIX}${chunk.hash}`
 ];
 var LOCK_NAMESPACE = 1802398823;
-async function syncKnowledge(db, pool, embedder, tag, desired) {
+async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
   const client = await pool.connect();
   try {
     const lock = await client.query(
@@ -12881,7 +12883,8 @@ async function syncKnowledge(db, pool, embedder, tag, desired) {
           // 수렴 대상 네임스페이스(tag)로 저장 — chunk.tag가 아니라 tag로 불변식을 구조적으로 보장.
           tags: [tag],
           context: chunk.context,
-          embedding: embeddings[ei++]
+          embedding: embeddings[ei++],
+          source: source2
         });
         result.added++;
       }
@@ -12890,7 +12893,8 @@ async function syncKnowledge(db, pool, embedder, tag, desired) {
           content: chunk.content,
           keywords: noteKeywords(chunk),
           context: chunk.context,
-          embedding: embeddings[ei++]
+          embedding: embeddings[ei++],
+          source: source2
         });
         result.updated++;
       }
@@ -12913,7 +12917,7 @@ async function syncKnowledge(db, pool, embedder, tag, desired) {
   }
 }
 var SKIP_FILES = /* @__PURE__ */ new Set(["0000-template.md", "README.md"]);
-async function graduateKnowledge(db, pool, embedder, adrDir) {
+async function graduateKnowledge(db, pool, embedder, adrDir, source2) {
   const desired = [];
   for (const f of readdirSync(adrDir)) {
     if (!f.endsWith(".md") || SKIP_FILES.has(f)) continue;
@@ -12922,14 +12926,14 @@ async function graduateKnowledge(db, pool, embedder, adrDir) {
     desired.push(...parseAdrChunks(readFileSync(join(adrDir, f), "utf8"), adrId));
   }
   if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, ADR_TAG, desired);
+  return syncKnowledge(db, pool, embedder, ADR_TAG, desired, source2);
 }
-async function graduateContext(db, pool, embedder, contextPath) {
+async function graduateContext(db, pool, embedder, contextPath, source2) {
   const desired = parseContextChunks(readFileSync(contextPath, "utf8"));
   if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, desired);
+  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, desired, source2);
 }
-async function graduateMarkdownDir(db, pool, embedder, dir, tag, sourceLabel) {
+async function graduateMarkdownDir(db, pool, embedder, dir, tag, sourceLabel, source2) {
   const desired = [];
   const skipped = [];
   for (const f of readdirSync(dir)) {
@@ -12944,7 +12948,7 @@ async function graduateMarkdownDir(db, pool, embedder, dir, tag, sourceLabel) {
       ...parseMarkdownChunks(readFileSync(join(dir, f), "utf8"), tag, docId, `${sourceLabel}/${f}`)
     );
   }
-  const result = desired.length === 0 ? { added: 0, updated: 0, deleted: 0, noop: 0 } : await syncKnowledge(db, pool, embedder, tag, desired);
+  const result = desired.length === 0 ? { added: 0, updated: 0, deleted: 0, noop: 0 } : await syncKnowledge(db, pool, embedder, tag, desired, source2);
   return { ...result, skipped };
 }
 async function recallKnowledge(db, embedder, query, k = 5, tags = KNOWLEDGE_TAGS) {
@@ -13020,11 +13024,11 @@ function readLessonRecords(dir) {
   return out;
 }
 function readVerifiedLessons(dir) {
-  return readLessonRecords(dir).filter(isGraduationEligible).map(({ id, title, fix, source, signature, count, lastSeen }) => ({
+  return readLessonRecords(dir).filter(isGraduationEligible).map(({ id, title, fix, source: source2, signature, count, lastSeen }) => ({
     id,
     title,
     fix,
-    source,
+    source: source2,
     signature,
     count,
     lastSeen
@@ -13047,7 +13051,7 @@ function decideLessonReap(currentContent, rec) {
   if (rec.rejected) return { op: "purge", reason: "challenge verdict=reject" };
   return { op: "keep" };
 }
-async function graduateLessons(db, pool, embedder, dir, signingKey) {
+async function graduateLessons(db, pool, embedder, dir, signingKey, source2) {
   const client = await pool.connect();
   try {
     const lock = await client.query(
@@ -13076,7 +13080,8 @@ async function graduateLessons(db, pool, embedder, dir, signingKey) {
           keywords: [key],
           tags: [LESSON_TAG, l.source],
           context: l.source,
-          provenance: signingKey ? signContent(content, signingKey) : void 0
+          provenance: signingKey ? signContent(content, signingKey) : void 0,
+          source: source2
         });
         added++;
       }
@@ -13091,7 +13096,8 @@ async function graduateLessons(db, pool, embedder, dir, signingKey) {
         if (decision.op === "stub") {
           await updateNote(db, embedder, note.id, {
             content: decision.content,
-            provenance: signingKey ? signContent(decision.content, signingKey) : void 0
+            provenance: signingKey ? signContent(decision.content, signingKey) : void 0,
+            source: source2
           });
           stubbed++;
         } else if (decision.op === "purge") {
@@ -13326,6 +13332,7 @@ var opt = {
   hits: ""
   // record-recall: [{id, distance?, corpus?}, ...] JSON 문자열 (BAC-586)
 };
+var source = process.env.LOOP_MEMORY_SOURCE || void 0;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   const val = () => {
@@ -13441,7 +13448,7 @@ async function runStats(json2) {
     await pool.end();
   }
 }
-async function runRecordRecall(hitsJson) {
+async function runRecordRecall(hitsJson, source2) {
   let hits;
   try {
     hits = JSON.parse(hitsJson || "[]");
@@ -13454,7 +13461,7 @@ async function runRecordRecall(hitsJson) {
   try {
     for (const h of hits) {
       if (!h?.id) continue;
-      await recordRecall(db, h.id, { distance: h.distance, corpus: h.corpus });
+      await recordRecall(db, h.id, { distance: h.distance, corpus: h.corpus, source: source2 });
     }
   } finally {
     await pool.end();
@@ -13502,7 +13509,7 @@ async function main() {
     return;
   }
   if (cmd === "record-recall") {
-    await runRecordRecall(opt.hits);
+    await runRecordRecall(opt.hits, source);
     return;
   }
   if (cmd === "consolidate") {
@@ -13531,7 +13538,7 @@ async function main() {
   const { db, pool } = createLoopDb();
   try {
     if (cmd === "graduate") {
-      const r = await graduateLessons(db, pool, embedder, opt.lessons, signingKey);
+      const r = await graduateLessons(db, pool, embedder, opt.lessons, signingKey, source);
       if (r.locked) {
         process.stdout.write(
           "loop-memory: lessons \u2014 skipped (\uB3D9\uC2DC \uC878\uC5C5 \uC9C4\uD589 \uC911, \uB2E4\uC74C \uC138\uC158\uC774 \uC774\uC5B4\uAC10)\n"
@@ -13543,11 +13550,11 @@ async function main() {
         );
       }
       if (opt.knowledge) {
-        const k = await graduateKnowledge(db, pool, embedder, opt.knowledge);
+        const k = await graduateKnowledge(db, pool, embedder, opt.knowledge, source);
         printKnowledgeResult("ADR", k);
       }
       if (opt.context) {
-        const c = await graduateContext(db, pool, embedder, opt.context);
+        const c = await graduateContext(db, pool, embedder, opt.context, source);
         printKnowledgeResult("CONTEXT", c);
       }
       if (opt.research) {
@@ -13557,7 +13564,8 @@ async function main() {
           embedder,
           opt.research,
           RESEARCH_TAG,
-          opt.research
+          opt.research,
+          source
         );
         printKnowledgeResult("research", r2);
         for (const s of r2.skipped) {
@@ -13566,7 +13574,15 @@ async function main() {
         }
       }
       if (opt.design) {
-        const d = await graduateMarkdownDir(db, pool, embedder, opt.design, DESIGN_TAG, opt.design);
+        const d = await graduateMarkdownDir(
+          db,
+          pool,
+          embedder,
+          opt.design,
+          DESIGN_TAG,
+          opt.design,
+          source
+        );
         printKnowledgeResult("design", d);
         for (const s of d.skipped) {
           process.stdout.write(`loop-memory: knowledge (design) skip ${s.file} \u2014 ${s.reason}

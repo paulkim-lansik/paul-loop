@@ -45,6 +45,30 @@ describe('loop-memory recall (pgvector)', () => {
       .where(and(eq(memoryOp.noteId, note.id), eq(memoryOp.op, 'RECALL')));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.payload).toEqual({ distance: 0.123, corpus: 'lessons' });
+    // 이슈 #35: source를 안 넘기면 payload에 그 키 자체가 없어야 한다(오도하는 기본값 금지) — jsonb
+    // 왕복(JSON.stringify가 undefined 값을 드롭)까지 거친 뒤의 실제 컬럼 값으로 확인한다.
+    expect(Object.hasOwn((rows[0]?.payload ?? {}) as object, 'source')).toBe(false);
+
+    await softDeleteNote(db, note.id, 'test cleanup');
+  });
+
+  // 이슈 #35: hooks/recall-lessons.mjs가 실제로 주입-확정한 노트를 record-recall로 남길 때만
+  // LOOP_MEMORY_SOURCE=hook을 심는다(cli.ts) — 그 값이 recordRecall을 거쳐 payload.source로 남는지
+  // ops.ts 레벨에서 직접 증명한다(cli.integration.test.ts는 CLI 서브프로세스 경유로 같은 경로를 증명).
+  it('recordRecall에 source를 넘기면 payload.source로 그대로 남는다(훅 경로 표시 태그, 자기신고)', async () => {
+    const note = await addNote(db, embedder, {
+      content: '회상 계측 대상 노트 — source 태그(issue #35)',
+      tags: ['lesson'],
+    });
+
+    await recordRecall(db, note.id, { distance: 0.045, corpus: 'knowledge', source: 'hook' });
+
+    const rows = await db
+      .select()
+      .from(memoryOp)
+      .where(and(eq(memoryOp.noteId, note.id), eq(memoryOp.op, 'RECALL')));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.payload).toEqual({ distance: 0.045, corpus: 'knowledge', source: 'hook' });
 
     await softDeleteNote(db, note.id, 'test cleanup');
   });
