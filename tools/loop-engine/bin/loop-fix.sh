@@ -9,7 +9,8 @@
 #   - The VERIFIER is the ceiling. The verdict comes from verify-cmd's exit code, period.
 #   - GENERATOR != EVALUATOR. The fixer never decides success; only the verifier does.
 #   - HARD STOPPING CRITERIA. --max-iter (always), optional --budget-sec, stall detection.
-#   - NO REWARD HACKING. --protect snapshots verifier/test files; if a fix mutates them, abort.
+#   - NO REWARD HACKING. --protect snapshots verifier/test files; if a fix mutates them, restore
+#     them to their pre-run bytes and abort.
 #   - FILE-BASED HANDOFF. Each iteration writes the verdict, log, and a fix prompt to .loop/.
 #
 # Usage:
@@ -57,21 +58,109 @@
 #                       at watchdog start; prefer the idle clock in that composition).
 #   --protect <glob>    File(s) the fixer must NOT modify (repeatable). Reward-hacking guard.
 #                       A pattern containing '**' recurses (resolved via `find`, skipping
-#                       node_modules/.git); otherwise it is a single-level glob or a literal path.
-#                       If a --protect pattern matches ZERO files, the loop refuses to run
-#                       (exit 2) rather than silently leaving the guard off.
+#                       node_modules/.git, and $LOOP_DIR itself so the guard's own backup copies
+#                       never self-match a broad glob like '**/*.test.*'); otherwise it is a
+#                       single-level glob or a literal path. If a --protect pattern matches ZERO
+#                       files, the loop refuses to run (exit 2) rather than silently leaving the
+#                       guard off. Every check_protected() call that comes back clean is followed by
+#                       a bounded grace-period recheck (PROTECT_GRACE_SEC, default 1.5s, override via
+#                       env var LOOP_PROTECT_GRACE_SEC — mainly a test-speed knob) before being
+#                       trusted — see round-5 in Guard scope below for why, and what this does and
+#                       does NOT guarantee.
 #   --loop-dir <dir>    State/handoff dir (default .loop).
 #   --lessons <dir>     Verified-lessons memory (Phase 3): recall past fixes for this same failure
 #                       into the fix prompt, and record a VERIFIED lesson on success. See bin/lessons.mjs.
 #
 # Exit: 0 = reached PASS. 1 = budget/iter/stall/infra/timeout exhausted. 2 = usage error / protect
 #       matched nothing / verdict-run itself refused (exit 2 — e.g. --guard-mutation outside git).
-#       3 = protected file mutated.
+#       3 = protected file mutated (restore attempted — see Guard scope below for what "restore"
+#       actually guarantees). 4 = refused to start: a PRIOR run's restore could not verify its own
+#       integrity and left $LOOP_DIR/protect-compromised behind — a human must inspect and clear it
+#       before retrying (see Guard scope below).
 #
 # Guard scope (read this — the guarantee is narrow): --protect aborts (exit 3) when a file that
 # existed at start AND was matched by --protect is edited or deleted. It does NOT cover files not
-# listed, files absent at start, or other inputs the verifier reads (fixtures, snapshots, config
-# like vitest.config/conftest.py). It detects the mutation AFTER the fact and does not revert it.
+# listed, or other inputs the verifier reads (fixtures, snapshots, config like
+# vitest.config/conftest.py). It detects the mutation AFTER the fact and, before aborting: (a)
+# restores every protected file from a backup taken when THIS run's snapshot was taken
+# (byte-for-byte, NOT `git checkout` — a protected file may already have had a legitimate
+# uncommitted edit before this run even started); (b) deletes any NEW file that now matches a
+# --protect glob but did not exist at snapshot time, so a fixer cannot dodge the guard by dropping a
+# fresh trivially-passing file next to the real protected one; and (c) recomputes each restored
+# file's hash and compares it against the ORIGINAL hash recorded before iteration 1 ever ran. The
+# per-file sha256 used for BOTH (c) and the live detection in check_protected() is held ONLY in
+# loop-fix.sh's own bash process memory (never written to a file) — a --fix subprocess runs as a
+# separate CHILD process and structurally cannot write into its parent's shell variables, only into
+# files/IPC the parent later reads (issue #34 round-3). Earlier revisions kept this hash in a plain
+# file under $LOOP_DIR instead, which the fixer subprocess could reach the same as any other file it
+# writes: overwriting it with the hash of its own sabotaged content made detection agree with itself
+# ("unchanged"), and simply deleting it was treated as "nothing to protect" — both were a SINGLE-run,
+# silent, complete bypass with no PROTECTED-VIOLATION log line at all. That specific file is gone
+# now; there is nothing on disk left for a fixer to rewrite to fake a match. The byte-CONTENT backup
+# under $PROTECT_BACKUP is different and DOES still live on disk (file content — as opposed to its
+# hash — is not something that belongs crammed into a shell variable), so it remains reachable by
+# the fixer the same as before: a sufficiently motivated fixer CAN poison the backup copy in the
+# same move it poisons the live file — (c) exists to catch exactly that. It is not a tamper-proof
+# store; it is a check that notices when the store was tampered with. Whenever a protected file's
+# restore cannot be independently verified — the
+# restored bytes do NOT match the original hash, the backup copy is missing entirely (e.g. the
+# fixer `rm`s it instead of overwriting it with matching content), or the `cp` from backup itself
+# fails — loop-fix.sh does NOT claim success: it logs a loud, distinct failure, writes
+# $LOOP_DIR/protect-compromised (which file(s), why), and still exits 3. A SUBSEQUENT run then
+# refuses to start at all (exit 4) until a human inspects and clears that marker — so the actual
+# guarantee is "detect, attempt an exact restore, and if restoration integrity cannot itself be
+# verified, refuse future runs until a human clears it," not "always perfectly undoes any sabotage
+# no matter how the fixer attacks the backup." Known narrow gap: restore uses `cp -p`, which
+# follows a symlink rather than replacing it — if the fixer replaces a protected file with a
+# symlink to an external path, the restored bytes land at the symlink's target and the file is
+# left as a symlink (content is correct, file type/identity is not) — this does not defeat
+# detection or let a rerun report false success, it is a restoration-fidelity gap, not a bypass.
+# Round-4 fix: check_protected() now also runs on the PASS path (right before declaring success),
+# not just the FAIL path — closing a bypass where a fixer backgrounded a detached mutation timed to
+# land after the FAIL-path check but before the next verify call.
+#
+# Round-5 fix (this revision) — two parts closing the SAME underlying limitation from two angles:
+# the fixer runs as `sh -c "$FIX"`, and if $FIX ends with something like "(sleep D;
+# corrupt-the-file) & true", that backgrounded subshell is NOT waited on — `sh -c "$FIX"` exits once
+# "true" returns, the background job gets reparented away from anything loop-fix.sh can see or wait
+# for, and ANY delay D longer than roughly "however long this process takes to finish its own check
+# and exit" lands the corruption strictly AFTER that check already ran and reported clean. This is
+# NOT a logic bug in check_protected() itself (confirmed correct in isolation) — it is a structural
+# property of any short-lived supervisor process: you cannot detect, at the moment you check,
+# something that has not happened yet. Adding another check_protected() call at some OTHER point
+# does not close this either — the same argument applies to whatever the new "last point" becomes;
+# an attacker just increases D further.
+#
+#   Part 1 — bounded grace-period recheck (check_protected_with_grace(), used on BOTH the PASS path
+#   and the FAIL path, replacing the bare check_protected() calls round 4 added): once a
+#   check_protected() call comes back clean, sleep a short, bounded grace period (PROTECT_GRACE_SEC,
+#   default 1.5s, override via env var LOOP_PROTECT_GRACE_SEC — a test-speed knob) and check ONE
+#   more time; a failing recheck is handled exactly like any other violation. This converts "any D
+#   beats it" into "D must be under PROTECT_GRACE_SEC to be undetected" — a meaningfully higher bar
+#   against realistic reward-hacking, NOT a claim that the gap is closed (see "Honest limit" below).
+#
+#   Part 2 — the STALLED / BUDGET / watchdog-during-fixer / infra-cap-exhausted abort paths check
+#   their OWN abort condition and exit BEFORE that iteration's fixer invocation or the FAIL-path
+#   check_protected() call ever runs. A corruption from an EARLIER iteration's still-pending delayed
+#   background job can therefore land after every check_protected() call in the run has already
+#   completed, and the run exits non-zero — its own real failure code (STALLED stays STALLED, BUDGET
+#   stays BUDGET; this is NOT the false-SUCCESS class of bug) — with the protected file left
+#   corrupted, unrestored, and unflagged. Each of these paths now also calls
+#   check_protected_with_grace() (via check_protected_on_abort()) right before it exits: on a
+#   violation it logs a warning, restores from backup, and cleans up any rogue new protect-matching
+#   file — the same recovery as a normal violation — but keeps its OWN exit code. This is workspace
+#   hygiene on exit, not a re-diagnosis of why the run failed.
+#
+# Honest limit (read this, it is the actual guarantee): the grace period raises the bar, it does not
+# close the gap. A background job whose delay exceeds PROTECT_GRACE_SEC lands strictly after this
+# process has finished checking and exited — a structural limit of any short-lived supervisor
+# process, not a bug in this specific check, and NOT something a larger grace period alone can ever
+# fully close (an attacker can always pick a D larger than whatever finite grace period is set). If
+# a caller needs a stronger guarantee against a fixer that deliberately backgrounds long-delayed
+# mutations, the fixer's execution environment itself would need to be sandboxed (e.g. no ability to
+# survive past the fixer subprocess's own lifetime, via a process-group kill or similar OS-level
+# containment) — that is a materially different, larger architectural change and is explicitly out
+# of scope for this fix.
 # Stall caveat: stall detection is reliable when the verifier emits recognizable failure markers
 # or changing pass/fail counts; the hard guarantee against runaway is --max-iter.
 #
@@ -88,6 +177,11 @@ LESSONS=""        # optional verified-lessons memory dir (Phase 3)
 INFRA_RETRIES=2   # BAC-626 ②: transient 인프라 실패 면제 상한(초과 시 INFRA 중단)
 IDLE_T=0; PROG_T=0  # BAC-626 ③: material-progress 워치독(0=off, 완전 opt-in)
 GUARD_MUT=""      # BAC-626 ④: verdict-run passthrough 플래그(빈 값=off)
+# issue #34 round-5: bounded grace period a check_protected() pass is held to before being trusted —
+# raises the bar against a fixer that backgrounds a delayed mutation (see check_protected_with_grace()
+# and the round-5 Guard-scope block above) but does NOT guarantee catching every delay, only ones
+# shorter than this. Override via LOOP_PROTECT_GRACE_SEC (test-speed knob).
+PROTECT_GRACE_SEC="${LOOP_PROTECT_GRACE_SEC:-1.5}"
 
 need2() { [ "$1" -ge 2 ] || { echo "loop-fix.sh: $2 requires a value" >&2; exit 2; }; }
 
@@ -115,11 +209,63 @@ done
 [ -x "$VERDICT_RUN" ] || { echo "loop-fix.sh: cannot find verdict-run.sh next to me ($VERDICT_RUN)" >&2; exit 2; }
 
 mkdir -p "$LOOP_DIR"
+COMPROMISED_MARKER="$LOOP_DIR/protect-compromised"
+
+# Fail-closed startup check (issue #34 round-2 finding 1 / step 3): if a PRIOR run's protected-file
+# restore could not verify its own integrity (the backup store itself looked tampered with — see
+# restore_protected() below), it leaves this marker instead of silently reporting success. This is
+# what actually closes the "rerun reports false SUCCESS" case even under full double-poisoning: a
+# later run does not try to re-detect or re-trust a possibly-still-sabotaged workspace, it just
+# refuses to run at all until a human clears the marker. Placed before any real work — before the
+# sentinel arm, before snapshot_protected() — so a compromised workspace is never silently reused.
+if [ -s "$COMPROMISED_MARKER" ]; then
+  {
+    echo "loop-fix.sh: refusing to run — $COMPROMISED_MARKER exists from a prior run."
+    echo
+    echo "A previous run detected a protected-file violation, attempted to restore it from backup,"
+    echo "and could NOT verify that the restore actually worked (the backup itself appeared"
+    echo "tampered with — see the file above for which protected file(s) and why). This workspace"
+    echo "is left in an UNVERIFIED state on purpose rather than risking a false report of success."
+    echo
+    echo "A human must inspect the file(s) named in $COMPROMISED_MARKER, confirm they are"
+    echo "genuinely trustworthy (e.g. restore them from git or another trusted source), and then"
+    echo "remove that marker before retrying loop-fix.sh."
+  } >&2
+  exit 4
+fi
+
 HISTORY="$LOOP_DIR/history.log"
 VERDICT_FILE="$LOOP_DIR/last-verdict.txt"
 LOG_FILE="$LOOP_DIR/last-run.log"
 PROMPT_FILE="$LOOP_DIR/fix-prompt.txt"
-PROTECT_SNAP="$LOOP_DIR/protected.sha"
+PROTECT_BACKUP="$LOOP_DIR/protected-backup"     # byte-for-byte copies, mirroring relative paths — the
+                                                 # ONLY protect bookkeeping that still lives on disk
+                                                 # (issue #34 round-3: large/binary content does not
+                                                 # belong crammed into a bash variable; content backups
+                                                 # were already documented as "not tamper-proof,
+                                                 # integrity-checked instead" — see restore_protected()).
+# PROTECT_FILES_DATA / PROTECT_SNAP_DATA / PROTECT_MODES_DATA (round-3 fix, issue #34 finding — a
+# SINGLE-run false SUCCESS): the hash/list/mode ground truth used to live in plain files under
+# $LOOP_DIR (protected.sha / protected.files / protected.modes) — a path the --fix subprocess has
+# the same filesystem write access to as loop-fix.sh itself. A fixer could overwrite protected.sha
+# with the hash of its OWN sabotaged content (check_protected()'s diff then agrees with itself and
+# reports "unchanged"), or simply `rm -f` it (an empty/missing snapshot was treated as "nothing to
+# protect"). No amount of chmod/backup/re-checking-against-another-file closes this while the
+# ground truth itself lives in a file the fixer can also reach — that is an infinite regress
+# (protect the snapshot -> now protect the backup-of-the-snapshot -> …). The actual fix: loop-fix.sh
+# runs as ONE continuous bash process for the whole loop; --fix runs as a SEPARATE CHILD subprocess
+# via `sh -c`, and a child process cannot write into its parent's in-memory shell variables — only
+# into files/IPC the parent later reads. So the ground truth now lives ONLY in these three bash
+# variables, held in loop-fix.sh's own process memory, which the fixer subprocess structurally
+# cannot touch no matter what it does to the filesystem (same idiom already used for PROTECT_LIST
+# itself — a newline-accumulated string built once from CLI args, never re-read from disk). All
+# three are newline-separated strings, one entry per line, walked in lockstep (same order, one line
+# per protected file) — set once by snapshot_protected() before the iteration loop and read-only
+# after that.
+PROTECT_FILES_DATA=""   # relative paths captured at snapshot time
+PROTECT_SNAP_DATA=""    # `sha_of` output per file, same order as PROTECT_FILES_DATA
+PROTECT_MODES_DATA=""   # original perm bits per file, same order (undoes the backup's read-only
+                         # chmod on restore, step 5)
 LESSONS_BIN="$HERE/lessons.sh"
 FIRST_VERDICT="$LOOP_DIR/first-verdict.txt"
 rm -f "$FIRST_VERDICT" 2>/dev/null   # reset per run: never inherit a prior run's first failure (sharing --loop-dir)
@@ -128,9 +274,30 @@ rm -f "$WATCHDOG_FIRED" 2>/dev/null  # reset per run: a stale fired flag must no
 WATCHDOG_PID=""
 
 sha_of() { shasum -a 256 "$1" 2>/dev/null || sha256sum "$1" 2>/dev/null; }
+mode_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }   # BSD vs GNU stat
+
+# Normalized form of $LOOP_DIR used to exclude the guard's own backup tree from '**' protect scans
+# (issue #34 round-2 finding 2): snapshot_protected() writes byte-backups under
+# $LOOP_DIR/protected-backup/<path>, which itself matches a broad glob like '**/*.test.*' — without
+# this exclusion, check_protected()'s rescan sees the backup as an extra unmatched file and
+# false-positives a violation even with a completely inert fixer. `find .`'s output is relative to
+# cwd with the leading './' stripped (see protect_files() below), so this must land in that same
+# relative form regardless of whether --loop-dir was left at the default relative ".loop", set to
+# another relative path, or given as an absolute path.
+case "$LOOP_DIR" in
+  /*)
+    case "$LOOP_DIR" in
+      "$PWD"/*) LOOP_DIR_EXCL="${LOOP_DIR#"$PWD"/}" ;;
+      "$PWD")   LOOP_DIR_EXCL="." ;;
+      *)        LOOP_DIR_EXCL="" ;;   # outside cwd's tree — `find .` can never see it anyway
+    esac
+    ;;
+  ./*) LOOP_DIR_EXCL="${LOOP_DIR#./}" ;;
+  *)   LOOP_DIR_EXCL="$LOOP_DIR" ;;
+esac
 
 # Expand the protect globs into a concrete file list.
-#  - a pattern with '**' recurses via find (skipping node_modules/.git)
+#  - a pattern with '**' recurses via find (skipping node_modules/.git, and $LOOP_DIR itself)
 #  - otherwise it is a single-level shell glob or a literal path
 protect_files() {
   printf '%s\n' "$PROTECT_LIST" | while IFS= read -r g; do
@@ -140,29 +307,251 @@ protect_files() {
         base="${g##*/}"   # e.g. '**/*.test.*' -> '*.test.*'
         find . -type f -name "$base" 2>/dev/null \
           | grep -vE '/(node_modules|\.git)/' \
-          | sed 's#^\./##' ;;
+          | sed 's#^\./##' \
+          | while IFS= read -r p; do
+              if [ -n "$LOOP_DIR_EXCL" ]; then
+                case "$p" in
+                  "$LOOP_DIR_EXCL"/*) continue ;;
+                esac
+              fi
+              printf '%s\n' "$p"
+            done ;;
       *)
         for f in $g; do [ -f "$f" ] && printf '%s\n' "$f"; done ;;
     esac
   done
 }
 
+# Snapshots both the sha256 (detection, held in-memory — round-3 fix, see PROTECT_SNAP_DATA above)
+# AND a byte-for-byte backup copy of each protected file's current content under $PROTECT_BACKUP
+# (issue #34: without the backup, a detected violation had nothing to restore FROM). Runs once per
+# loop-fix.sh run, before the iteration loop — it must reflect state at run start, not be re-taken
+# every iteration.
+#
+# Builds PROTECT_FILES_DATA/PROTECT_SNAP_DATA/PROTECT_MODES_DATA via a `while` loop fed by PROCESS
+# SUBSTITUTION (`< <(...)`), not a pipe (`... | while`) — a bash pipe runs its last stage in a
+# subshell, so variable assignments inside a piped `while` body are invisible once the pipe exits.
+# Process substitution attaches the producer as an input redirection instead, so the `while` body
+# itself still runs in THIS shell and the accumulated variables survive the loop.
 snapshot_protected() {
-  : > "$PROTECT_SNAP"
+  PROTECT_FILES_DATA=""
+  PROTECT_SNAP_DATA=""
+  PROTECT_MODES_DATA=""
+  rm -rf "$PROTECT_BACKUP"
+  mkdir -p "$PROTECT_BACKUP"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    PROTECT_FILES_DATA="$PROTECT_FILES_DATA$f
+"
+    PROTECT_SNAP_DATA="$PROTECT_SNAP_DATA$(sha_of "$f")
+"
+    PROTECT_MODES_DATA="$PROTECT_MODES_DATA$(mode_of "$f")
+"
+    _dir="$(dirname "$f")"
+    [ "$_dir" = "." ] || mkdir -p "$PROTECT_BACKUP/$_dir"
+    cp -p "$f" "$PROTECT_BACKUP/$f" 2>/dev/null
+    # Best-effort friction (issue #34 round-2, step 5): NOT the guarantee — a same-UID fixer can
+    # chmod its own file back to writable given enough determination. The actual guarantee against
+    # backup-poisoning is the post-restore integrity check in restore_protected() below, plus the
+    # fail-closed marker it leaves for a future run to see. Note this chmod means `cp -p` back OUT
+    # of the backup during restore would otherwise propagate 0444 onto the live file too — restore
+    # explicitly re-chmods to the mode captured in PROTECT_MODES_DATA above to undo that side effect.
+    chmod 0444 "$PROTECT_BACKUP/$f" 2>/dev/null
+  done < <(protect_files | sort -u)
+}
+
+# Returns 0 if unchanged, 1 if any protected file's hash changed (or a file vanished). Recomputes
+# the current state FRESH every call (protect_files() + sha_of() per file) and compares it directly
+# against PROTECT_SNAP_DATA via a plain string comparison — no temp file, no `diff -q` against a
+# file, nothing on disk a fixer could rewrite to fake a match (round-3 fix). Also stashes the fresh
+# scan in PROTECT_NOW_DATA (a global, not a return value) purely so the caller can render a
+# human-readable "changed vs snapshot" diff on a violation — that var is diagnostic output, not
+# ground truth, and nothing re-reads it for the actual pass/fail decision.
+check_protected() {
+  [ -n "$PROTECT_SNAP_DATA" ] || return 0
+  _now=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    _now="$_now$(sha_of "$f")
+"
+  done < <(protect_files | sort -u)
+  PROTECT_NOW_DATA="$_now"
+  [ "$_now" = "$PROTECT_SNAP_DATA" ]
+}
+
+# check_protected_with_grace() (issue #34 round-5, Part 1): runs check_protected() first (zero added
+# latency when nothing is protected) and, ONLY if something is actually protected, ALSO sleeps
+# PROTECT_GRACE_SEC and checks a SECOND time — regardless of whether the first check was clean or
+# violated (a violation already returns 1 without paying the sleep; every CLEAN check, which is the
+# common case, does pay it — do not read this as "the common case is free"). Exists because
+# `sh -c "$FIX"` does not wait on a job the fixer detaches with `&`: a fixer can return immediately
+# while a backgrounded subshell mutates a protected file after loop-fix.sh has already moved on to
+# its own check. A single check_protected() call, no matter WHERE it runs, can only ever prove
+# "clean as of the instant it ran" — it cannot see a mutation that has not happened yet. This
+# recheck converts "any delay beats detection" into "the delay must be under PROTECT_GRACE_SEC to be
+# undetected" — see the round-5 Guard-scope block above for what this does and does NOT guarantee.
+#
+# Round-6 adversarial finding: a plain single `sleep "$PROTECT_GRACE_SEC"` is itself a child process
+# of loop-fix.sh, and start_watchdog()'s descendant-killer (BAC-626 ③) sends SIGTERM/SIGKILL to
+# EVERY child process when an idle/progress timeout fires — including this sleep, if the configured
+# watchdog timeout happens to be shorter than PROTECT_GRACE_SEC (an unusual combination, but a real,
+# demonstrated one: --idle-timeout-sec below the default recommended 600s). That would silently
+# truncate the grace period without ever completing the recheck below. Fix: background the sleep,
+# `wait` on it, and check ITS OWN exit status — a `sleep` killed by a signal exits at 128+signum (143
+# for SIGTERM, 137 for SIGKILL), a normal uninterrupted sleep exits 0 — and retry the SAME full
+# PROTECT_GRACE_SEC duration (not a computed remainder, which would need sub-second wall-clock
+# arithmetic `date +%s` cannot provide portably — BSD date has no %N) if it was killed. Bounded to 3
+# attempts; the watchdog fires at most once per run and its subshell exits right after its one kill
+# sweep (see start_watchdog()), so at most one retry is ever needed in practice.
+check_protected_with_grace() {
+  check_protected || return 1
+  [ -n "$PROTECT_SNAP_DATA" ] || return 0
+  case "$PROTECT_GRACE_SEC" in
+    0|0.0|0.00|.0|.00) return 0 ;;   # explicit "no grace" test-speed override — skip the sleep entirely
+  esac
+  _grace_tries=0
+  while [ "$_grace_tries" -lt 3 ]; do
+    sleep "$PROTECT_GRACE_SEC" 2>/dev/null &
+    _grace_pid=$!
+    wait "$_grace_pid" 2>/dev/null
+    [ $? -lt 128 ] && break
+    _grace_tries=$(( _grace_tries + 1 ))
+  done
+  check_protected
+}
+
+# Restores every protected file to the bytes captured by snapshot_protected() at run start —
+# called right before the PROTECTED-VIOLATION abort so "detect" becomes "detect and undo" (issue
+# #34). Deliberately restores from $PROTECT_BACKUP, NOT `git checkout`: a protected file may
+# already have had a legitimate uncommitted edit before this loop-fix run even started, and the
+# guarantee is "back to exactly what this run started with," not "back to git HEAD". Handles both
+# a modified file (overwrite from backup) and a deleted file (recreate from backup). Always logs
+# what happened; a per-file restore failure is logged loudly rather than swallowed, but never
+# suppresses the PROTECTED-VIOLATION abort itself (caller still exits 3 regardless).
+#
+# Round-2 addition (issue #34 adversarial finding 1 — backup poisoning): after copying bytes back,
+# recomputes each restored file's sha256 and compares it against the ORIGINAL hash recorded in
+# $PROTECT_SNAP_DATA at run start (before iteration 1, so it predates any fixer action including
+# poisoning the backup). A mismatch proves $PROTECT_BACKUP was ALSO tampered with — cp'ing from a
+# poisoned backup "succeeds" as a copy but does not actually restore anything trustworthy. In that
+# case this does NOT log the normal success line; it logs a distinct, loud failure and appends to
+# $COMPROMISED_MARKER (consumed by the fail-closed startup check near the top of this script) so a
+# later run refuses to proceed rather than trusting a possibly-still-sabotaged workspace.
+restore_protected() {
+  if [ -z "$PROTECT_FILES_DATA" ]; then
+    log "  restore: no protected-file list captured — nothing to restore from."
+    return 1
+  fi
+  _restored=0
+  _restore_failed=0
+  _integrity_failed=0
+  # Three parallel in-memory lists (PROTECT_FILES_DATA / PROTECT_SNAP_DATA / PROTECT_MODES_DATA),
+  # walked together via three process-substitution fds — same shape as the old three-file-descriptor
+  # read (fd 3/4/5 against real files), just sourced from bash variables instead of disk (round-3
+  # fix). Not a pipe, so this `while` body still runs in THIS shell — _restored/_restore_failed/
+  # _integrity_failed set below correctly persist past the loop.
+  while IFS= read -r f <&3 && IFS= read -r _origline <&4 && IFS= read -r _origmode <&5; do
+    [ -n "$f" ] || continue
+    _orig_hash="${_origline%% *}"
+    _b="$PROTECT_BACKUP/$f"
+    if [ ! -f "$_b" ]; then
+      log "  RESTORE FAILED for $f: no backup copy at $_b — manual intervention needed."
+      _restore_failed=1
+      # A missing backup is just as untrustworthy a post-state as a hash-mismatched one — the
+      # live file is left in whatever (possibly cheated) state the fixer put it in, with no way
+      # to verify it. Without this, a fixer that simply `rm`s its own backup (instead of
+      # overwriting it with matching content) skips the hash-mismatch branch entirely and no
+      # marker gets written, leaving a rerun free to take the cheated content as a fresh, trusted
+      # baseline — reopening the exact false-SUCCESS-on-rerun bug this guard exists to close.
+      printf 'file=%s reason=no backup copy found at %s — cannot verify or restore original pre-run bytes (the fixer may have deleted its own backup)\n' \
+        "$f" "$_b" >> "$COMPROMISED_MARKER"
+      continue
+    fi
+    _dir="$(dirname "$f")"
+    [ "$_dir" = "." ] || [ -d "$_dir" ] || mkdir -p "$_dir" 2>/dev/null
+    if cp -p "$_b" "$f" 2>/dev/null; then
+      # cp -p just carried the backup's mode (0444, from snapshot_protected()'s step-5 chmod) onto
+      # $f — restore it to the mode the live file actually had at snapshot time instead.
+      [ -n "$_origmode" ] && chmod "$_origmode" "$f" 2>/dev/null
+      _restored=$(( _restored + 1 ))
+      _now_hash="$(sha_of "$f" 2>/dev/null | awk '{print $1}')"
+      if [ "$_now_hash" != "$_orig_hash" ]; then
+        _integrity_failed=1
+        log "  INTEGRITY CHECK FAILED for $f: restored bytes do NOT match the original pre-run hash — the backup itself was tampered with, this file may still be compromised."
+        printf 'file=%s restored-hash=%s expected-original-hash=%s backup=%s reason=backup did not contain trustworthy pre-run bytes (likely poisoned by the same fixer that modified the live file)\n' \
+          "$f" "$_now_hash" "$_orig_hash" "$_b" >> "$COMPROMISED_MARKER"
+      fi
+    else
+      log "  RESTORE FAILED for $f: cp from backup did not succeed — manual intervention needed."
+      _restore_failed=1
+      # Same reasoning as the missing-backup branch above: an unverifiable live file must block
+      # future runs, not just log a warning this invocation will forget.
+      printf 'file=%s reason=cp from backup %s did not succeed — cannot verify or restore original pre-run bytes\n' \
+        "$f" "$_b" >> "$COMPROMISED_MARKER"
+    fi
+  done 3< <(printf '%s' "$PROTECT_FILES_DATA") 4< <(printf '%s' "$PROTECT_SNAP_DATA") 5< <(printf '%s' "$PROTECT_MODES_DATA")
+  if [ "$_integrity_failed" -eq 1 ] || [ "$_restore_failed" -eq 1 ]; then
+    log "  RESTORE COULD NOT BE VERIFIED — the workspace may still be compromised. Do NOT trust it; a human must inspect it. Marker written: $COMPROMISED_MARKER (future runs will refuse to start until it is cleared)."
+  else
+    log "  restored $_restored protected file(s) to their pre-run state."
+  fi
+  [ "$_restore_failed" -eq 0 ] && [ "$_integrity_failed" -eq 0 ]
+}
+
+# Deletes any file that currently matches a --protect glob but did NOT exist at snapshot time
+# (issue #34 adversarial finding 3): check_protected() only compares hashes for files it already
+# knew about, so a fixer that creates a brand-new file matching a broad glob (e.g. dropping a
+# second, trivially-passing test file next to the real protected one) still trips the violation,
+# but restore_protected() alone never removes it — it only walks PROTECT_FILES_DATA (snapshot-time
+# names, held in-memory — round-3 fix). Scope is deliberately narrow: only files protect_files()
+# matches RIGHT NOW are candidates; anything the fixer created that does not match a --protect
+# pattern is left untouched.
+cleanup_rogue_protected() {
+  [ -n "$PROTECT_FILES_DATA" ] || return 0
   protect_files | sort -u | while IFS= read -r f; do
-    [ -n "$f" ] && sha_of "$f" >> "$PROTECT_SNAP"
+    [ -n "$f" ] || continue
+    printf '%s' "$PROTECT_FILES_DATA" | grep -qFx "$f" && continue   # existed at snapshot time — restore_protected()'s job
+    if rm -f "$f" 2>/dev/null; then
+      log "  removed rogue new file matching --protect (not present at run start): $f"
+    else
+      log "  RM FAILED for rogue new protect-matching file $f — manual cleanup needed."
+    fi
   done
 }
 
-# Returns 0 if unchanged, 1 if any protected file's hash changed (or a file vanished).
-check_protected() {
-  [ -s "$PROTECT_SNAP" ] || return 0
-  _tmp="$LOOP_DIR/protected.now"
-  : > "$_tmp"
-  protect_files | sort -u | while IFS= read -r f; do
-    [ -n "$f" ] && sha_of "$f" >> "$_tmp"
-  done
-  diff -q "$PROTECT_SNAP" "$_tmp" >/dev/null 2>&1
+# Shared PROTECTED-VIOLATION response — invoked from BOTH call sites: the FAIL-path check (after the
+# fixer runs, before looping back to the next verify) and the PASS-path check (round-4, right before
+# declaring success). Same reaction either way: log loudly, show the diff, restore + clean up, and
+# exit 3. Factored out so the PASS-path addition below cannot drift from the FAIL-path behaviour it
+# is mirroring. Never returns.
+handle_protect_violation() {
+  log "iter $iter: PROTECTED FILE MODIFIED by the fixer. This is reward hacking — aborting."
+  log "Changed vs snapshot:"
+  diff <(printf '%s' "$PROTECT_SNAP_DATA") <(printf '%s' "$PROTECT_NOW_DATA") 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
+  restore_protected
+  cleanup_rogue_protected
+  log "=== loop-fix done: PROTECTED-VIOLATION ==="
+  exit 3
+}
+
+# check_protected_on_abort() (issue #34 round-5, Part 2): STALLED / BUDGET / watchdog-during-fixer /
+# infra-cap-exhausted aborts check their OWN abort condition and exit BEFORE that iteration's fixer
+# invocation or the FAIL-path check_protected() call ever runs — so a corruption from an EARLIER
+# iteration's still-pending delayed background job (see check_protected_with_grace() above) can land
+# after every check_protected() call in the run has already completed, leaving the protected file
+# corrupted, unrestored, and unflagged even though the run correctly exits non-zero. Called right
+# before each of those paths' own exit: on a violation it logs a warning, restores from backup, and
+# cleans up any rogue new protect-matching file — same recovery as handle_protect_violation() — but
+# deliberately does NOT exit 3 and does NOT change the caller's verdict. Callers ignore this
+# function's return value and keep their own exit code and their own "done: X" reason; this is
+# workspace hygiene on exit, not a re-diagnosis of why the run failed.
+check_protected_on_abort() {
+  check_protected_with_grace && return 0
+  log "iter $iter: PROTECTED FILE MODIFIED by the fixer, discovered while aborting for an unrelated reason. This is reward hacking — restoring before this run exits (the exit code below is this abort's OWN reason, not a protect violation)."
+  log "Changed vs snapshot:"
+  diff <(printf '%s' "$PROTECT_SNAP_DATA") <(printf '%s' "$PROTECT_NOW_DATA") 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
+  restore_protected
+  cleanup_rogue_protected
 }
 
 # ── BAC-626 ①: 전체 LOG의 러너 요약줄 합산 카운트 ──────────────────────────────────────────
@@ -327,12 +716,12 @@ fi
 snapshot_protected
 has_protect=0
 printf '%s\n' "$PROTECT_LIST" | grep -q '[^[:space:]]' && has_protect=1
-if [ "$has_protect" -eq 1 ] && [ ! -s "$PROTECT_SNAP" ]; then
+if [ "$has_protect" -eq 1 ] && [ -z "$PROTECT_SNAP_DATA" ]; then
   echo "loop-fix.sh: --protect matched 0 files — refusing to run with the reward-hacking guard OFF." >&2
   echo "             Check the path/glob (note: only '**' patterns recurse)." >&2
   exit 2
 fi
-[ -s "$PROTECT_SNAP" ] && log "protecting $(wc -l < "$PROTECT_SNAP" | tr -d ' ') file(s) from modification"
+[ -n "$PROTECT_SNAP_DATA" ] && log "protecting $(printf '%s' "$PROTECT_SNAP_DATA" | wc -l | tr -d ' ') file(s) from modification"
 
 # BAC-626 ③: 워치독 기동(opt-in). 원장 경로는 기동 시 1회 해석해 history에 남긴다(강등 가시화).
 if [ "$IDLE_T" -gt 0 ] || [ "$PROG_T" -gt 0 ]; then
@@ -361,6 +750,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ -f "$WATCHDOG_FIRED" ]; then
     wreason="$(head -n1 "$WATCHDOG_FIRED" 2>/dev/null)"
     log "iter $iter: ${wreason:-TIMEOUT} — material-progress watchdog fired. Aborting."
+    check_protected_on_abort
     record_fail_lesson
     log "=== loop-fix done: ${wreason:-TIMEOUT} ==="
     exit 1
@@ -372,6 +762,13 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ "$vcode" -eq 2 ]; then
     log "iter $iter: verdict-run refused to run (exit 2 — usage error / fail-closed guard). Aborting."
     sed 's/^/    /' "$LOOP_DIR/verdict-run.err" 2>/dev/null | tee -a "$HISTORY"
+    # Round-6 adversarial finding: this abort path exits without ever rechecking protected files —
+    # an earlier iteration's still-pending delayed background mutation (see
+    # check_protected_with_grace()) could land after every other check in the run and leave the
+    # workspace silently corrupted on this otherwise-unrelated exit. Same treatment as the other six
+    # abort points: check_protected_on_abort() restores + warns but never changes this path's own
+    # exit code.
+    check_protected_on_abort
     log "=== loop-fix done: VERDICT-RUN-ERROR ==="
     exit 2
   fi
@@ -379,6 +776,19 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   cat "$VERDICT_FILE"
 
   if [ "$vcode" -eq 0 ]; then
+    # ---- reward-hacking guard, PASS path (issue #34 round-4 adversarial finding) ----
+    # check_protected() used to run ONLY on the FAIL path below (right before looping back to the
+    # next verify) — never here. A fixer could background a detached mutation of a protected file
+    # timed to land AFTER that FAIL-path check but BEFORE the next verify call: the poisoned bytes
+    # would then be what verify reads, verify reports PASS, and this branch declared SUCCESS with no
+    # PROTECTED-VIOLATION log line, no restore, no compromise marker — the same silent-false-SUCCESS
+    # signature as every other bug this file exists to close. Must run before ANY success signal
+    # (including the "PASS — stopping" log line just below), not just before the exit 0.
+    # Round-5: uses check_protected_with_grace() (a bounded sleep-then-recheck), not the bare
+    # check_protected() round 4 added — see the round-5 Guard-scope block near the top of this file.
+    if ! check_protected_with_grace; then
+      handle_protect_violation
+    fi
     log "iter $iter: PASS — stopping (success)."
     # mark-clean wiring (issue #9): bump clean_pass_count on every lesson tied to this gate BEFORE
     # record — record's existing-lesson merge path resets clean_pass_count to 0 for the lesson that
@@ -411,6 +821,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     infra_count=$(( infra_count + 1 ))
     if [ "$infra_count" -gt "$INFRA_RETRIES" ]; then
       log "iter $iter: INFRA failure ${infra_count}x — retry cap exhausted. Aborting (infra, not code)."
+      check_protected_on_abort
       log "=== loop-fix done: INFRA ==="
       exit 1
     fi
@@ -418,6 +829,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     # (아래 정규 경로의 budget 블록과 동일 판정, 3축 리뷰 ②).
     if [ "$BUDGET" -gt 0 ] && [ $(( $(date +%s) - start_epoch )) -ge "$BUDGET" ]; then
       log "iter $iter: budget ${BUDGET}s exhausted during an infra-exempt retry. Aborting."
+      check_protected_on_abort
       log "=== loop-fix done: BUDGET ==="
       exit 1
     fi
@@ -445,6 +857,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   prev_fp="$fp"; prev_counts="$counts"
   if [ "$stall_count" -ge "$STALL" ]; then
     log "iter $iter: STALLED — identical failure fingerprint and no count progress ${stall_count}x running. Aborting."
+    check_protected_on_abort
     record_fail_lesson
     log "=== loop-fix done: STALLED ==="
     exit 1
@@ -455,6 +868,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     elapsed=$(( $(date +%s) - start_epoch ))
     if [ "$elapsed" -ge "$BUDGET" ]; then
       log "iter $iter: budget ${BUDGET}s exhausted (${elapsed}s). Aborting."
+      check_protected_on_abort
       record_fail_lesson
       log "=== loop-fix done: BUDGET ==="
       exit 1
@@ -519,18 +933,18 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ -f "$WATCHDOG_FIRED" ]; then
     wreason="$(head -n1 "$WATCHDOG_FIRED" 2>/dev/null)"
     log "iter $iter: ${wreason:-TIMEOUT} — material-progress watchdog fired during the fixer. Aborting."
+    check_protected_on_abort
     record_fail_lesson
     log "=== loop-fix done: ${wreason:-TIMEOUT} ==="
     exit 1
   fi
 
   # ---- reward-hacking guard: protected files must be untouched ----
-  if ! check_protected; then
-    log "iter $iter: PROTECTED FILE MODIFIED by the fixer. This is reward hacking — aborting."
-    log "Changed vs snapshot:"
-    diff "$PROTECT_SNAP" "$LOOP_DIR/protected.now" 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
-    log "=== loop-fix done: PROTECTED-VIOLATION ==="
-    exit 3
+  # Round-5: check_protected_with_grace() (bounded sleep-then-recheck) — same reasoning as the
+  # PASS-path call above, applied here for consistency (a fixer can background a delayed mutation
+  # timed to evade an immediate-only check here just as easily as on the PASS path).
+  if ! check_protected_with_grace; then
+    handle_protect_violation
   fi
 done
 
