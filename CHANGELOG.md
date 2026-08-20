@@ -5,6 +5,53 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.3.0
+
+- AC-level success contract gate — `bin/ac-verify.sh` (ADR-0006, #23): per-AC `verify:`/
+  `artifacts:`/`expect:` contracts parsed from a plan file, judged by deterministic subprocess
+  (reusing `verdict-run.sh` per AC), aggregated into one pass/fail. Composes with, doesn't replace,
+  the observe-the-running-app check — zero contracted ACs on a runtime-surface plan is fail-closed.
+- `bin/verifier-pinned-review.sh` + CODEOWNERS-based reinterpretation (#14): pins base-revision
+  tests against self-weakening (bin/+test loosened together in the same PR), hardened through
+  several adversarial rounds (TOCTOU close, CODEOWNERS-deletion-at-same-commit still caught,
+  unresolvable BASE is a hard error rather than a silent PASS).
+- `loop-fix --protect` hardened through six adversarial rounds: ground truth moved off tamperable
+  on-disk files into process memory, restores a tampered/deleted protected file before aborting
+  (not just detects it), now also runs the check on the PASS path (not just FAIL), a bounded
+  grace-period recheck on both paths, and closes a watchdog-vs-grace-period race plus a
+  VERDICT-RUN-ERROR abort gap.
+- `lessons` hygiene: `invalidate`/`mark-clean` commands (#6), fail-closed `record --verified`
+  without `--signature-file` (#9), FAIL-channel lesson auto-collection wired into `loop-fix` (#10),
+  and a grounded-reopen convention (a retired lesson or rejected challenge needs a cited id + new
+  evidence to reopen — a plain recurrence isn't reopening evidence).
+- tier0 harness self-smoke gate (#7).
+- ADR-0006/0007 (rationale for `ac-verify.sh` and loop-memory's manual-recall env sharing, ported
+  upstream from a consuming repo — BAC-758) and a new `test/dangling-doc-refs.test.sh` regression
+  guard against skill/doc examples pointing at consumer-repo-only paths (`tools/plugin-path.mjs`,
+  `.claude/hooks/*`, `bin/loop-doctor.mjs`) as if this plugin ships them.
+
+## ship-flow 0.2.0
+
+- `publisher` subagent for ship-feature step 5 (#15): the Builder session — which has held
+  untrusted issue/web content and full worktree access since step 0 — no longer runs the
+  `git push`/PR-open/tracked-issue-comment itself. It hands off file-based title/body/comment text
+  to a separate `publisher` agent instead, closing a heredoc-injection risk class (adversarial
+  rounds closed a heredoc-to-variable handoff gap and a conflict-retry push gap).
+- Grounded-reopen convention documented in `retrospect` (#9/#11): a retired lesson or rejected
+  challenge needs a cited id + genuinely new evidence to reopen.
+- Consumes loop-engine 0.3.0's `ac-verify.sh` (ADR-0006) — `ship-feature` step 1 plans now express
+  AC contracts, step 3 runs `ac-verify.sh` against them.
+- `retrospect`/`deps-audit` SKILL.md examples now disclaim that `tools/plugin-path.mjs` is a
+  consuming-repo convention, not something this plugin ships (BAC-758 B7).
+
+## loop-memory 0.2.0
+
+- Sleep-time consolidation batch (#12): dedup, decay-based ranking, promotion pre-scoring.
+- Hook-fired graduate/recall writes now tag their source in `memory_op.payload.source`.
+- ADR-0007 documenting why the manual `recall` CLI shares the hooks' env source and fails closed
+  without an embedding key, rather than silently querying with a stub embedder (ported rationale,
+  BAC-758).
+
 ## loop-memory 0.1.0 — M3 scaffold
 
 - Initial extraction of `loop-memory` (pgvector semantic recall for verified lessons + optional

@@ -139,6 +139,7 @@ domain lesson graduates to pgvector and gets recalled exactly like a verified en
 - A *separate skeptical evaluator* agent can be added to challenge a promotion candidate before it
   becomes a skill; the verified-only + recurrence rules are the deterministic floor it builds on.
 - Once codified, `lessons retire --id <id> --ref "<where>"` marks it TERMINAL so it stops re-surfacing
-  (`promote` listing / `--codify` / loop-doctor's "promotion candidates"). Three gates in all: verified+recurring
+  (`promote` listing / `--codify` / a consumer-repo heartbeat's "promotion candidates" nudge, if this
+  repo has one). Three gates in all: verified+recurring
   floor gates ENTRY, a recorded `accept` gates codification, and `retire` gates removal from the pool —
   so the candidate backlog reflects real open work, not a monotonic pile of already-done lessons.

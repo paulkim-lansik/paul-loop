@@ -45,7 +45,8 @@
 //                   stays clean of advisory signals).
 //   lessons retire --id <key> [--ref "<where codified>"] [--by "<who>"] [--lessons <dir>]
 //                   (Phase 4, TERMINAL) retire an accepted+codified lesson from the promotion pool so it
-//                   stops re-surfacing (promote listing / --codify / loop-doctor). Fail closed: only a
+//                   stops re-surfacing (promote listing / --codify / a consumer-repo health-check
+//                   script, if present). Fail closed: only a
 //                   verified lesson with a recorded `challenge --verdict accept` may retire.
 //   lessons invalidate --id <key> [--reason "<why>"] [--superseded-by <id2>] [--by "<who>"] [--lessons <dir>]
 //                   Mark a lesson WRONG (the lesson itself was incorrect) — distinct from `retire`
@@ -350,8 +351,9 @@ if (cmd === 'challenge') {
 if (cmd === 'retire') {
   // Phase 4, TERMINAL: mark a lesson as codified into a skill / CLAUDE.md guideline. This RETIRES it
   // from the promotion pool — `promote` (listing + --codify) and `stats` open-candidate count exclude
-  // retired lessons, so a once-codified lesson stops re-surfacing forever (no loop-doctor false-nag,
-  // no double-codification). This is the third gate: the verified+recurring floor gates ENTRY, the
+  // retired lessons, so a once-codified lesson stops re-surfacing forever (no false-nag from a
+  // consumer-repo health-check script, if present, no double-codification). This is the third gate:
+  // the verified+recurring floor gates ENTRY, the
   // recorded accept gates EXIT to codification, and `retire` gates removal from the candidate pool.
   // Fail closed: only a lesson the skeptic has ACCEPTED (verified + challenge.verdict==='accept') may be
   // retired — you cannot retire something that was never cleared to codify.
@@ -580,8 +582,9 @@ if (cmd === 'stats') {
   // open_candidates = the ACTIONABLE promotion backlog: verified + recurring, and in NONE of the
   // terminal/excluded states — not already retired (codified, out of the pool), not invalidated (WRONG,
   // issue #6 — same exclusion as promote's `candidates`, so this count never claims more "승격 후보"
-  // than `promote` would actually list), and not rejected (skeptic decided no). This is what loop-doctor
-  // reports as "승격 후보"; it falls to 0 once every recurring lesson is either codified+retired,
+  // than `promote` would actually list), and not rejected (skeptic decided no). This is what a
+  // consumer-repo health-check script (if present) would report as "승격 후보"; it falls to 0 once
+  // every recurring lesson is either codified+retired,
   // invalidated, or rejected, instead of the raw recurring count that never falls (a permanent
   // false-nag pre-retire). A rejected lesson re-opens automatically if it recurs with changed content
   // (record clears the stale verdict), so excluding it here loses nothing.

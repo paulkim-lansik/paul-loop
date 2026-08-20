@@ -9,7 +9,7 @@ Answers whether each installed extension **(1) is maintained upstream, (2) is yo
 
 ## Run
 
-Run this repo's installed loop-engine plugin's `deps-audit` script — invoked however this repo resolves plugin bin scripts. The example below uses the `tools/plugin-path.mjs exec` wrapper this plugin itself relies on; a repo that installs loop-engine a different way may invoke it differently:
+Run this repo's installed loop-engine plugin's `deps-audit` script — invoked however this repo resolves plugin bin scripts. The example below uses the `tools/plugin-path.mjs exec` wrapper convention some consuming repos provide (this plugin does not ship `plugin-path.mjs` itself); a repo that installs loop-engine a different way may invoke it differently:
 
 ```bash
 node tools/plugin-path.mjs exec bin/deps-audit.mjs                      # fast — local manifests + usage + gh freshness (no clone)
