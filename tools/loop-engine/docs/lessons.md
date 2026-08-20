@@ -104,7 +104,7 @@ pipes this through `2>/dev/null`), but write one stderr line each:
 ## Wired into the loop
 
 ```bash
-loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --lessons .loop/lessons
+loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --guard-mutation --lessons .loop/lessons
 ```
 
 - On each failing iteration, `loop-fix` **recalls** verified lessons for that exact failure and
