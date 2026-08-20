@@ -488,5 +488,77 @@ grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
 cmp -s guard-file.txt original-guard-file.txt \
   || fail "case14: protected file bytes from an earlier iteration's pending background job were NOT restored on a STALLED abort"
 
-echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk), catches a mutation backgrounded to land after the FAIL-path check but before the next verify (round-4: check_protected() runs on the PASS path too), and now (round-5) raises the bar with a bounded grace-period recheck on both paths while honestly not claiming to catch delays past that window, plus restores/warns-but-preserves-exit-code on STALLED/BUDGET/watchdog/INFRA aborts that used to leave an earlier iteration's pending corruption unflagged"
+# ── case 15: round-6 — VERDICT-RUN-ERROR (exit 2) is a seventh abort point that used to skip ────
+# check_protected_on_abort() entirely (adversarial review found six call sites had it, this one
+# didn't). Fixer synchronously destroys the git worktree in the SAME iteration it backgrounds a
+# delayed protected-file mutation; the next iteration's --guard-mutation hits verdict-run's own
+# fail-closed rejection ("needs a git worktree") before the mutation would otherwise be noticed by
+# anything else. Must still restore + warn, while VERDICT-RUN-ERROR (2) stays 2, not 0 or 3.
+C="$WORK/c15"; mkdir -p "$C"; cd "$C" || fail "cd c15"
+git init -q . || fail "case15: git init failed"
+git config user.email t@t; git config user.name t
+printf 'ORIGINAL-CONTENT-c15\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+git add guard-file.txt && git commit -q -m init
+cat > fake-verify-fail.sh <<'EOF'
+#!/bin/sh
+echo "FAILED forcing fixer"
+exit 1
+EOF
+cat > fake-fix-delay-and-break-git.sh <<'EOF'
+#!/bin/sh
+if [ ! -f armed.marker ]; then
+  touch armed.marker
+  ( sleep 0.4; printf 'CHEAT-STRING-c15\n' > guard-file.txt ) &
+  rm -rf .git
+fi
+EOF
+
+LOOP_PROTECT_GRACE_SEC=0.2 "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-delay-and-break-git.sh' --protect 'guard-file.txt' --guard-mutation --max-iter 3 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 2 ] || fail "case15: expected exit 2 (VERDICT-RUN-ERROR, its own reason — the missing git worktree) got $code"
+grep -q "done: VERDICT-RUN-ERROR" .loop/history.log || fail "case15: expected the run to still report VERDICT-RUN-ERROR, unchanged by the protect hygiene check"
+grep -q "done: PROTECTED-VIOLATION" .loop/history.log \
+  && fail "case15: must NOT reclassify the exit reason — VERDICT-RUN-ERROR stays VERDICT-RUN-ERROR"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  || fail "case15: expected a protect-violation warning logged even though VERDICT-RUN-ERROR (not a protect check) is what actually aborted the run"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case15: protected file bytes were NOT restored on a VERDICT-RUN-ERROR abort"
+
+# ── case 16: round-6 — the watchdog's descendant-killer must not defeat the grace-period recheck ──
+# start_watchdog() sends SIGTERM/SIGKILL to every child process of loop-fix.sh when idle/progress
+# times out — including the grace sleep itself if the configured watchdog timeout is shorter than
+# PROTECT_GRACE_SEC (a real, demonstrated interaction, not hypothetical). Fixer backgrounds a single
+# delayed mutation; a 1s idle-timeout fires the watchdog mid-run. check_protected_with_grace() must
+# survive its sleep being killed and still complete the recheck (via the signal-exit-code retry),
+# not silently truncate the grace period and let the mutation slip through.
+C="$WORK/c16"; mkdir -p "$C"; cd "$C" || fail "cd c16"
+printf 'ORIGINAL-CONTENT-c16\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-verify-fail.sh <<'EOF'
+#!/bin/sh
+echo "FAILED forcing fixer"
+exit 1
+EOF
+cat > fake-fix-delay.sh <<'EOF'
+#!/bin/sh
+if [ ! -f armed.marker ]; then
+  touch armed.marker
+  ( sleep 2; printf 'CHEAT-STRING-c16\n' > guard-file.txt ) &
+fi
+EOF
+
+"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-delay.sh' --protect 'guard-file.txt' --idle-timeout-sec 1 --max-iter 5 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case16: expected exit 3 (PROTECTED-VIOLATION) — a watchdog timeout shorter than the grace period must not let the mutation escape detection, got $code"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log || fail "case16: expected the PROTECTED FILE MODIFIED marker"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case16: protected file bytes were NOT restored — the watchdog killing the grace-period sleep defeated the recheck"
+# Settle past the corruption's original 2s delay and confirm restore held — proves this isn't a
+# timing accident where the corruption just hadn't landed yet when we happened to check.
+sleep 2
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case16: file drifted from the restored content after settling — a residual write landed post-restore"
+
+echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk), catches a mutation backgrounded to land after the FAIL-path check but before the next verify (round-4: check_protected() runs on the PASS path too), raises the bar with a bounded grace-period recheck on both paths while honestly not claiming to catch delays past that window (round-5), and now (round-6) also covers the VERDICT-RUN-ERROR abort point and survives the watchdog's own descendant-killer trying to defeat the grace-period sleep, plus restores/warns-but-preserves-exit-code on STALLED/BUDGET/watchdog/INFRA/VERDICT-RUN-ERROR aborts that used to leave an earlier iteration's pending corruption unflagged"
 exit 0

@@ -379,20 +379,44 @@ check_protected() {
   [ "$_now" = "$PROTECT_SNAP_DATA" ]
 }
 
-# check_protected_with_grace() (issue #34 round-5, Part 1): runs check_protected() first — zero
-# added latency when nothing is protected, or when the mutation already happened synchronously (the
-# overwhelming common case) — and ONLY if that came back clean AND something is actually protected,
-# sleeps PROTECT_GRACE_SEC and checks a SECOND time. Exists because `sh -c "$FIX"` does not wait on a
-# job the fixer detaches with `&`: a fixer can return immediately while a backgrounded subshell
-# mutates a protected file after loop-fix.sh has already moved on to its own check. A single
-# check_protected() call, no matter WHERE it runs, can only ever prove "clean as of the instant it
-# ran" — it cannot see a mutation that has not happened yet. This recheck converts "any delay beats
-# detection" into "the delay must be under PROTECT_GRACE_SEC to be undetected" — see the round-5
-# Guard-scope block above for what this does and does NOT guarantee.
+# check_protected_with_grace() (issue #34 round-5, Part 1): runs check_protected() first (zero added
+# latency when nothing is protected) and, ONLY if something is actually protected, ALSO sleeps
+# PROTECT_GRACE_SEC and checks a SECOND time — regardless of whether the first check was clean or
+# violated (a violation already returns 1 without paying the sleep; every CLEAN check, which is the
+# common case, does pay it — do not read this as "the common case is free"). Exists because
+# `sh -c "$FIX"` does not wait on a job the fixer detaches with `&`: a fixer can return immediately
+# while a backgrounded subshell mutates a protected file after loop-fix.sh has already moved on to
+# its own check. A single check_protected() call, no matter WHERE it runs, can only ever prove
+# "clean as of the instant it ran" — it cannot see a mutation that has not happened yet. This
+# recheck converts "any delay beats detection" into "the delay must be under PROTECT_GRACE_SEC to be
+# undetected" — see the round-5 Guard-scope block above for what this does and does NOT guarantee.
+#
+# Round-6 adversarial finding: a plain single `sleep "$PROTECT_GRACE_SEC"` is itself a child process
+# of loop-fix.sh, and start_watchdog()'s descendant-killer (BAC-626 ③) sends SIGTERM/SIGKILL to
+# EVERY child process when an idle/progress timeout fires — including this sleep, if the configured
+# watchdog timeout happens to be shorter than PROTECT_GRACE_SEC (an unusual combination, but a real,
+# demonstrated one: --idle-timeout-sec below the default recommended 600s). That would silently
+# truncate the grace period without ever completing the recheck below. Fix: background the sleep,
+# `wait` on it, and check ITS OWN exit status — a `sleep` killed by a signal exits at 128+signum (143
+# for SIGTERM, 137 for SIGKILL), a normal uninterrupted sleep exits 0 — and retry the SAME full
+# PROTECT_GRACE_SEC duration (not a computed remainder, which would need sub-second wall-clock
+# arithmetic `date +%s` cannot provide portably — BSD date has no %N) if it was killed. Bounded to 3
+# attempts; the watchdog fires at most once per run and its subshell exits right after its one kill
+# sweep (see start_watchdog()), so at most one retry is ever needed in practice.
 check_protected_with_grace() {
   check_protected || return 1
   [ -n "$PROTECT_SNAP_DATA" ] || return 0
-  sleep "$PROTECT_GRACE_SEC"
+  case "$PROTECT_GRACE_SEC" in
+    0|0.0|0.00|.0|.00) return 0 ;;   # explicit "no grace" test-speed override — skip the sleep entirely
+  esac
+  _grace_tries=0
+  while [ "$_grace_tries" -lt 3 ]; do
+    sleep "$PROTECT_GRACE_SEC" 2>/dev/null &
+    _grace_pid=$!
+    wait "$_grace_pid" 2>/dev/null
+    [ $? -lt 128 ] && break
+    _grace_tries=$(( _grace_tries + 1 ))
+  done
   check_protected
 }
 
@@ -738,6 +762,13 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ "$vcode" -eq 2 ]; then
     log "iter $iter: verdict-run refused to run (exit 2 — usage error / fail-closed guard). Aborting."
     sed 's/^/    /' "$LOOP_DIR/verdict-run.err" 2>/dev/null | tee -a "$HISTORY"
+    # Round-6 adversarial finding: this abort path exits without ever rechecking protected files —
+    # an earlier iteration's still-pending delayed background mutation (see
+    # check_protected_with_grace()) could land after every other check in the run and leave the
+    # workspace silently corrupted on this otherwise-unrelated exit. Same treatment as the other six
+    # abort points: check_protected_on_abort() restores + warns but never changes this path's own
+    # exit code.
+    check_protected_on_abort
     log "=== loop-fix done: VERDICT-RUN-ERROR ==="
     exit 2
   fi
