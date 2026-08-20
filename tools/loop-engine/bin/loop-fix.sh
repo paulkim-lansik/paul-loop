@@ -62,7 +62,11 @@
 #                       never self-match a broad glob like '**/*.test.*'); otherwise it is a
 #                       single-level glob or a literal path. If a --protect pattern matches ZERO
 #                       files, the loop refuses to run (exit 2) rather than silently leaving the
-#                       guard off.
+#                       guard off. Every check_protected() call that comes back clean is followed by
+#                       a bounded grace-period recheck (PROTECT_GRACE_SEC, default 1.5s, override via
+#                       env var LOOP_PROTECT_GRACE_SEC — mainly a test-speed knob) before being
+#                       trusted — see round-5 in Guard scope below for why, and what this does and
+#                       does NOT guarantee.
 #   --loop-dir <dir>    State/handoff dir (default .loop).
 #   --lessons <dir>     Verified-lessons memory (Phase 3): recall past fixes for this same failure
 #                       into the fix prompt, and record a VERIFIED lesson on success. See bin/lessons.mjs.
@@ -111,12 +115,52 @@
 # symlink to an external path, the restored bytes land at the symlink's target and the file is
 # left as a symlink (content is correct, file type/identity is not) — this does not defeat
 # detection or let a rerun report false success, it is a restoration-fidelity gap, not a bypass.
-# Round-4 fix, narrow residual: check_protected() now also runs on the PASS path (right before
-# declaring success), not just the FAIL path — closing a bypass where a fixer backgrounded a
-# detached mutation timed to land after the FAIL-path check but before the next verify call; a
-# narrower window still remains (a background job timed to land in the handful of shell statements
-# between the new PASS-path check and the actual exit 0 — likely low milliseconds, not the whole
-# verify runtime) and is knowingly not chased further, same as the other narrow gaps in this section.
+# Round-4 fix: check_protected() now also runs on the PASS path (right before declaring success),
+# not just the FAIL path — closing a bypass where a fixer backgrounded a detached mutation timed to
+# land after the FAIL-path check but before the next verify call.
+#
+# Round-5 fix (this revision) — two parts closing the SAME underlying limitation from two angles:
+# the fixer runs as `sh -c "$FIX"`, and if $FIX ends with something like "(sleep D;
+# corrupt-the-file) & true", that backgrounded subshell is NOT waited on — `sh -c "$FIX"` exits once
+# "true" returns, the background job gets reparented away from anything loop-fix.sh can see or wait
+# for, and ANY delay D longer than roughly "however long this process takes to finish its own check
+# and exit" lands the corruption strictly AFTER that check already ran and reported clean. This is
+# NOT a logic bug in check_protected() itself (confirmed correct in isolation) — it is a structural
+# property of any short-lived supervisor process: you cannot detect, at the moment you check,
+# something that has not happened yet. Adding another check_protected() call at some OTHER point
+# does not close this either — the same argument applies to whatever the new "last point" becomes;
+# an attacker just increases D further.
+#
+#   Part 1 — bounded grace-period recheck (check_protected_with_grace(), used on BOTH the PASS path
+#   and the FAIL path, replacing the bare check_protected() calls round 4 added): once a
+#   check_protected() call comes back clean, sleep a short, bounded grace period (PROTECT_GRACE_SEC,
+#   default 1.5s, override via env var LOOP_PROTECT_GRACE_SEC — a test-speed knob) and check ONE
+#   more time; a failing recheck is handled exactly like any other violation. This converts "any D
+#   beats it" into "D must be under PROTECT_GRACE_SEC to be undetected" — a meaningfully higher bar
+#   against realistic reward-hacking, NOT a claim that the gap is closed (see "Honest limit" below).
+#
+#   Part 2 — the STALLED / BUDGET / watchdog-during-fixer / infra-cap-exhausted abort paths check
+#   their OWN abort condition and exit BEFORE that iteration's fixer invocation or the FAIL-path
+#   check_protected() call ever runs. A corruption from an EARLIER iteration's still-pending delayed
+#   background job can therefore land after every check_protected() call in the run has already
+#   completed, and the run exits non-zero — its own real failure code (STALLED stays STALLED, BUDGET
+#   stays BUDGET; this is NOT the false-SUCCESS class of bug) — with the protected file left
+#   corrupted, unrestored, and unflagged. Each of these paths now also calls
+#   check_protected_with_grace() (via check_protected_on_abort()) right before it exits: on a
+#   violation it logs a warning, restores from backup, and cleans up any rogue new protect-matching
+#   file — the same recovery as a normal violation — but keeps its OWN exit code. This is workspace
+#   hygiene on exit, not a re-diagnosis of why the run failed.
+#
+# Honest limit (read this, it is the actual guarantee): the grace period raises the bar, it does not
+# close the gap. A background job whose delay exceeds PROTECT_GRACE_SEC lands strictly after this
+# process has finished checking and exited — a structural limit of any short-lived supervisor
+# process, not a bug in this specific check, and NOT something a larger grace period alone can ever
+# fully close (an attacker can always pick a D larger than whatever finite grace period is set). If
+# a caller needs a stronger guarantee against a fixer that deliberately backgrounds long-delayed
+# mutations, the fixer's execution environment itself would need to be sandboxed (e.g. no ability to
+# survive past the fixer subprocess's own lifetime, via a process-group kill or similar OS-level
+# containment) — that is a materially different, larger architectural change and is explicitly out
+# of scope for this fix.
 # Stall caveat: stall detection is reliable when the verifier emits recognizable failure markers
 # or changing pass/fail counts; the hard guarantee against runaway is --max-iter.
 #
@@ -133,6 +177,11 @@ LESSONS=""        # optional verified-lessons memory dir (Phase 3)
 INFRA_RETRIES=2   # BAC-626 ②: transient 인프라 실패 면제 상한(초과 시 INFRA 중단)
 IDLE_T=0; PROG_T=0  # BAC-626 ③: material-progress 워치독(0=off, 완전 opt-in)
 GUARD_MUT=""      # BAC-626 ④: verdict-run passthrough 플래그(빈 값=off)
+# issue #34 round-5: bounded grace period a check_protected() pass is held to before being trusted —
+# raises the bar against a fixer that backgrounds a delayed mutation (see check_protected_with_grace()
+# and the round-5 Guard-scope block above) but does NOT guarantee catching every delay, only ones
+# shorter than this. Override via LOOP_PROTECT_GRACE_SEC (test-speed knob).
+PROTECT_GRACE_SEC="${LOOP_PROTECT_GRACE_SEC:-1.5}"
 
 need2() { [ "$1" -ge 2 ] || { echo "loop-fix.sh: $2 requires a value" >&2; exit 2; }; }
 
@@ -330,6 +379,23 @@ check_protected() {
   [ "$_now" = "$PROTECT_SNAP_DATA" ]
 }
 
+# check_protected_with_grace() (issue #34 round-5, Part 1): runs check_protected() first — zero
+# added latency when nothing is protected, or when the mutation already happened synchronously (the
+# overwhelming common case) — and ONLY if that came back clean AND something is actually protected,
+# sleeps PROTECT_GRACE_SEC and checks a SECOND time. Exists because `sh -c "$FIX"` does not wait on a
+# job the fixer detaches with `&`: a fixer can return immediately while a backgrounded subshell
+# mutates a protected file after loop-fix.sh has already moved on to its own check. A single
+# check_protected() call, no matter WHERE it runs, can only ever prove "clean as of the instant it
+# ran" — it cannot see a mutation that has not happened yet. This recheck converts "any delay beats
+# detection" into "the delay must be under PROTECT_GRACE_SEC to be undetected" — see the round-5
+# Guard-scope block above for what this does and does NOT guarantee.
+check_protected_with_grace() {
+  check_protected || return 1
+  [ -n "$PROTECT_SNAP_DATA" ] || return 0
+  sleep "$PROTECT_GRACE_SEC"
+  check_protected
+}
+
 # Restores every protected file to the bytes captured by snapshot_protected() at run start —
 # called right before the PROTECTED-VIOLATION abort so "detect" becomes "detect and undo" (issue
 # #34). Deliberately restores from $PROTECT_BACKUP, NOT `git checkout`: a protected file may
@@ -442,6 +508,26 @@ handle_protect_violation() {
   cleanup_rogue_protected
   log "=== loop-fix done: PROTECTED-VIOLATION ==="
   exit 3
+}
+
+# check_protected_on_abort() (issue #34 round-5, Part 2): STALLED / BUDGET / watchdog-during-fixer /
+# infra-cap-exhausted aborts check their OWN abort condition and exit BEFORE that iteration's fixer
+# invocation or the FAIL-path check_protected() call ever runs — so a corruption from an EARLIER
+# iteration's still-pending delayed background job (see check_protected_with_grace() above) can land
+# after every check_protected() call in the run has already completed, leaving the protected file
+# corrupted, unrestored, and unflagged even though the run correctly exits non-zero. Called right
+# before each of those paths' own exit: on a violation it logs a warning, restores from backup, and
+# cleans up any rogue new protect-matching file — same recovery as handle_protect_violation() — but
+# deliberately does NOT exit 3 and does NOT change the caller's verdict. Callers ignore this
+# function's return value and keep their own exit code and their own "done: X" reason; this is
+# workspace hygiene on exit, not a re-diagnosis of why the run failed.
+check_protected_on_abort() {
+  check_protected_with_grace && return 0
+  log "iter $iter: PROTECTED FILE MODIFIED by the fixer, discovered while aborting for an unrelated reason. This is reward hacking — restoring before this run exits (the exit code below is this abort's OWN reason, not a protect violation)."
+  log "Changed vs snapshot:"
+  diff <(printf '%s' "$PROTECT_SNAP_DATA") <(printf '%s' "$PROTECT_NOW_DATA") 2>/dev/null | sed 's/^/    /' | tee -a "$HISTORY"
+  restore_protected
+  cleanup_rogue_protected
 }
 
 # ── BAC-626 ①: 전체 LOG의 러너 요약줄 합산 카운트 ──────────────────────────────────────────
@@ -640,6 +726,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ -f "$WATCHDOG_FIRED" ]; then
     wreason="$(head -n1 "$WATCHDOG_FIRED" 2>/dev/null)"
     log "iter $iter: ${wreason:-TIMEOUT} — material-progress watchdog fired. Aborting."
+    check_protected_on_abort
     record_fail_lesson
     log "=== loop-fix done: ${wreason:-TIMEOUT} ==="
     exit 1
@@ -666,7 +753,9 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     # PROTECTED-VIOLATION log line, no restore, no compromise marker — the same silent-false-SUCCESS
     # signature as every other bug this file exists to close. Must run before ANY success signal
     # (including the "PASS — stopping" log line just below), not just before the exit 0.
-    if ! check_protected; then
+    # Round-5: uses check_protected_with_grace() (a bounded sleep-then-recheck), not the bare
+    # check_protected() round 4 added — see the round-5 Guard-scope block near the top of this file.
+    if ! check_protected_with_grace; then
       handle_protect_violation
     fi
     log "iter $iter: PASS — stopping (success)."
@@ -701,6 +790,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     infra_count=$(( infra_count + 1 ))
     if [ "$infra_count" -gt "$INFRA_RETRIES" ]; then
       log "iter $iter: INFRA failure ${infra_count}x — retry cap exhausted. Aborting (infra, not code)."
+      check_protected_on_abort
       log "=== loop-fix done: INFRA ==="
       exit 1
     fi
@@ -708,6 +798,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     # (아래 정규 경로의 budget 블록과 동일 판정, 3축 리뷰 ②).
     if [ "$BUDGET" -gt 0 ] && [ $(( $(date +%s) - start_epoch )) -ge "$BUDGET" ]; then
       log "iter $iter: budget ${BUDGET}s exhausted during an infra-exempt retry. Aborting."
+      check_protected_on_abort
       log "=== loop-fix done: BUDGET ==="
       exit 1
     fi
@@ -735,6 +826,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   prev_fp="$fp"; prev_counts="$counts"
   if [ "$stall_count" -ge "$STALL" ]; then
     log "iter $iter: STALLED — identical failure fingerprint and no count progress ${stall_count}x running. Aborting."
+    check_protected_on_abort
     record_fail_lesson
     log "=== loop-fix done: STALLED ==="
     exit 1
@@ -745,6 +837,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     elapsed=$(( $(date +%s) - start_epoch ))
     if [ "$elapsed" -ge "$BUDGET" ]; then
       log "iter $iter: budget ${BUDGET}s exhausted (${elapsed}s). Aborting."
+      check_protected_on_abort
       record_fail_lesson
       log "=== loop-fix done: BUDGET ==="
       exit 1
@@ -809,13 +902,17 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   if [ -f "$WATCHDOG_FIRED" ]; then
     wreason="$(head -n1 "$WATCHDOG_FIRED" 2>/dev/null)"
     log "iter $iter: ${wreason:-TIMEOUT} — material-progress watchdog fired during the fixer. Aborting."
+    check_protected_on_abort
     record_fail_lesson
     log "=== loop-fix done: ${wreason:-TIMEOUT} ==="
     exit 1
   fi
 
   # ---- reward-hacking guard: protected files must be untouched ----
-  if ! check_protected; then
+  # Round-5: check_protected_with_grace() (bounded sleep-then-recheck) — same reasoning as the
+  # PASS-path call above, applied here for consistency (a fixer can background a delayed mutation
+  # timed to evade an immediate-only check here just as easily as on the PASS path).
+  if ! check_protected_with_grace; then
     handle_protect_violation
   fi
 done

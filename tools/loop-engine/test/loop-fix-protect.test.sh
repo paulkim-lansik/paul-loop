@@ -115,7 +115,7 @@ cp guard-file.txt seen-by-rerun.txt 2>/dev/null
 echo "FAILED spy verify — always fails so the captured snapshot can be inspected"
 exit 1
 EOF
-"$LOOPFIX" --verify 'sh fake-verify-spy.sh' --fix ':' --protect 'guard-file.txt' --max-iter 1 >/dev/null 2>&1
+LOOP_PROTECT_GRACE_SEC=0.2 "$LOOPFIX" --verify 'sh fake-verify-spy.sh' --fix ':' --protect 'guard-file.txt' --max-iter 1 >/dev/null 2>&1
 [ -f seen-by-rerun.txt ] || fail "case3: rerun's verify never ran (spy file missing)"
 cmp -s seen-by-rerun.txt original-guard-file.txt \
   || fail "case3: rerun saw stale sabotaged bytes instead of the restored original — issue #34 false-SUCCESS bug is NOT closed"
@@ -131,7 +131,7 @@ C="$WORK/c4"; mkdir -p "$C/src"; cd "$C" || fail "cd c4"
 cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
 printf 'a real pre-existing test\n' > src/real.test.sh
 
-"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix ':' --protect '**/*.test.sh' --max-iter 2 >/dev/null 2>&1
+LOOP_PROTECT_GRACE_SEC=0.2 "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix ':' --protect '**/*.test.sh' --max-iter 2 >/dev/null 2>&1
 code=$?
 [ "$code" -eq 1 ] || fail "case4: expected exit 1 (MAX-ITER, no violation) with an inert fixer under a '**' glob, got $code"
 grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
@@ -324,7 +324,11 @@ cmp -s guard-file.txt original-guard-file.txt \
 # The synthetic verify sleeps briefly on its PASS call to give the backgrounded mutation (a much
 # shorter delay) reliable margin to land before the new PASS-path check_protected() call runs —
 # widening the window on the test side rather than relying on a hair-trigger race, so this assertion
-# is not flaky.
+# is not flaky. (Round-5 note: with the grace-period recheck now on the FAIL path too, this scenario
+# is typically caught right there on iteration 1 rather than needing to reach the PASS path at all —
+# still a valid regression check either way, since the assertions below only require SOME
+# PROTECTED-VIOLATION catch, not which path caught it. A small grace override keeps this fast while
+# staying comfortably above the fixer's 0.05s mutation delay.)
 C="$WORK/c11"; mkdir -p "$C"; cd "$C" || fail "cd c11"
 printf 'ORIGINAL-CONTENT-c11\n' > guard-file.txt
 cp guard-file.txt original-guard-file.txt
@@ -348,18 +352,141 @@ cat > fake-fix-race.sh <<'EOF'
 true
 EOF
 
-"$LOOPFIX" --verify 'sh fake-verify-race.sh' --fix 'sh fake-fix-race.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+LOOP_PROTECT_GRACE_SEC=0.2 "$LOOPFIX" --verify 'sh fake-verify-race.sh' --fix 'sh fake-fix-race.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
 code=$?
 [ "$code" -eq 3 ] || fail "case11: expected exit 3 (PROTECTED-VIOLATION) for a mutation backgrounded to land after the FAIL-path check but before the next verify, got $code — round-4 PASS-path gap is NOT closed"
 grep -q "done: SUCCESS" .loop/history.log \
   && fail "case11: must NOT report false SUCCESS — the protected file was left corrupted by a timed background mutation"
 grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
-  || fail "case11: expected the PROTECTED FILE MODIFIED marker from the new PASS-path check"
+  || fail "case11: expected the PROTECTED FILE MODIFIED marker (FAIL-path or PASS-path, either is a valid catch)"
 grep -q "done: PROTECTED-VIOLATION" .loop/history.log || fail "case11: expected the PROTECTED-VIOLATION done marker"
 grep -q "restored 1 protected file(s) to their pre-run state" .loop/history.log \
   || fail "case11: expected a log line confirming the restore"
 cmp -s guard-file.txt original-guard-file.txt \
   || fail "case11: protected file bytes were NOT restored to the exact pre-run content"
 
-echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk), and now also catches a mutation backgrounded to land after the FAIL-path check but before the next verify (round-4: check_protected() runs on the PASS path too)"
+# ── Round 5 (independent adversarial review of the round-4 fix): the PASS-path check_protected()
+# call round 4 added is still a SINGLE, IMMEDIATE check — it only proves "clean at the instant it
+# ran". A fixer invoked via `sh -c "$FIX"` can return immediately while a `(sleep D; corrupt) &`
+# subshell it backgrounded is NOT waited on by that `sh -c` wrapper: any D longer than roughly
+# "however long loop-fix.sh takes to run its own check and exit" lands the corruption strictly AFTER
+# every check_protected() call in the run has already completed. Root cause: no single check, placed
+# ANYWHERE, can see a mutation that has not happened yet — this is a structural property of a
+# short-lived supervisor process, not a fixable logic bug. The round-5 fix does not claim to close
+# this (nothing can); it raises the bar with a bounded grace-period recheck (Part 1) and closes a
+# separate, secondary hygiene gap on non-protect abort paths (Part 2).
+
+# ── case 12: Part 1 — the grace-period recheck catches a short delay an immediate-only check ───
+# (round-4's bare check_protected(), reproduced here via LOOP_PROTECT_GRACE_SEC=0, which collapses
+# check_protected_with_grace() to two back-to-back instant checks — functionally the same "clean at
+# the instant it ran" guarantee the old bare call had) would miss. Same fixer/verify shape, same
+# mutation delay D, run twice with only the grace period differing — isolating the recheck itself as
+# the variable under test rather than relying on incidental timing of an unrelated verify call.
+#
+# case 12a: grace=0 (old-code-equivalent) — a D=0.4s backgrounded mutation is NOT caught; the run
+# reaches MAX-ITER (exit 1) with no PROTECTED FILE MODIFIED line, because the FAIL-path check runs
+# and completes in low milliseconds, long before D elapses.
+C="$WORK/c12a"; mkdir -p "$C"; cd "$C" || fail "cd c12a"
+cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+printf 'ORIGINAL-CONTENT-c12\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-fix-short-delay.sh <<'EOF'
+#!/bin/sh
+( sleep 0.4; printf 'CHEAT-STRING-c12\n' >> guard-file.txt ) &
+true
+EOF
+
+LOOP_PROTECT_GRACE_SEC=0 "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-short-delay.sh' --protect 'guard-file.txt' --max-iter 1 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 1 ] || fail "case12a: expected exit 1 (MAX-ITER, no violation caught) with grace=0 simulating an immediate-only check, got $code"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  && fail "case12a: an immediate-only check (grace=0) should NOT have caught a mutation still 0.4s away — if it did, this test's premise about the old code's blind spot is wrong"
+grep -q "done: MAX-ITER" .loop/history.log || fail "case12a: expected a normal MAX-ITER finish"
+
+# case 12b: same shape, grace=0.5s (> D=0.15s this time) — the recheck DOES catch it. Uses a smaller
+# D than 12a purely so this case finishes quickly; the two cases are independent, not a before/after
+# pair on the same D.
+C="$WORK/c12b"; mkdir -p "$C"; cd "$C" || fail "cd c12b"
+cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+printf 'ORIGINAL-CONTENT-c12b\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-fix-short-delay.sh <<'EOF'
+#!/bin/sh
+( sleep 0.15; printf 'CHEAT-STRING-c12b\n' >> guard-file.txt ) &
+true
+EOF
+
+LOOP_PROTECT_GRACE_SEC=0.5 "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-short-delay.sh' --protect 'guard-file.txt' --max-iter 3 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case12b: expected exit 3 (PROTECTED-VIOLATION) — the grace-period recheck must catch a 0.15s delay under a 0.5s grace period, got $code"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log || fail "case12b: expected the PROTECTED FILE MODIFIED marker from the grace-period recheck"
+grep -q "done: PROTECTED-VIOLATION" .loop/history.log || fail "case12b: expected the PROTECTED-VIOLATION done marker"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case12b: protected file bytes were NOT restored to the exact pre-run content"
+
+# ── case 13: Part 1 boundary, honestly disclosed — a delay LONGER than the grace period is NOT a ──
+# false positive, it is the documented, expected limit (see the round-5 Guard-scope comment in
+# loop-fix.sh). A clean run whose fixer backgrounds a mutation past the grace window must still
+# report ordinary SUCCESS — the grace-period recheck must never cry wolf on a mutation it structurally
+# cannot see yet.
+C="$WORK/c13"; mkdir -p "$C"; cd "$C" || fail "cd c13"
+printf 'ORIGINAL-CONTENT-c13\n' > guard-file.txt
+cat > fake-verify-pass-once.sh <<'EOF'
+#!/bin/sh
+echo "PASS immediately"
+exit 0
+EOF
+cat > fake-fix-long-delay.sh <<'EOF'
+#!/bin/sh
+( sleep 2; printf 'CHEAT-STRING-c13-TOO-LATE\n' >> guard-file.txt ) &
+true
+EOF
+# Fixer is never actually invoked here (verify PASSes on iteration 1), so this exercises the
+# PASS-path grace recheck directly against a clean, untouched file — confirming the recheck itself
+# adds no false positives on an ordinary clean run.
+LOOP_PROTECT_GRACE_SEC=0.3 "$LOOPFIX" --verify 'sh fake-verify-pass-once.sh' --fix 'sh fake-fix-long-delay.sh' --protect 'guard-file.txt' --max-iter 1 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 0 ] || fail "case13: expected exit 0 (ordinary SUCCESS, no fixer even invoked) got $code"
+grep -q "done: SUCCESS" .loop/history.log || fail "case13: expected a normal SUCCESS finish"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  && fail "case13: grace-period recheck must not false-positive on a clean run"
+
+# ── case 14: Part 2 — an EARLIER iteration's still-pending delayed background job must still be ──
+# caught (restored + warned about) by a LATER abort path that isn't itself a protect check — here,
+# STALLED — without changing that path's own exit code (round-5 secondary finding). Timeline:
+# iteration 1's fixer backgrounds a D=1.5s mutation and returns instantly; iteration 1's own FAIL-path
+# grace recheck (grace=1s) still sees it clean (D > grace) and lets the run continue; iteration 2
+# repeats the IDENTICAL failure fingerprint, tripping --stall 2 BEFORE iteration 2's own fixer would
+# ever run. By the time check_protected_on_abort() runs for that STALL abort (after ~2x the grace
+# period has elapsed since the mutation was scheduled), D has elapsed and the mutation is now visible
+# — proving the fix without needing to touch the STALL-detection code path itself.
+C="$WORK/c14"; mkdir -p "$C"; cd "$C" || fail "cd c14"
+printf 'ORIGINAL-CONTENT-c14\n' > guard-file.txt
+cp guard-file.txt original-guard-file.txt
+cat > fake-verify-stall.sh <<'EOF'
+#!/bin/sh
+echo "FAILED src/example.test.ts > case14 stall fingerprint (always identical)"
+exit 1
+EOF
+cat > fake-fix-stall-delay.sh <<'EOF'
+#!/bin/sh
+if [ ! -f .fixer-ran-once ]; then
+  touch .fixer-ran-once
+  ( sleep 1.5; printf 'CHEAT-STRING-c14\n' >> guard-file.txt ) &
+fi
+true
+EOF
+
+LOOP_PROTECT_GRACE_SEC=1 "$LOOPFIX" --verify 'sh fake-verify-stall.sh' --fix 'sh fake-fix-stall-delay.sh' --protect 'guard-file.txt' --stall 2 --max-iter 10 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 1 ] || fail "case14: expected exit 1 (STALLED's own code, NOT 0 and NOT 3) got $code"
+grep -q "done: STALLED" .loop/history.log || fail "case14: expected the run to still report its own STALLED reason, unchanged by the protect hygiene check"
+grep -q "done: PROTECTED-VIOLATION" .loop/history.log \
+  && fail "case14: must NOT reclassify the exit reason to PROTECTED-VIOLATION — STALLED stays STALLED (workspace hygiene, not re-diagnosis)"
+grep -q "PROTECTED FILE MODIFIED" .loop/history.log \
+  || fail "case14: expected a protect-violation warning logged even though STALLED (not a protect check) is what actually aborted the run"
+cmp -s guard-file.txt original-guard-file.txt \
+  || fail "case14: protected file bytes from an earlier iteration's pending background job were NOT restored on a STALLED abort"
+
+echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk), catches a mutation backgrounded to land after the FAIL-path check but before the next verify (round-4: check_protected() runs on the PASS path too), and now (round-5) raises the bar with a bounded grace-period recheck on both paths while honestly not claiming to catch delays past that window, plus restores/warns-but-preserves-exit-code on STALLED/BUDGET/watchdog/INFRA aborts that used to leave an earlier iteration's pending corruption unflagged"
 exit 0
