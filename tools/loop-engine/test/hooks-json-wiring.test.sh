@@ -25,8 +25,11 @@ node -e '
   const engine = process.argv[1];
 
   const plugin = JSON.parse(fs.readFileSync(path.join(engine, ".claude-plugin/plugin.json"), "utf8"));
-  if (plugin.hooks !== "./hooks/hooks.json") {
-    console.error(`FAIL: plugin.json "hooks" field must be "./hooks/hooks.json", got ${JSON.stringify(plugin.hooks)}`);
+  // hooks/hooks.json is auto-discovered by convention — declaring it explicitly in manifest.hooks
+  // causes a "duplicate hooks file" load error (Claude Code loads it twice: once by convention,
+  // once via the manifest). Regression for a real bug hit installing loop-engine 0.4.0.
+  if ("hooks" in plugin) {
+    console.error(`FAIL: plugin.json must NOT declare a "hooks" field (hooks/hooks.json is auto-discovered; declaring it causes a duplicate-load error) — got ${JSON.stringify(plugin.hooks)}`);
     process.exit(1);
   }
 

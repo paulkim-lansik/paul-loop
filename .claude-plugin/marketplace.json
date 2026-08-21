@@ -12,7 +12,7 @@
       "name": "loop-engine",
       "source": "./tools/loop-engine",
       "description": "Core loop mechanics: verdict-run (machine-readable PASS/FAIL contract), loop-fix (closed verify->fix loop), lessons (verified-fix memory), classify-risk, require-tests. No framework opinions beyond \"the verifier is the ceiling, never the agent's self-report\".",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "keywords": ["verifier", "tdd", "loop", "verdict", "lessons"]
     },
     {
@@ -26,7 +26,7 @@
       "name": "loop-memory",
       "source": "./tools/loop-memory",
       "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in / defaultEnabled:false — a database dependency, not core loop mechanics.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "defaultEnabled": false,
       "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"]
     }

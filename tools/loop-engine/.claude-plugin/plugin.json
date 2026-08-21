@@ -1,6 +1,6 @@
 {
   "name": "loop-engine",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Core loop mechanics: verdict-run (machine-readable PASS/FAIL contract), loop-fix (closed verify->fix loop), lessons (verified-fix memory), classify-risk, require-tests. verifier=ceiling — the agent's self-judgement never substitutes for it.",
   "author": {
     "name": "paulkim-lansik"
@@ -8,6 +8,5 @@
   "homepage": "https://github.com/paulkim-lansik/paul-loop",
   "repository": "https://github.com/paulkim-lansik/paul-loop",
   "license": "MIT",
-  "keywords": ["verifier", "tdd", "loop", "verdict", "lessons"],
-  "hooks": "./hooks/hooks.json"
+  "keywords": ["verifier", "tdd", "loop", "verdict", "lessons"]
 }
