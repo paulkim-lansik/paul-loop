@@ -1,0 +1,157 @@
+#!/usr/bin/env node
+// PreToolUse guard — reward-hacking defense: blocks **Edit/Write/MultiEdit (file paths) and Bash
+// (shell mutation)** against files that decide the verifier's outcome (a consuming repo's
+// `.loop/protect.globs`), at the harness level.
+//
+// Arming is structural, not prose: relying only on a `.loop/looping` sentinel (touched by the loop
+// being watched, i.e. by the very agent it's meant to constrain) leaves the guard silently off
+// whenever context gets compacted and the agent forgets to arm it. Armed state is decided by a shared
+// judge (lib/protect-globs.mjs `guardState`):
+//   armed = `.loop/looping` present (owned by loop-fix.sh — takes priority over guard-off)
+//        OR (on a working branch, outside the consuming repo's protected-branch set, AND no valid
+//            `.loop/guard-off`)
+// Legitimate edits to protected files (writing a failing TDD test, touching package.json/turbo.json)
+// escape via: `echo '<reason>' > .loop/guard-off` (empty file is invalid; TTL 30 min — prevents a
+// permanent off-switch) -> edit -> `rm -f .loop/guard-off`, with the reason recorded in the PR body.
+//
+// Bash channel: what a shell touches is undecidable in general -> a conservative coarse net. Blocks
+// only when a command (a) looks mutating (rm/mv/cp/sed -i/redirection/etc.) AND (b) contains a token
+// that hits a protected glob. Pure reads (cat/grep/pnpm test/etc.) pass through. The real boundary is
+// PR review, not this hook.
+//
+// fail-open: internal error / non-git / detached -> allow (never wedge the session).
+
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join, relative } from 'node:path';
+
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: Claude Code injects this at hook runtime (not a
+// turbo task var).
+const root = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+// This hook ships inside loop-engine's own package (hooks/ is a sibling of lib/), so "where is the
+// plugin I need to protect" is just "the directory one level above this file" — no cross-package
+// resolution needed.
+const pluginPath = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
+
+let GUARD_OFF_TTL_MS;
+let globToRegExp;
+let guardState;
+let loadPatterns;
+let state;
+try {
+  ({ GUARD_OFF_TTL_MS, globToRegExp, guardState, loadPatterns } = await import(
+    '../lib/protect-globs.mjs'
+  ));
+  state = guardState(root);
+} catch (e) {
+  console.error(`[protect-during-loop] judge module load failed (fail-open): ${String(e?.message ?? e)}`);
+  process.exit(0);
+}
+if (!state.armed) process.exit(0);
+
+let payload;
+try {
+  payload = JSON.parse(readFileSync(0, 'utf8'));
+} catch {
+  process.exit(0); // stdin parse failure -> fail-open
+}
+const tool = payload?.tool_name;
+const input = payload?.tool_input ?? {};
+
+const globFile = join(root, '.loop', 'protect.globs');
+if (!existsSync(globFile)) process.exit(0);
+
+const patterns = loadPatterns(globFile);
+const matchesGlob = (tok) => patterns.some((p) => globToRegExp(p).test(tok));
+
+const TTL_MIN = Math.round(GUARD_OFF_TTL_MS / 60000);
+function escapeHint() {
+  if (state.mode === 'sentinel') {
+    return 'A loop-fix loop is armed (.loop/looping, owned by loop-fix.sh) — retry after the loop ends.';
+  }
+  const why =
+    state.mode === 'guard-off-empty'
+      ? ' (.loop/guard-off is empty and invalid — a reason string is required)'
+      : state.mode === 'guard-off-expired'
+        ? ` (.loop/guard-off window expired — TTL ${TTL_MIN}min)`
+        : '';
+  return (
+    `On a working branch (${state.branch}) the guard is always armed${why}. ` +
+    `For a legitimate change: echo '<reason>' > .loop/guard-off (${TTL_MIN}min window) -> edit -> ` +
+    `rm -f .loop/guard-off, and record the reason in the PR body.`
+  );
+}
+
+function deny(reason) {
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason,
+      },
+    }),
+  );
+  process.exit(0);
+}
+
+// -- Bash channel: a fixer changing verifier-deciding files via shell (reward-hacking) --------------
+if (tool === 'Bash') {
+  const cmd = input?.command;
+  if (typeof cmd !== 'string' || !cmd) process.exit(0);
+  // (a) does it look mutating — conservative; the real gate is the token match below, so
+  // over-matching here is harmless (it only lets more commands through the mutation check).
+  const mutates =
+    /(^|[\s;&|(])(rm|unlink|mv|cp|dd|truncate|tee|install)\b/.test(cmd) ||
+    /\bsed\b[^|;&]*\s-[a-z]*i/.test(cmd) ||
+    /\bgit\s+(checkout|restore|reset|stash)\b/.test(cmd) ||
+    />>?/.test(cmd);
+  if (!mutates) process.exit(0);
+  // (b) does it carry a token that hits a protected glob — or a token pointing at this plugin's own
+  // install path. The latter matters because .loop/protect.globs is a repo-relative glob set and can
+  // never, in principle, cover a path outside the repo (the plugin cache) — and if only the Edit/Write
+  // channel below blocked that, a single `sed -i` would bypass it.
+  const inPlugin = (t) => t === pluginPath || t.startsWith(`${pluginPath}/`);
+  const tokens = cmd
+    .split(/[\s>|<;&()'"`]+/)
+    .filter(Boolean)
+    .map((t) => t.replace(/^\.\//, ''));
+  const hitTok = tokens.find((t) => matchesGlob(t) || inPlugin(t));
+  if (!hitTok) process.exit(0);
+  deny(
+    `Bash blocked while the guard is armed: '${hitTok}' matches ${inPlugin(hitTok) ? `this project's verifier itself (loop-engine, ${pluginPath})` : '.loop/protect.globs'}. ` +
+      `Don't modify files that decide the verifier's outcome (tests, snapshots, config, migrations, the guard itself) via shell — verifier=ceiling (reward-hacking defense). ` +
+      `Make the source code pass the verifier instead. ${escapeHint()}`,
+  );
+}
+
+// -- Edit/Write/MultiEdit channel: file paths ---------------------------------------------------------
+const filePath = input?.file_path;
+if (typeof filePath !== 'string' || !filePath) process.exit(0);
+
+// The verifier itself (classify-risk, gate, verdict-run, protect-globs, etc.) now lives outside the
+// repo, in the installed plugin cache. .loop/protect.globs is a repo-relative glob set and can't cover
+// that path in principle. Before falling through to the repo-relative match below (which would treat
+// "outside the repo" as "pass"), block the plugin's own install path directly by absolute-path prefix
+// — code, not a glob, because this path is outside the repo. Still part of the verifier=ceiling
+// invariant.
+if (filePath === pluginPath || filePath.startsWith(`${pluginPath}/`)) {
+  deny(
+    `loop-engine plugin file blocked while the guard is armed: '${filePath}' is this project's verifier itself (loop-engine, ${pluginPath}). ` +
+      `It lives outside the repo but still decides verdicts, so it's protected for the same reason as .loop/protect.globs. ` +
+      `Make the source code pass the verifier instead. ${escapeHint()}`,
+  );
+}
+
+const rel = relative(root, filePath).split('\\').join('/');
+// Paths outside the repo (another repo, /tmp, $HOME, etc. — the plugin path is already handled above)
+// aren't protected -> allow (`../` and absolute paths are excluded from matching).
+if (rel === '..' || rel.startsWith('../') || rel.startsWith('/')) process.exit(0);
+const hit = patterns.find((p) => globToRegExp(p).test(rel));
+if (!hit) process.exit(0);
+
+deny(
+  `Protected-file write blocked while the guard is armed: '${rel}' matches .loop/protect.globs ('${hit}'). ` +
+    `Don't modify files that decide the verifier's outcome (tests, snapshots, config, migrations, the guard itself) — verifier=ceiling (reward-hacking defense). ` +
+    `Make the source code pass the verifier instead. ${escapeHint()}`,
+);

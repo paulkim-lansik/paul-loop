@@ -5,6 +5,32 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.4.0
+
+- Bundles 8 generic runtime-enforcement hooks via `hooks/hooks.json` (`plugin.json`'s new `hooks`
+  field), so a consuming repo gets them on a plugin-version bump instead of hand-maintaining a
+  local `.claude/hooks/` copy: `record-run-event` (run-ledger instrumentation across 7 events),
+  `gate-stop-verdict` (Stop-hook fresh-PASS gate), `loop-doctor-heartbeat` (SessionStart
+  self-diagnostic nudges), `protect-during-loop` (PreToolUse reward-hacking guard on
+  `.loop/protect.globs` + the plugin's own install path), `gate-risky-commands` (PreToolUse
+  merge/deploy REQUIRE mirror of `classify-risk`), `gate-before-merge` (PreToolUse direct-landing
+  guard on protected branches), `gate-worktree-create` (PreToolUse origin/*-only worktree-base
+  guard), and `warn-partial-checkout` (PostToolUseFailure partial-checkout data-loss warning).
+  Ported from a consuming repo's local copy with three genericizations: (1) hooks now resolve
+  their own sibling `lib/`/`bin/` files via `import.meta.url` instead of a cross-package plugin
+  resolver, since they ship colocated in the same plugin package; (2) `gate-before-merge`'s
+  protected-branch set now reads a consuming repo's `.claude/ship-flow.config.json`
+  (`releaseBranch`/`integrationBranch`) instead of a hardcoded pair, falling back to `{main,
+  master}` when that config is absent; (3) `loop-doctor-heartbeat`'s embedding-key/DB-URL check
+  now bridges `CLAUDE_PLUGIN_OPTION_*` (loop-memory's own `userConfig` injection convention)
+  instead of reading a hardcoded repo-local `.env` path. `ship-flow`'s `loop-engine` dependency
+  bumped to `^0.4.0` accordingly. New regression test `test/hooks-json-wiring.test.sh` covers
+  `plugin.json`/`hooks.json` structural wiring, an orphaned-file drift guard, an allow-path
+  end-to-end smoke test for all 8 hooks, and a deny-path + config-driven-branch-set behavioral
+  check for `gate-before-merge`.
+- `docs/verdict-contract.md` updated — it previously said this plugin doesn't ship a Stop hook;
+  now that it does, the doc points at `hooks/gate-stop-verdict.mjs`.
+
 ## loop-engine 0.3.0
 
 - AC-level success contract gate — `bin/ac-verify.sh` (ADR-0006, #23): per-AC `verify:`/
