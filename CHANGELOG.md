@@ -5,6 +5,15 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.4.1
+
+- Fix: `plugin.json` no longer declares `"hooks": "./hooks/hooks.json"`. `hooks/hooks.json` is
+  auto-discovered by convention — declaring it explicitly in the manifest made Claude Code load it
+  twice (once by convention, once via the manifest field) and fail with "Duplicate hooks file
+  detected", breaking every hook the plugin ships. Regression test
+  `test/hooks-json-wiring.test.sh` updated to assert the field's *absence* (it previously asserted
+  the opposite — the bug shipped in 0.4.0 with a passing test that locked it in).
+
 ## loop-engine 0.4.0
 
 - Bundles 8 generic runtime-enforcement hooks via `hooks/hooks.json` (`plugin.json`'s new `hooks`
@@ -69,6 +78,19 @@ and refer to `loop-engine` only (see the un-prefixed version numbers).
   AC contracts, step 3 runs `ac-verify.sh` against them.
 - `retrospect`/`deps-audit` SKILL.md examples now disclaim that `tools/plugin-path.mjs` is a
   consuming-repo convention, not something this plugin ships (BAC-758 B7).
+
+## loop-memory 0.2.1
+
+- Fix: same `plugin.json` "hooks" field bug as loop-engine 0.4.1 — this plugin had the identical
+  latent defect but it never surfaced because `defaultEnabled: false` means its hooks were never
+  live-loaded by anyone yet. New `test/plugin-manifest.test.ts` locks the manifest shape so it
+  can't regress once someone enables it.
+- `hooks.json` now also wires `graduate-lessons.mjs` on `SessionEnd` (previously `SessionStart`
+  only) — restores parity with a consuming-repo local fork's wiring (glucofit-partners' BAC-357):
+  graduating verified lessons at session end avoids a real one-session indexing lag versus waiting
+  for the next SessionStart. Safe to run twice per session boundary — the script is idempotent and
+  self-gating (no key/pgvector unreachable → no-op). New `test/hooks-graduate-lessons.test.ts`
+  covers the hook's own debug-logging behavior (ported from that same local fork, BAC-766).
 
 ## loop-memory 0.2.0
 
