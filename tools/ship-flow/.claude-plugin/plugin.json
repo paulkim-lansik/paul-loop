@@ -10,6 +10,6 @@
   "license": "MIT",
   "keywords": ["delivery", "git-flow", "hotfix", "ship", "release"],
   "dependencies": [
-    { "name": "loop-engine", "version": "^0.3.0" }
+    { "name": "loop-engine", "version": "^0.4.0" }
   ]
 }

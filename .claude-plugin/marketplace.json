@@ -12,7 +12,7 @@
       "name": "loop-engine",
       "source": "./tools/loop-engine",
       "description": "Core loop mechanics: verdict-run (machine-readable PASS/FAIL contract), loop-fix (closed verify->fix loop), lessons (verified-fix memory), classify-risk, require-tests. No framework opinions beyond \"the verifier is the ceiling, never the agent's self-report\".",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "keywords": ["verifier", "tdd", "loop", "verdict", "lessons"]
     },
     {
