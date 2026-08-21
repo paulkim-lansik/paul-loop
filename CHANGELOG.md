@@ -85,6 +85,12 @@ and refer to `loop-engine` only (see the un-prefixed version numbers).
   latent defect but it never surfaced because `defaultEnabled: false` means its hooks were never
   live-loaded by anyone yet. New `test/plugin-manifest.test.ts` locks the manifest shape so it
   can't regress once someone enables it.
+- `hooks.json` now also wires `graduate-lessons.mjs` on `SessionEnd` (previously `SessionStart`
+  only) — restores parity with a consuming-repo local fork's wiring (glucofit-partners' BAC-357):
+  graduating verified lessons at session end avoids a real one-session indexing lag versus waiting
+  for the next SessionStart. Safe to run twice per session boundary — the script is idempotent and
+  self-gating (no key/pgvector unreachable → no-op). New `test/hooks-graduate-lessons.test.ts`
+  covers the hook's own debug-logging behavior (ported from that same local fork, BAC-766).
 
 ## loop-memory 0.2.0
 
