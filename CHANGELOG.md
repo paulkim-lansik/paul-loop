@@ -65,6 +65,18 @@ and refer to `loop-engine` only (see the un-prefixed version numbers).
   guard against skill/doc examples pointing at consumer-repo-only paths (`tools/plugin-path.mjs`,
   `.claude/hooks/*`, `bin/loop-doctor.mjs`) as if this plugin ships them.
 
+## ship-flow 0.2.1
+
+- Fix: bump the plugin's own version so its `loop-engine` dependency bump (`^0.3.0` → `^0.4.0`,
+  landed earlier without a version bump alongside it) actually reaches installs. Claude Code's
+  plugin cache is keyed by `(name, version)` — with the version unchanged, every `claude plugin
+  update loop-engine@paul-loop` kept resolving against the *stale cached* `^0.3.0` constraint no
+  matter how new loop-engine's own marketplace version was, silently pinning consumers to
+  loop-engine 0.3.0 forever. No content change beyond the version number and this changelog entry —
+  found while reinstalling for glucofit-partners' BAC-766 verification (`claude plugin update
+  loop-engine@paul-loop` reported "already at latest satisfying ^0.3.0" even after loop-engine had
+  moved to 0.4.1).
+
 ## ship-flow 0.2.0
 
 - `publisher` subagent for ship-feature step 5 (#15): the Builder session — which has held
