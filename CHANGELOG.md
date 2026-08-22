@@ -5,6 +5,36 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.5.1
+
+- New generic test coverage for pieces of the ADR-0078 "split principle" (a consuming repo's own
+  `tools/harness-test/` should only wire-check that repo's use of the plugin; the plugin's own
+  GENERIC behavior belongs here) that were still only tested via glucofit-partners' consumer suite
+  (BAC-755):
+  - `test/check-rules-always-on.test.sh` — 8 synthetic-fixture cases for `bin/check-rules-always-on.mjs`
+    (missing-dir, scoped-vs-leaking frontmatter shapes, `--report-only`, text output, nested scan,
+    mixed accounting, byte-vs-count exit semantics). Consumer keeps only its own real-repo assertion.
+  - `test/verdict-state-producer.test.sh` — `.loop/verdict-state.json` producer correctness
+    (`bin/verdict-run.sh`'s sha/dirty/`finished_at` fields on clean/dirty trees, FAIL runs, non-git
+    dirs, control-char-injected commands, a PATH-spoofed `git status` failure — none of which were
+    covered by the existing `ac-verify.test.sh`/`verdict-mutation-guard.test.sh`, which only consume
+    this state as a side channel for their own features) and `bin/loop-fix.sh`'s `LOOP_STOP_GATE_OFF=1`
+    propagation to the fixer subprocess.
+  - `test/skill-guard-prose-wiring.test.sh` — ship-flow's `tdd`/`ship-feature` SKILL.md still name the
+    reward-hack guard's `.loop/guard-off` escape hatch and never reintroduce the BAC-583 prose-arming
+    failure mode (`touch .loop/looping`).
+  - `test/protect-globs-matcher.test.sh` — first direct unit coverage of `lib/protect-globs.mjs`'s
+    `globToRegExp`/`loadPatterns` (`*`/`**`/`**/`/`?` semantics, comment/blank-line filtering), which
+    had zero coverage anywhere before this (only indirectly exercised against one consumer's real
+    `protect.globs` file).
+  - `test/mktemp-fail-closed.test.sh` — ported the BAC-720 meta-lint (every `mktemp` call in this
+    directory's own `*.test.sh` files must be guarded with `|| fail`) to scan `test/` itself; fixed
+    the comment-line false positives the port surfaced (the sweep now skips `#`-prefixed lines) and one
+    real unguarded pair it caught in `lessons-hygiene.test.sh`.
+  - Fixed `test/eval-gate-tier0.test.sh`'s bare `mktemp -d` (missing the `${TMPDIR:-/tmp}/tmp.XXXXXXXX`
+    template — the actual BAC-718/720 root-cause pattern, present here despite already having the
+    `|| fail` guard).
+
 ## loop-memory 0.2.3
 
 - Fix: `loop-engine` dependency range was left at `^0.4.0` when loop-engine bumped to 0.5.0 in the

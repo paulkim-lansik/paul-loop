@@ -112,7 +112,7 @@ RSUP="$(id_for "$DIR" "hygiene lesson recall superseder")"
 [ -n "$RSUP" ] || fail "could not extract recall superseder id"
 L record --signature-file <(printf '%s\n' "FAIL: hygiene recall probe") --verified --title "hygiene lesson recall probe" >/dev/null || fail "record recall probe failed"
 L invalidate --id "$(id_for "$DIR" "hygiene lesson recall probe")" --reason "stale" --superseded-by "$RSUP" >/dev/null || fail "invalidate recall probe failed"
-OUT7="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")"; ERR7="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")"
+OUT7="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR7="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
 L recall --signature "FAIL: hygiene recall probe" >"$OUT7" 2>"$ERR7"
 rc=$?
 [ "$rc" = "0" ] || fail "recall of an invalidated lesson must still exit 0; got rc=$rc"
