@@ -145,7 +145,9 @@ issue (worktree isolation alone only prevents git conflicts, not duplicate start
 
 `git fetch origin && git worktree add -b <type>/<slug> <sibling-path-outside-repo> origin/<base>`. Check
 `git worktree list` first if concurrent work is common in this repo. A fresh worktree has no installed
-dependencies — install them. Every following step happens inside this worktree.
+dependencies — install them. Every following step happens inside this worktree. (macOS: if a later
+`git worktree remove` fails with a permission-denied ACL error, `chmod -R -N <path>` first — see
+hotfix's cleanup step for the full note.)
 
 ### 1. Implementation plan — `Plan` agent / `grill-with-docs` if there's a design decision
 Plan what to build and how to slice it. **If there's a new design decision involved**, use
@@ -203,6 +205,14 @@ ledger event), an exit code alone skips both.
 → **Gate:** `VERDICT: PASS` + whatever `DEEP_GATES:` step 1 identified (re-checked against the actual
 diff with `--from-git`). `VERDICT: FAIL` loops back autonomously.
 
+> If any `DEEP_GATES:` run against a shared local resource (e.g. a per-worktree docker database), don't
+> run more than one deep gate in this worktree at the same time — a second one recreating the same
+> container mid-run causes an unrelated-looking failure, not a clear error. After a rebase changes the
+> migration set, clean that resource before re-verifying rather than reusing stale state. If a helper
+> script that normally isolates this resource fails and has to be bypassed manually, preserve whatever
+> isolation identifiers it would have set (container name/port/project name) — dropping them risks
+> clobbering a resource another session is using.
+
 ### 3. Runtime verify
 Build and run the app, drive the changed surface (CLI/API/GUI — whatever applies) through it, and
 confirm **what was intended actually works**. This produces runtime evidence, not a re-run of the test
@@ -212,6 +222,12 @@ subprocess judgment (verify exit code, artifact existence, output substring) per
 composing with — not replacing — the observe-the-running-app check above.
 → **Gate:** PASS. FAIL → **loop back to step 2**. SKIP (no runtime surface exists) passes with a
 one-line reason.
+
+> If a GUI surface needs driving and a browser-automation MCP is unavailable or its profile is
+> contended by another concurrent session, fall back to a standalone script that imports this repo's
+> own test framework's browser driver directly (e.g. Playwright) and launches a fresh headless browser
+> — independent of any shared MCP browser profile. Run it from inside the package that has that
+> dependency installed (a script outside it won't resolve the same `node_modules`).
 
 ### 4. Review and fix
 Run this plugin's review agents (`code-reviewer`, `test-hunter`, `verifier-integrity-hunter`) against
@@ -299,3 +315,9 @@ CLAUDE.md/`.claude/**` from this session.
   (the integration branch, or the release branch for a release PR). **Run each command as its own
   independent call** — chaining `git merge`/`git pull` with anything else is liable to trip a merge
   guardrail hook regardless of direction, if this repo has one.
+- **Stacked PR (this branch is itself another open PR's base) + squash-merge**: once this PR merges,
+  the branch it was on is gone as a target — the stacked PR's base doesn't auto-retarget, so its commits
+  can land in a dead branch instead of the integration branch even though GitHub shows it as merged. If
+  a stacked PR exists, retarget (or rebase) it onto the integration branch **before** it merges, not
+  after. Don't trust a `MERGED` badge alone — confirm with `git show origin/<base>:<file> | grep
+  <symbol>` that the actual content landed.

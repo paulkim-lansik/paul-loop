@@ -5,6 +5,37 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.6.1
+
+- New `test/lesson-codification-bac756.test.sh` (BAC-756) — locks the skill/agent-prose codifications
+  below in place. No bin/lib change (patch).
+
+## ship-flow 0.2.5
+
+- Codifies 7 of the 9 verified lessons a reverse-backport audit found in glucofit-partners'
+  `.loop/lessons/` with no matching guidance anywhere upstream (BAC-756). The other 2
+  (`8932917806328c0b` "workflow tier merge step must assert `merged===true`", `f3f65538bf7d33b6`
+  "`gh pr merge --admin` needs `enforce_admins` disabled first") already carry
+  `challenge.verdict: "reject"` in that repo's lesson store — CLAUDE.md's own rule is that only an
+  accept-passed lesson gets codified, so those two are deliberately left out here despite being listed
+  in the source issue's table.
+  - `skills/ship-feature/SKILL.md`: a stacked-PR + squash-merge base-retarget warning (failures
+    section) with a "verify beyond the MERGED badge" pointer; a deep-gate docker-isolation advisory in
+    step 2 (don't run more than one in a worktree at once, clean stale state after a rebase, preserve a
+    bypassed helper's isolation identifiers); an MCP-unavailable browser-automation fallback note in
+    step 3; a one-line macOS ACL cross-reference in step 0.
+  - `skills/hotfix/SKILL.md`: the same stacked-PR retarget warning and the full macOS ACL
+    `git worktree remove` fix in the cleanup step.
+  - `agents/code-reviewer.md`: a new operating rule — this reviewer has no web access, so a BLOCK on a
+    platform-spec question from a local reference doc alone should be flagged as unverified, not
+    treated as settled fact.
+  - `skills/grill-with-docs/ADR-FORMAT.md`: the Numbering section now says to check open PRs for
+    `docs/adr/` additions before finalizing a number, not just the local filesystem.
+  - `skills/setup/SKILL.md`: a new "If this repo already had local skills with the same names" section
+    on namespace-migration sweep discipline (grep the whole repo from the first pass; re-grep the raw
+    renamed substring, not just the escaping form your edit targeted, to catch differently-escaped
+    sibling occurrences).
+
 ## loop-memory 0.2.4
 
 - `loop-engine` dependency range bumped `^0.5.0` → `^0.6.0` to match loop-engine's minor bump below

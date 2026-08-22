@@ -106,7 +106,9 @@ Once confirmed:
 If the deploy hook produced a way to confirm liveness (e.g. a health endpoint), check it. Clean up:
 remove the deploy worktree if one was created, delete temp logs, sync the main worktree's local
 branch with `origin/<integrationBranch-or-releaseBranch>` (a remote PR merge may have left it
-behind).
+behind). On macOS, `git worktree remove` (or a plain `rm -rf`) can fail with a permission-denied ACL
+error if something under the worktree (often `node_modules`) picked up a `deny delete` ACE — run
+`chmod -R -N <worktree-path>` to strip it, then retry.
 
 ## On failure
 - Any RED gate: report to the user and investigate the root cause — don't force the next step (the
@@ -115,4 +117,6 @@ behind).
 - `gh pr merge` reporting out-of-date/CONFLICTING: in the worktree, `git fetch origin <base>` alone
   → `git rebase origin/<base>` alone → re-verify → `git push --force-with-lease` (don't chain these —
   run each as its own independent call; a chained merge/pull-adjacent command sequence is easy to
-  mis-detect as something else).
+  mis-detect as something else). If this branch was itself the base of another still-open PR (stacked),
+  retarget or rebase that PR onto the release branch before it merges too — squash-merging this one
+  doesn't auto-retarget it, and its commits can land in a dead branch instead.
