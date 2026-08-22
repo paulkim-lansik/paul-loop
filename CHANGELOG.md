@@ -5,6 +5,24 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.2.2
+
+- Fix: `ship-feature` step 2 and `hotfix` step 1 ran a consuming repo's raw `verifyCommand` directly
+  — `SKILL.md` never called `loop-engine`'s `verdict-run.sh`, so the `=== VERDICT ===` block,
+  `.loop/verdict-state.json`, and the `verdict.passed`/`verdict.failed` ledger events (loop-engine's
+  core contract, everything downstream — the Stop-hook fresh-PASS gate, `run-metrics`, lessons'
+  `gate_history` — depends on) never fired from the canonical entry points. Confirmed via a real
+  consuming repo's `run-metrics`: 92 runs, `with-verdict=0`. Both skills now wrap unconditionally:
+  `<however this repo invokes its installed loop-engine plugin's bin scripts> verdict-run.sh --
+  <verifyCommand>`, reading the gate off the printed `VERDICT:`/`EXIT:` lines instead of a bare shell
+  exit code. Safe even when `verifyCommand` is already a repo's own verdict-contract wrapper (e.g.
+  `pnpm verdict`) — `verdict-run.sh` detects an already-emitted `=== VERDICT ===` block and passes it
+  through unchanged rather than double-wrapping it, which is also why `setup`'s interview keeps
+  recording `verifyCommand` as the raw command rather than pointing it at `verdict-run.sh` itself.
+  New regression test `test/verdict-wrap-required.test.sh` (loop-engine test suite, since ship-flow
+  has no test harness of its own) fails if either skill's prose reverts to a raw verify-command
+  instruction.
+
 ## loop-engine 0.4.1
 
 - Fix: `plugin.json` no longer declares `"hooks": "./hooks/hooks.json"`. `hooks/hooks.json` is
