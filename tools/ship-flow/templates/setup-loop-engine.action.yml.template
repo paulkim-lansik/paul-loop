@@ -1,0 +1,24 @@
+name: Setup loop-engine
+description: >
+  GitHub Actions is a plain shell process, outside the Claude Code plugin-cache mechanism entirely
+  (plugin bin/ PATH registration and installed-path lookup assume a live Claude Code session). This
+  action fills loop-engine@paul-loop and ship-flow@paul-loop in via a pinned-tag `git clone` and
+  exports LOOP_ENGINE_PATH/SHIP_FLOW_PATH, so `plugin-path.mjs` (loop-engine's own bundled resolver,
+  BAC-753) resolves them the same way it would a local env-var override. Any job that runs a verify
+  command, a loop-engine bin script, or this repo's own selftest should call this action first.
+
+  The two plugins can be pinned to different tags (they version independently) — a shared clone
+  would make one implicitly depend on the other's version, so they're cloned separately. Bump the
+  tags below deliberately when you want a newer plugin version — this is an explicit semver pin, not
+  a SHA channel that auto-follows (see paul-loop's ADR-0078 addendum for why).
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        git clone --depth 1 --branch loop-engine--{{LOOP_ENGINE_TAG}} \
+          https://github.com/paulkim-lansik/paul-loop.git /tmp/paul-loop-loop-engine
+        echo "LOOP_ENGINE_PATH=/tmp/paul-loop-loop-engine/tools/loop-engine" >> "$GITHUB_ENV"
+        git clone --depth 1 --branch ship-flow--{{SHIP_FLOW_TAG}} \
+          https://github.com/paulkim-lansik/paul-loop.git /tmp/paul-loop-ship-flow
+        echo "SHIP_FLOW_PATH=/tmp/paul-loop-ship-flow/tools/ship-flow" >> "$GITHUB_ENV"

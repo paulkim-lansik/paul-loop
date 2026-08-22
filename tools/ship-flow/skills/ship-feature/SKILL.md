@@ -108,10 +108,12 @@ never lower it:
 #                          the command instead — the two channels intentionally mean different things
 ```
 
-(`<however this repo invokes its installed loop-engine plugin's bin scripts>` — a repo-local
-resolver/wrapper if this repo has one, e.g. `node tools/plugin-path.mjs exec bin/<name>`; otherwise
-invoke the plugin's installed bin path directly. If this repo layers its own `risk-rules.json` on top of
-loop-engine's defaults, `classify-risk.sh` picks it up automatically.)
+(`<however this repo invokes its installed loop-engine plugin's bin scripts>` — usually just the bare
+script name in a live session, since a plugin's `bin/` is already on PATH once it's loaded; for CI or
+resolving a *different* installed plugin's path, loop-engine bundles its own resolver at
+`bin/plugin-path.mjs` (`exec <relative-bin> [args...]`, BAC-753), or this repo may provide its own
+equivalent wrapper. If this repo layers its own `risk-rules.json` on top of loop-engine's defaults,
+`classify-risk.sh` picks it up automatically.)
 
 - **Surface the rules typically cover**: schema migrations (`reversibility=none`) · row-level-security or
   equivalent tenant-isolation schema · auth/guards · outbound send/call · the harness/constitution layer

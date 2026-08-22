@@ -5,6 +5,34 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.5.0
+
+- New `bin/plugin-path.mjs` (BAC-753) — resolves the on-disk root of loop-engine/ship-flow/loop-memory
+  for a consuming repo, ported from glucofit-partners' repo-local `tools/plugin-path.mjs`
+  (BAC-699/706/766). A repo with ONLY these plugins installed (no local copy of its own) now has a
+  working resolver, closing the dangling reference that upstream `ship-feature`/`retrospect`/
+  `deps-audit` skills used to have when they hardcoded a consuming repo's own `tools/plugin-path.mjs`
+  path. Env-var overrides (`LOOP_ENGINE_PATH`/`SHIP_FLOW_PATH`/`LOOP_MEMORY_PATH`) let CI (a plain
+  shell process outside the live plugin cache) point at a pinned `git clone`. New
+  `test/plugin-path.test.sh`, including the hermetic plugin-unresolved idiom (`LOOP_ENGINE_PATH=`
+  empty + `HOME=$WORK/no-home`).
+
+## ship-flow 0.2.3
+
+- Fix (BAC-753): `retrospect`, `deps-audit`, and `ship-feature`'s `classify-risk` step hardcoded a
+  consuming repo's own `tools/plugin-path.mjs` as the way to invoke loop-engine bin scripts — a
+  dangling reference for any repo with only the plugins installed and no such file of its own. Now
+  point at loop-engine's bundled `bin/plugin-path.mjs` (0.5.0+) instead, and note that in a live
+  session this is usually just the bare script name (a plugin's `bin/` is already on PATH once
+  loaded) — the resolver only matters for CI or resolving a *different* plugin's path.
+- New CI templates (BAC-753): `templates/setup-loop-engine.action.yml.template` (a composite action
+  that pins loop-engine/ship-flow via tagged `git clone` and exports `LOOP_ENGINE_PATH`/
+  `SHIP_FLOW_PATH`, ported from glucofit-partners' `.github/actions/setup-loop-engine`) and
+  `templates/loop-selftest.yml.template` (a git-flow integration-branch-PR backstop for
+  harness/policy changes `ci.yml` never sees, adapt-by-hand like `turbo-verify-wiring.example.md`).
+  `setup` skill's step 4 now offers wiring both.
+- `loop-engine` dependency bumped to `^0.5.0` (0.5.0 is the first version with `bin/plugin-path.mjs`).
+
 ## ship-flow 0.2.2
 
 - Fix: `ship-feature` step 2 and `hotfix` step 1 ran a consuming repo's raw `verifyCommand` directly
