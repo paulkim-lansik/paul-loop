@@ -91,6 +91,17 @@ and refer to `loop-engine` only (see the un-prefixed version numbers).
 - `retrospect`/`deps-audit` SKILL.md examples now disclaim that `tools/plugin-path.mjs` is a
   consuming-repo convention, not something this plugin ships (BAC-758 B7).
 
+## loop-memory 0.2.2
+
+- Fix: bump the `loop-engine` dependency range `^0.3.0` → `^0.4.0` — it had gone stale (last
+  touched when loop-engine was 0.2.x) and, being a caret range, silently *excluded* loop-engine
+  0.4.x entirely. Combined with ship-flow's now-fixed `^0.4.0` requirement (0.2.1), this produced
+  an unsatisfiable joint constraint (no version satisfies both `^0.3.0` and `^0.4.0`) the moment
+  both plugins were installed together, blocking `loop-engine` from ever updating past 0.3.0.
+  loop-engine 0.4.x is purely additive relative to what loop-memory actually uses (hooks bundling
+  + a manifest bugfix) — no compatibility reason to stay below it. Found immediately after 0.2.1,
+  while completing glucofit-partners' BAC-766 plugin reinstall.
+
 ## loop-memory 0.2.1
 
 - Fix: same `plugin.json` "hooks" field bug as loop-engine 0.4.1 — this plugin had the identical
