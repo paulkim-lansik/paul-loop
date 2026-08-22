@@ -5,6 +5,49 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-memory 0.2.4
+
+- `loop-engine` dependency range bumped `^0.5.0` → `^0.6.0` to match loop-engine's minor bump below
+  (same-PR joint-constraint bump — the exact bug class fixed three times before, this time caught
+  proactively via `grep -rn '"loop-engine"' --include=plugin.json` before publishing). No other
+  content change.
+
+## ship-flow 0.2.4
+
+- `templates/ci.yml.template`: new commented-out `hygiene` job showing how to wire loop-engine's three
+  new repo-hygiene gates (below) via the existing `setup-loop-engine` action.
+- `skills/setup/SKILL.md` step 4: proposes the `hygiene` job when offering CI wiring, and notes that a
+  consuming repo whose tracker id format isn't caught by `check-pr-hygiene.mjs`'s default pattern
+  should record a `--pattern` override (e.g. via a `trackerIdPattern` field in
+  `.claude/ship-flow.config.json`) rather than editing the plugin.
+- `loop-engine` dependency range bumped `^0.5.0` → `^0.6.0` (same-PR joint-constraint bump, see above).
+
+## loop-engine 0.6.0
+
+- New `bin/check-docs-hygiene.mjs`, `bin/check-pr-hygiene.mjs`, `bin/check-module-size.mjs` (BAC-754,
+  ported from glucofit-partners' `tools/check-*.mjs` — upstream harness-maturity audit finding #15:
+  "no machine docs-hygiene gate; the original monorepo built exactly this"). All three were already
+  fully generic (root/baseline/base-ref/json flags, no repo-specific hardcoding) except
+  `check-pr-hygiene.mjs`'s tracker-id regex, which was hardcoded to `BAC-*`/`PRO-*` — replaced with a
+  `--pattern` CLI override, defaulting to a generic "LETTERS-digits" shape that still matches both of
+  those plus common conventions like JIRA-style `PROJ-123`.
+  - `check-docs-hygiene.mjs`: ADR number uniqueness/gaps, bidirectional README index completeness,
+    dangling markdown-link/backtick-path references (CLAUDE.md + docs/adr/**), SKILL.md word-count
+    WARN tiers (2,000 target / 5,000 max). Also fixes a malformed cross-repo markdown link in this
+    repo's own `docs/adr/0006-ac-level-success-contract.md` that the new gate caught immediately when
+    run against this repo's own docs.
+  - `check-pr-hygiene.mjs`: PR body must reference at least one tracker id (no closing-keyword
+    requirement — see the bin's own header for why).
+  - `check-module-size.mjs`: module-size ratchet with a self-modification guard (a PR can't relax its
+    own baseline/threshold vs. base-ref in the same commit).
+  - New `test/check-docs-hygiene.test.sh` (24 cases, ported from glucofit-partners' 23 synthetic-fixture
+    cases + a new case 14 asserting paul-loop's own `docs/adr/` stays clean — the plugin repo is now
+    also a real user of its own gate), `test/check-pr-hygiene.test.sh` (9 cases: the 7 ported +
+    2 new covering `--pattern`), `test/check-module-size.test.sh` (12 cases, ported verbatim — already
+    entirely synthetic-fixture).
+- `ship-flow/templates/ci.yml.template` and `skills/setup/SKILL.md` updated to offer wiring these three
+  gates (see ship-flow's own changelog entry below).
+
 ## loop-engine 0.5.1
 
 - New generic test coverage for pieces of the ADR-0078 "split principle" (a consuming repo's own

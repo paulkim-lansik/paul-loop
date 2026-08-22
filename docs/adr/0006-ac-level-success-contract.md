@@ -61,4 +61,4 @@ ouroboros가 실물로 증명한 함정("선택적 계약 필드는 아무도 �
 
 - 원본: glucofit-partners `docs/adr/0104-ac-level-success-contract-plan-file-is-source-paul-loop-owns-implementation.md`
 - 구현: `bin/ac-verify.sh`, `test/ac-verify.test.sh`
-- BAC-625(원 이슈), [2026-08-04 ouroboros benchmarking §4.1](glucofit-partners docs/research/2026-08-04-ouroboros-benchmarking.md)(채택 O2)
+- BAC-625(원 이슈), glucofit-partners `docs/research/2026-08-04-ouroboros-benchmarking.md` §4.1(채택 O2)
