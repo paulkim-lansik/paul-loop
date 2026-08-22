@@ -139,11 +139,8 @@ so explicitly rather than letting the user assume everything happened.
 Plugin skills are namespaced by the platform (`plugin:skill`, not a bare name); if this repo used to
 invoke a same-named local skill directly (e.g. `/ship-feature`), there's no compat shim to fall back
 on — every live reference has to be updated in the same pass (CLAUDE.md, `docs/agents/*`, other skill
-bodies; leave `.loop/lessons/*.json` and other historical records alone). Two sweep habits catch what a
+bodies; leave `.loop/lessons/*.json` and other historical records alone). One sweep habit catches what a
 narrower one misses:
-- Grep the **whole repo** from the first pass, not directory-by-directory as you discover more affected
-  areas — a scope that only widens after each sweep costs a re-discovery round per widening, where a
-  repo-wide-from-the-start pass costs one.
 - After a bulk find-and-replace, grep the **raw renamed substring** across each touched file, not just
   the specific quoting/escaping form your edit targeted — the same string can appear a second time in a
   different escaping (e.g. a plain backtick in a single-quoted string vs. an escaped backtick inside a

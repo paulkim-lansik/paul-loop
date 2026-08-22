@@ -5,12 +5,42 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
-## loop-engine 0.6.1
+## loop-engine 0.6.2
 
-- New `test/lesson-codification-bac756.test.sh` (BAC-756) — locks the skill/agent-prose codifications
-  below in place. No bin/lib change (patch).
+- `test/lesson-codification-bac756.test.sh` updated for the ship-flow 0.2.6 correction below — its
+  PASS blocks now match what's actually codified, plus regression guards against re-adding the 5
+  reverted lessons. No bin/lib change (patch).
 
-## ship-flow 0.2.5
+## ship-flow 0.2.6
+
+- **Self-correction of 0.2.5**: PR#50 (BAC-756) codified 9 lessons before running an independent
+  challenge pass instead of after — backwards from this repo's own rule (CLAUDE.md's "회의적 평가(accept)를
+  통과한 것만 코디파이", mirrored here in `docs/adr/README.md`'s lessons-lifecycle notes). Running that
+  challenge pass afterward rejected 5 of the 9:
+  - `3602ba166619af93` (ADR-number collision across concurrent PRs) — already covered, more strictly,
+    by the consuming repo's own worktree-scan policy; not new or surprising enough on its own.
+  - `630796f2f488f993` (deep-gate container race) — a near-duplicate of the already-accepted
+    `0e5154a1`, tied to one repo's non-portable container-naming script rather than a portable fact.
+  - `92d95548aad4ebf4` (stale docker volume after a migration-set change) — restates Postgres's own
+    documented init-script behavior (init scripts only run against an empty `$PGDATA`), not a non-obvious
+    finding worth a permanent doc entry.
+  - `5b4f4c8ba005695f` (preserve isolation env vars when bypassing a helper script) — a single (count=1)
+    incident whose generalized lesson is close to generic engineering discipline.
+  - `38e9a48c3659de1d` (grep the whole repo before narrowing scope) — standard diligence most engineers
+    already default to; too obvious for a permanent doc entry.
+
+  Their prose is reverted here: `skills/ship-feature/SKILL.md` step 2's blockquote drops the
+  stale-volume and isolation-identifier sentences (keeps the still-accepted "don't run more than one
+  deep gate at once" sentence, which covers `0e5154a1`); `skills/setup/SKILL.md`'s namespace-migration
+  section drops the "grep whole repo from the first pass" bullet (keeps the still-accepted raw-substring
+  re-grep bullet, `53da49e1`); `skills/grill-with-docs/ADR-FORMAT.md`'s Numbering section drops the
+  concurrent-open-PR check entirely. The other 4 codifications from 0.2.5 stand as accepted:
+  `07bc4859` (stacked PR + squash-merge retarget), `15c8b2ca` (MCP browser fallback), `1a5200e3`
+  (macOS ACL blocking `git worktree remove`), `fb72c699` (reviewer has no web access). The 2 lessons
+  that already carried `challenge.verdict: "reject"` before this issue started
+  (`8932917806328c0b`, `f3f65538bf7d33b6`) were never codified and are unaffected.
+
+## ship-flow 0.2.5 (superseded by 0.2.6 above — see correction)
 
 - Codifies 7 of the 9 verified lessons a reverse-backport audit found in glucofit-partners'
   `.loop/lessons/` with no matching guidance anywhere upstream (BAC-756). The other 2

@@ -207,11 +207,7 @@ diff with `--from-git`). `VERDICT: FAIL` loops back autonomously.
 
 > If any `DEEP_GATES:` run against a shared local resource (e.g. a per-worktree docker database), don't
 > run more than one deep gate in this worktree at the same time — a second one recreating the same
-> container mid-run causes an unrelated-looking failure, not a clear error. After a rebase changes the
-> migration set, clean that resource before re-verifying rather than reusing stale state. If a helper
-> script that normally isolates this resource fails and has to be bypassed manually, preserve whatever
-> isolation identifiers it would have set (container name/port/project name) — dropping them risks
-> clobbering a resource another session is using.
+> container mid-run causes an unrelated-looking failure, not a clear error.
 
 ### 3. Runtime verify
 Build and run the app, drive the changed surface (CLI/API/GUI — whatever applies) through it, and

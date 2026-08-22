@@ -26,11 +26,6 @@ Only include these when they add genuine value. Most ADRs won't need them.
 
 Scan `docs/adr/` for the highest existing number and increment by one.
 
-If concurrent work on other worktrees/branches is common in this repo, that scan alone isn't enough —
-a number can be claimed by another open, unmerged PR that your local worktree can't see on disk. Before
-finalizing the number and citing it elsewhere (a glossary, other issues), check open PRs for `docs/adr/`
-additions too, not just the local filesystem. If you find a collision, renumber and fix all citations.
-
 ## When to offer an ADR
 
 All three of these must be true:
