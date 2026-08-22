@@ -5,6 +5,15 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-memory 0.2.3
+
+- Fix: `loop-engine` dependency range was left at `^0.4.0` when loop-engine bumped to 0.5.0 in the
+  same train (PR #46, BAC-753) — the exact joint-constraint bug class fixed twice before (PR #43/#44):
+  with ship-flow now requiring `^0.5.0` and loop-memory still at `^0.4.0`, no version satisfied both,
+  and `claude plugin update loop-engine@paul-loop` reported "conflicting version requirements" instead
+  of updating. Bumped to `^0.5.0` to match. No other content change beyond the version number and this
+  changelog entry — caught immediately while reinstalling for glucofit-partners' BAC-753 follow-up.
+
 ## loop-engine 0.5.0
 
 - New `bin/plugin-path.mjs` (BAC-753) — resolves the on-disk root of loop-engine/ship-flow/loop-memory
