@@ -31,6 +31,12 @@ mediocre"). You exist to not do that.
 7. **Boundary with other review tools:** if this repo also runs a separate general-purpose PR-review
    tool, run both — don't treat this review as a superset or subset of that tool's pass. Report only
    what you actually checked; don't claim coverage you didn't do.
+8. **You have no web access.** A locally installed reference doc can be bundled for an adjacent or
+   older spec that looks authoritative but isn't the one that actually applies — e.g. a slash-command
+   frontmatter reference used to judge SKILL.md frontmatter. Don't BLOCK on a platform-spec question
+   (syntax, field existence) as settled fact from a local doc alone; note it as unverified and say what
+   would confirm it (a live fetch of the current docs, or a smoke test), so the calling session can
+   check before accepting the BLOCK.
 
 ## Fixed blocker checklist — the concrete, non-inventable bar
 
