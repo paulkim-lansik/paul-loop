@@ -22,6 +22,31 @@ jobs:
       # manager's cache).
       - run: {{VERIFY_COMMAND}}
 
+  # ── optional: repo hygiene gates (loop-engine bin scripts, BAC-754) ────────────────────────────
+  # Cheap, dependency-free static checks — no package-manager install needed, just node + git +
+  # loop-engine's bundled bin/ scripts (via the setup-loop-engine action, since GHA is a plain shell
+  # process outside the live plugin cache — see templates/setup-loop-engine.action.yml.template).
+  # Uncomment to adopt, then add `hygiene` to `ci-gate`'s `needs:` and to the aggregation loop below.
+  # hygiene:
+  #   name: hygiene
+  #   if: ${{ github.event_name == 'pull_request' }}
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v7
+  #       with:
+  #         fetch-depth: 0  # check-module-size --base-ref needs history beyond the merge commit
+  #     - uses: ./.github/actions/setup-loop-engine
+  #     - run: node "$LOOP_ENGINE_PATH/bin/check-docs-hygiene.mjs"
+  #     - env:
+  #         PR_BODY: ${{ github.event.pull_request.body }}
+  #       run: node "$LOOP_ENGINE_PATH/bin/check-pr-hygiene.mjs" --body "$PR_BODY"
+  #       # If this repo's tracker id format isn't caught by the default pattern (a generic
+  #       # "LETTERS-digits" shape — matches BAC-123, PROJ-123, etc.), add `--pattern '<regex>'`.
+  #     - run: node "$LOOP_ENGINE_PATH/bin/check-module-size.mjs" --base-ref ${{ github.event.pull_request.base.sha }}
+  #       # First adoption needs a tools/module-size-baseline.json committed — see check-module-size.mjs's
+  #       # own header for the {threshold, modules} shape. Omitting it entirely defaults threshold=2000
+  #       # with no per-module overrides.
+
   # ── Add more jobs here as this repo grows ──────────────────────────────────────
   # A common next step: path-filtered jobs that only run when a specific area changed (e.g. a docker
   # integration test that only needs to re-run when the DB schema or the API changed). If you add one,

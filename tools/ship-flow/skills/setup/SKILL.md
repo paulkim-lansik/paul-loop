@@ -106,6 +106,20 @@ feature→integration PRs skip `ci.yml`'s trigger entirely — see `ci.yml.templ
 Like `turbo-verify-wiring.example.md`, this one is reference material to adapt by hand — the actual
 policy paths and selftest command are this repo's own, not something to copy verbatim.
 
+Also offer the commented-out `hygiene` job in `ci.yml.template` (BAC-754) — three cheap, dependency-free
+static gates from loop-engine's own `bin/`: `check-docs-hygiene.mjs` (ADR numbering/README index/
+dangling-reference/SKILL.md word cap), `check-pr-hygiene.mjs` (PR body must reference a tracker id —
+ask whether this repo's id format needs `--pattern` beyond the generic "LETTERS-digits" default), and
+`check-module-size.mjs` (module-size ratchet — needs `tools/module-size-baseline.json` committed for
+first adoption, or defaults to a bare threshold with no per-module entries). All three need the
+`setup-loop-engine` action from step 4 above; skip offering this job if that action wasn't installed.
+
+If this repo's tracker id format needs a non-default `check-pr-hygiene.mjs` pattern, note it in
+`.claude/ship-flow.config.json` (e.g. a `trackerIdPattern` field) so it stays discoverable alongside
+the rest of this repo's ship-flow config, and pass it through wherever `check-pr-hygiene.mjs` is
+invoked (the `ci.yml` job above, and `ship-feature`/`publisher`'s own PR-body composition step, if this
+repo wants the same check enforced before a PR is even opened).
+
 ### 5. Offer branch protection — human stop point, always
 **Never run `templates/branch-protect.sh` without an explicit `AskUserQuestion` confirmation first,
 every time** — this changes a real GitHub repo setting, and a past "yes" to a different question isn't
