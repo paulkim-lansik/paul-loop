@@ -9,10 +9,14 @@ Make runs get smarter over time. A failure becomes a lesson (Reflexion); a *recu
 lesson becomes a skill/guideline candidate (Voyager). Full reference: loop-engine@paul-loop's
 docs/lessons.md (in the plugin, not this repo).
 
-> Commands below invoke `bin/<name>.sh` via `node tools/plugin-path.mjs exec bin/<name>.sh` — a
-> resolver/wrapper convention some consuming repos provide (this plugin does not ship
-> `plugin-path.mjs` itself). If this repo doesn't have one, invoke the plugin's installed bin path
-> directly instead.
+> Commands below invoke `bin/<name>.sh` as `<however this repo invokes its installed loop-engine
+> plugin's bin scripts> <name>.sh` (BAC-753). In a live session this is usually just the bare script
+> name — a plugin's `bin/` is already on PATH once it's loaded. loop-engine also bundles its own
+> resolver at `bin/plugin-path.mjs` (`resolve [plugin]` / `exec <relative-bin> [args...]`, env-var
+> overrides `LOOP_ENGINE_PATH`/`SHIP_FLOW_PATH`/`LOOP_MEMORY_PATH`) for the cases bare-PATH doesn't
+> cover — CI (no live plugin load, nothing on PATH) or resolving a *different* installed plugin's
+> path. A consuming repo may still provide its own equivalent wrapper instead; either way, invoke it
+> however this repo actually resolves plugin bin scripts.
 
 ## The one rule
 
@@ -24,17 +28,17 @@ lessons are recalled as authoritative; only recurring ones get promoted. This ke
 ## In a fix loop (automatic)
 
 ```bash
-node tools/plugin-path.mjs exec bin/loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --guard-mutation --lessons .loop/lessons
+<however this repo invokes its installed loop-engine plugin's bin scripts> loop-fix.sh --verify "npm test" --fix '<agent>' --protect "**/*.test.*" --guard-mutation --lessons .loop/lessons
 ```
 `loop-fix` recalls past verified fixes for the current failure into your prompt, and records a
 verified lesson when it converges. Nothing else to do — just point `--lessons` at a (committed) dir.
 
 ## By hand (in-session)
 
-- **Recall before you fix:** `node tools/plugin-path.mjs exec bin/lessons.sh recall --signature-file .loop/last-verdict.txt --lessons <dir>`.
+- **Recall before you fix:** `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh recall --signature-file .loop/last-verdict.txt --lessons <dir>`.
   If a past run solved this exact failure, start from that, then re-verify (don't trust the memory —
   the verifier still decides).
-- **Record after green:** once the verifier passes, `node tools/plugin-path.mjs exec bin/lessons.sh record --signature-file <first-failure>
+- **Record after green:** once the verifier passes, `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh record --signature-file <first-failure>
   --fix "<what worked>" --source <loop-fix|diagnose|review> --iterations <N> --verified --gate "<verify cmd>" --lessons <dir>`.
   `--gate` (e.g. this repo's verify command) attributes the recurrence to that verify gate so
   `promote --runs` can annotate the candidate when the gate regresses — without it, regressions only
@@ -80,7 +84,7 @@ example) where product/domain insights surface during other work. A durable one 
 into `.loop/lessons` by hand, using the same recording flow as any other domain lesson:
 
 ```bash
-node tools/plugin-path.mjs exec bin/lessons.sh record --signature-file <...> --fix "<what worked>" \
+<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh record --signature-file <...> --fix "<what worked>" \
   --source <tool-name> --category domain --lessons <dir>
 ```
 
@@ -91,25 +95,25 @@ plugin-standard tooling for it, and a repo without such a tool can skip this sec
 
 ## Retro & promotion (where self-improvement compounds)
 
-- `node tools/plugin-path.mjs exec bin/lessons.sh stats --lessons <dir>` — avg iterations-to-green, recurrence counts, top recurring blockers.
+- `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh stats --lessons <dir>` — avg iterations-to-green, recurrence counts, top recurring blockers.
   Use it to see whether the loop is actually getting faster.
-- `node tools/plugin-path.mjs exec bin/lessons.sh promote --min-count 3 --lessons <dir>` — recurring verified lessons worth codifying. For
+- `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh promote --min-count 3 --lessons <dir>` — recurring verified lessons worth codifying. For
   each candidate, pick its destination with the checklist below, then hand it to `write-a-skill` (make
   the fix a reusable skill) or fold it into `CLAUDE.md` (a guideline) accordingly — then the loop stops
   re-solving it from scratch. Add `--runs .loop/runs` to fold in deterministic gate-regression
   signals: a `[REGRESSION: <gate> PASS→FAIL]` line — distinct from the `[N×]` recurrence count — marks
   candidates whose gate regressed in the runs ledger, and unattributed regressions list in their own section. The
   ledger is forgeable (trust boundary), so a regression is candidate INPUT only — the skeptical challenge gate stands.
-- `node tools/plugin-path.mjs exec bin/lessons.sh retire --id <id> --ref "<where>" --lessons <dir>` — **after** you've codified an accepted
+- `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh retire --id <id> --ref "<where>" --lessons <dir>` — **after** you've codified an accepted
   candidate into a skill/`CLAUDE.md`, retire it so it stops re-surfacing (the promote listing, `--codify`,
   or a heartbeat-style "promotion candidate" nudge if this repo has one). This is the terminal gate that
   keeps the candidate pool from growing monotonically. Fail closed: only a verified + `challenge
   --verdict accept`ed lesson can retire; a content change later re-opens it for fresh review.
-- `node tools/plugin-path.mjs exec bin/lessons.sh invalidate --id <id> --reason "<why>" [--superseded-by <id2>] --lessons <dir>`
+- `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh invalidate --id <id> --reason "<why>" [--superseded-by <id2>] --lessons <dir>`
   (if this repo's lessons tooling has it) — mark a lesson WRONG (the lesson itself was mistaken), distinct
   from `retire` (the lesson was right but is now codified). An invalidated lesson is excluded, fail
   closed, from recall and from the promote listing/`--codify` going forward.
-- `node tools/plugin-path.mjs exec bin/lessons.sh mark-clean --gate "<verify cmd>" --lessons <dir>` (if
+- `<however this repo invokes its installed loop-engine plugin's bin scripts> lessons.sh mark-clean --gate "<verify cmd>" --lessons <dir>` (if
   available) — bump a clean-pass counter on lessons attributed to that gate; a fresh recurrence resets it
   to 0. `promote`'s listing flags a lesson crossing the clean-pass threshold as a `RETIREMENT CANDIDATE`
   comment — informational only, never an auto-retire/invalidate.

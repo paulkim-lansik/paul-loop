@@ -90,6 +90,22 @@ If the repo is (or will be) a turbo monorepo with no verify wiring yet, point at
 reference material to adapt by hand, not something this skill copies verbatim (task names vary too
 much repo to repo to template safely).
 
+If any CI job in this repo needs to invoke a loop-engine or ship-flow bin script directly (a PR gate
+running `classify-risk.sh`/`ac-verify.sh`, or a repo-local harness self-test) — ask whether to
+install `${CLAUDE_PLUGIN_ROOT}/templates/setup-loop-engine.action.yml.template` at
+`.github/actions/setup-loop-engine/action.yml` (BAC-753), substituting `{{LOOP_ENGINE_TAG}}`/
+`{{SHIP_FLOW_TAG}}` with the plugin versions this repo currently targets (match `minPluginVersions`
+if this repo has one — see verify-loop-wiring's floor check pattern). GitHub Actions is a plain shell
+process outside the live-session plugin cache, so any such job needs this action's
+`LOOP_ENGINE_PATH`/`SHIP_FLOW_PATH` exports before loop-engine's bundled `bin/plugin-path.mjs`
+resolver (or a bin script invoked directly) can find anything.
+
+For `git-flow` repos, also offer `${CLAUDE_PLUGIN_ROOT}/templates/loop-selftest.yml.template` as a
+`{integrationBranch}`-PR backstop for harness/policy changes that `ci.yml` never sees (git-flow's
+feature→integration PRs skip `ci.yml`'s trigger entirely — see `ci.yml.template`'s own comments).
+Like `turbo-verify-wiring.example.md`, this one is reference material to adapt by hand — the actual
+policy paths and selftest command are this repo's own, not something to copy verbatim.
+
 ### 5. Offer branch protection — human stop point, always
 **Never run `templates/branch-protect.sh` without an explicit `AskUserQuestion` confirmation first,
 every time** — this changes a real GitHub repo setting, and a past "yes" to a different question isn't

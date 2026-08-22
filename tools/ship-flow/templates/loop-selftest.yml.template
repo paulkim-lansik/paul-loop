@@ -1,0 +1,46 @@
+# Server-side backstop for this repo's harness/policy paths (git-flow only — trunk-based repos
+# don't need this, ci.yml already covers the single shared branch on every PR).
+#
+# Why a separate workflow: in git-flow (ADR-0053-style), a feature→{{INTEGRATION_BRANCH}} PR doesn't
+# trigger ci.yml at all (ci.yml's `pull_request.branches` is scoped to the release branch only —
+# that trigger-level skip is the actual cost saving). But the loop's riskiest output — a
+# harness-improvement PR touching CLAUDE.md/skills/hooks/risk rules — lands on exactly that path,
+# unverified, unless something else catches it. Adding {{INTEGRATION_BRANCH}} to ci.yml's own
+# trigger with a `paths:` filter doesn't work either: `on.pull_request.paths` applies to the whole
+# workflow, so it would also path-filter the release PR's real verify/integration jobs. Hence this
+# separate, narrowly-triggered file.
+#
+# ADAPT BY HAND — this is a reference template, not something to copy verbatim (like
+# turbo-verify-wiring.example.md): the paths list below is THIS repo's own policy surface
+# (.claude/**, CLAUDE.md, docs/adr/**, wherever this repo's risk-classification rules and harness
+# wiring actually live) and the selftest command is whatever repo-local harness self-check this repo
+# has (if none, a minimal check is just confirming the plugins resolve — see setup-loop-engine).
+name: Loop selftest ({{INTEGRATION_BRANCH}} PR)
+
+on:
+  pull_request:
+    branches: [{{INTEGRATION_BRANCH}}]
+    paths:
+      - '.claude/**'
+      - 'CLAUDE.md'
+      - 'docs/adr/**'
+      # Add this repo's own policy-relevant paths here — anywhere its risk-classification rules,
+      # verify-loop wiring, or harness-local tooling live.
+      - '.github/workflows/loop-selftest.yml'
+      - '.github/actions/setup-loop-engine/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  loop-engine-selftest:
+    name: loop-engine selftest ({{INTEGRATION_BRANCH}}, verifier machine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-loop-engine
+      - run: {{POLICY_SELFTEST_COMMAND}}
