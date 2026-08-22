@@ -42,7 +42,12 @@ model, changes what later questions even mean):
 2. **Package manager**: what does this repo use (`pnpm`/`npm`/`yarn`/`cargo`/`uv`/other)?
 3. **Verify command**: what single command does this repo run to check "is this change good" —
    typecheck+lint+test, or whatever this repo actually has? (If the repo has nothing yet, offer
-   `templates/turbo-verify-wiring.example.md` as a starting point — see step 4.)
+   `templates/turbo-verify-wiring.example.md` as a starting point — see step 4.) Record the **raw**
+   command as-is (e.g. `pnpm verify`), even if this repo already has its own verdict-contract wrapper
+   (e.g. `pnpm verdict`) — either way, `ship-feature`/`hotfix` always run it as
+   `verdict-run.sh -- <verifyCommand>` (BAC-745), and `verdict-run.sh` passes an already-emitted
+   `=== VERDICT ===` block through unchanged instead of double-wrapping it. Don't write `verdict-run.sh`
+   itself into this field.
 4. **Project name**: what should the `CLAUDE.md` template call this repo?
 5. **Issue tracker** (optional): does this repo use an external tracker (Linear, Jira, bare GitHub
    Issues, none)? Only asked if relevant — don't force an answer if the repo has no tracker at all.

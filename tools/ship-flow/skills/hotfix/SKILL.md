@@ -65,7 +65,11 @@ No pending changes: just `git fetch origin && git worktree add -b <branch> <path
 ### 1. Verify
 A fresh worktree has no installed dependencies — install them first. Then the project's verify
 command is the **ceiling** — don't move on until it's green (self-judgement never substitutes for
-it).
+it). Run it wrapped, always, never raw: `<however this repo invokes its installed loop-engine plugin's
+bin scripts> verdict-run.sh -- <verifyCommand>` (BAC-745) — safe even if `verifyCommand` already emits
+its own verdict-contract block, since `verdict-run.sh` passes an existing `=== VERDICT ===` block
+through unchanged instead of double-wrapping it. Read the gate off the printed `VERDICT:`/`EXIT:` lines
+— that's what feeds this repo's verdict state file and ledger, a bare exit code doesn't.
 
 ### 2. Commit → PR→`integrationBranch` (or `releaseBranch` if trunk-based)
 Commit in the repo's convention (e.g. `fix(scope): description`) → push → open the PR.

@@ -191,9 +191,15 @@ gate).
 ### 2. Implementation — `tdd` (red → green)
 Implement the plan red→green. Security/invariant paths (RLS, authorization, or whatever this repo's
 equivalent is) need **behavior-proof tests**, not just coverage. This repo's verify command is this
-loop's convergence criterion.
-→ **Gate:** verify command green + whatever `DEEP_GATES:` step 1 identified (re-checked against the
-actual diff with `--from-git`). Red loops back autonomously.
+loop's convergence criterion — run it wrapped, always, never raw: `<however this repo invokes its
+installed loop-engine plugin's bin scripts> verdict-run.sh -- <verifyCommand>` (BAC-745). This holds
+even if `verifyCommand` is itself already a verdict-contract script (e.g. a repo's own `verdict` wrapper)
+— `verdict-run.sh` detects an already-emitted `=== VERDICT ===` block and passes it through unchanged
+rather than double-wrapping, so wrapping unconditionally is always safe. Read the gate off the printed
+`VERDICT:`/`EXIT:` lines, not a bare shell exit code — the block is the actual contract (state file +
+ledger event), an exit code alone skips both.
+→ **Gate:** `VERDICT: PASS` + whatever `DEEP_GATES:` step 1 identified (re-checked against the actual
+diff with `--from-git`). `VERDICT: FAIL` loops back autonomously.
 
 ### 3. Runtime verify
 Build and run the app, drive the changed surface (CLI/API/GUI — whatever applies) through it, and
