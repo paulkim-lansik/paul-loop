@@ -1,0 +1,58 @@
+{
+  "$comment": "Shape-only example — this plugin ships NO product-specific rules (BAC-698/BAC-563 C5): which paths are a migration, which are auth, etc. is domain knowledge that belongs to each consuming repo, not to the portable plugin. Copy this to <repo-root>/risk-rules.json (or point --rules / CLASSIFY_RISK_RULES at a copy elsewhere) and replace every placeholder path with this repo's real ones. Schema SSOT: bin/classify-risk.mjs's own header comment. The 'harness' rule below is not optional filler — it makes editing this file itself (and the harness dirs that gate it) blast=high, so a rule silently weakened in the same PR that relies on the weaker rule still gets flagged for human review (BAC-757's self-coverage requirement, mirroring a consuming repo's own 'harness-covers-risk-rules-json' wiring check).",
+  "pathRules": [
+    {
+      "id": "example-irreversible-migration",
+      "startsWith": ["<path-to-your-migrations-dir>/"],
+      "dims": { "revers": "none" },
+      "deep": ["<your-deep-verify-command, e.g. verify:db>"],
+      "why": "REPLACE ME: describe why this path is irreversible once applied"
+    },
+    {
+      "id": "example-security-surface",
+      "startsWith": ["<path-to-your-auth-or-security-dir>/"],
+      "endsWith": [".guard.ts"],
+      "dims": { "blast": "high" },
+      "deep": ["<your-deep-verify-command, e.g. verify:auth>"],
+      "why": "REPLACE ME: describe the invariant this surface protects"
+    },
+    {
+      "id": "example-outbound-side-effect",
+      "startsWith": ["<path-to-your-notification-or-payment-dir>/"],
+      "dims": { "blast": "high" },
+      "why": "REPLACE ME: describe the real-world effect this surface triggers (sends a message, charges a card, etc.)"
+    },
+    {
+      "id": "harness",
+      "startsWith": [".claude/", "tools/", ".husky/", ".loop/", "docs/adr/"],
+      "exact": ["CLAUDE.md", "risk-rules.json"],
+      "excludeStartsWith": [".loop/lessons/"],
+      "dims": { "blast": "high" },
+      "why": "harness/constitution layer — silently weakening the gate itself must not be low-risk. Keep 'risk-rules.json' in exact even after you rename/move this file locally, so this self-coverage property survives."
+    },
+    {
+      "id": "ci-deploy-infra",
+      "startsWith": [".github/", "<path-to-your-deploy-scripts>/", "infra/"],
+      "dims": { "blast": "high" },
+      "why": "CI/deploy/infra pipeline itself"
+    },
+    {
+      "id": "workspace-root",
+      "exact": ["package.json", "<your-workspace-lockfile>"],
+      "dims": { "blast": "high" },
+      "why": "workspace-root config — affects every package"
+    }
+  ],
+  "commandRules": [
+    {
+      "id": "cmd-irreversible",
+      "patterns": [
+        "\\bgh\\s+pr\\s+merge\\b",
+        "\\bgit\\s+push\\b[^|;&]*\\b(<your-protected-branches, e.g. main|develop>)\\b",
+        "<your-deploy-command-pattern>"
+      ],
+      "dims": { "revers": "none" },
+      "why": "deploy/merge commands — change shared state the moment they run"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 ---
 name: retrospect
 description: Turn loop outcomes into a verified-lessons memory — record what fixed a failure, recall it next time, and promote recurring lessons into skills/guidelines. Use when the user wants the loop to learn from past runs, capture a fix as a reusable lesson, see why runs keep failing, or decide what to codify into a skill or CLAUDE.md.
+context: fork
 ---
 
 # retrospect — the learning layer (verified lessons)

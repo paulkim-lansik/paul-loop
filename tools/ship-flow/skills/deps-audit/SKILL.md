@@ -1,6 +1,7 @@
 ---
 name: deps-audit
 description: Maintenance check for installed Claude Code extensions (marketplace plugins, skills.sh skills, gstack, and repo-embedded skills). Produces one report answering whether upstream is still maintained, whether the local install is current, and what's unused. Use when the user asks to audit or clean up skills/plugins, find unused skills, check whether things are up to date, check for divergence, or when a weekly heartbeat nudges.
+context: fork
 ---
 
 # deps-audit — extension maintenance dashboard

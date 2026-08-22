@@ -120,6 +120,16 @@ the rest of this repo's ship-flow config, and pass it through wherever `check-pr
 invoked (the `ci.yml` job above, and `ship-feature`/`publisher`'s own PR-body composition step, if this
 repo wants the same check enforced before a PR is even opened).
 
+Offer `${CLAUDE_PLUGIN_ROOT}/templates/risk-rules.example.json` too, if this repo doesn't already have a
+`risk-rules.json` at its root — `classify-risk.mjs` ships zero product-specific rules on purpose
+(BAC-698/BAC-563 C5), so without one, this plugin's risk gating only ever sees its structural baselines
+(docs-only, low-file-count, etc.) and every domain-specific path (migrations, auth, outbound sends) goes
+unclassified. This is reference material to adapt by hand, not something to copy verbatim — every
+placeholder path needs replacing with this repo's real ones. Point out that the template's `harness`
+rule is self-covering by design (it matches `risk-rules.json` itself, so silently weakening a rule and
+the file that defines rules in the same PR still gets flagged) — the copy should keep that property, not
+drop it while filling in the other placeholders.
+
 ### 5. Offer branch protection — human stop point, always
 **Never run `templates/branch-protect.sh` without an explicit `AskUserQuestion` confirmation first,
 every time** — this changes a real GitHub repo setting, and a past "yes" to a different question isn't
