@@ -5,6 +5,22 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.7.1
+
+- New `test/runtime-verify-evidence-bac749.test.sh` (BAC-749) — locks the two ship-feature step 3
+  guidelines below in place. No bin/lib change (patch).
+
+## ship-flow 0.2.8
+
+- ship-feature step 3 (runtime-verify) gains two evidence-gathering guidelines (BAC-749, Aside
+  harness-benchmarking research §5.1 conditional candidate A3, downgraded from a full ARIA-diff-first
+  build to a one-line guideline since equivalent tooling already exists in most consuming repos):
+  when a browser is involved, prefer an accessibility-tree snapshot (+ diff) as the observation
+  evidence over a screenshot — a screenshot is for when something genuinely needs visual confirmation,
+  not the default; and never attach a browser-automation MCP that drives the user's own logged-in
+  browser (their cookies, their accounts) to this autonomous step, since a prompt injection on the
+  page under test would then reach the user's real accounts instead of a sandboxed session.
+
 ## loop-engine 0.7.0
 
 - Compaction instrumentation (BAC-746, Aside harness-benchmarking research §5.1 #2): bundles a
