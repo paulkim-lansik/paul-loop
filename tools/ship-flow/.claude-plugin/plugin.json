@@ -1,6 +1,6 @@
 {
   "name": "ship-flow",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Delivery-loop skills — land and release already-verified work through a repo's real gates. Tracker- and branch-model-agnostic: reads a consuming repo's own config instead of hardcoding one repo's setup.",
   "author": {
     "name": "paulkim-lansik"

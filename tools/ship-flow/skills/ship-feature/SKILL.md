@@ -225,6 +225,13 @@ one-line reason.
 > — independent of any shared MCP browser profile. Run it from inside the package that has that
 > dependency installed (a script outside it won't resolve the same `node_modules`).
 
+> When a browser is involved, prefer an accessibility-tree snapshot (+ diff against the prior state) as
+> the observation evidence over a screenshot — most repos already have a tool for this (e.g. a
+> `take_snapshot`-style MCP call); reach for a screenshot only when something genuinely needs visual
+> confirmation, not as the default. Never attach a browser-automation MCP that drives the user's own
+> logged-in browser (their cookies, their accounts) to this autonomous step — a prompt injection on the
+> page under test would then reach the user's real accounts, not a sandboxed session.
+
 ### 4. Review and fix
 Run this plugin's review agents (`code-reviewer`, `test-hunter`, `verifier-integrity-hunter`) against
 the diff. If this repo also runs a separate general-purpose PR-review tool, run both — during any
