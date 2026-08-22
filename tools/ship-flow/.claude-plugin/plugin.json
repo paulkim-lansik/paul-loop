@@ -1,6 +1,6 @@
 {
   "name": "ship-flow",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Delivery-loop skills — land and release already-verified work through a repo's real gates. Tracker- and branch-model-agnostic: reads a consuming repo's own config instead of hardcoding one repo's setup.",
   "author": {
     "name": "paulkim-lansik"
@@ -10,6 +10,6 @@
   "license": "MIT",
   "keywords": ["delivery", "git-flow", "hotfix", "ship", "release"],
   "dependencies": [
-    { "name": "loop-engine", "version": "^0.6.0" }
+    { "name": "loop-engine", "version": "^0.7.0" }
   ]
 }

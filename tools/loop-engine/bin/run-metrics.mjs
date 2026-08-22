@@ -11,6 +11,11 @@
 //        제외 내역(excluded_by_surface)은 항상 표시한다 — 침묵 제외 금지.
 //   Q1 = first-pass green 비율 = (첫 verdict.*가 verdict.passed인 런) / (verdict 보유 런)
 //   Q2 = 재작업 = 런당 verdict.* 호출 수
+//   압축 상관(BAC-746) = 런당 compaction 이벤트 수 + "압축 직후 RED 비율" — 런 타임라인을
+//        (compaction ∪ verdict.*) ts순으로 걸어, compaction 뒤 처음 만나는 verdict 1건만
+//        "post-compaction"으로 표시한다(압축이 여러 번 연달아 와도 "최근 압축됨" 불리언 상태로
+//        취급 — 압축마다 같은 다음 verdict를 중복 카운트하지 않는다). 이 표본들 중 verdict.failed
+//        비율이 post_compaction_red — 체크포인트(별도 조건부 이슈) 착수 여부의 실측 근거.
 // 결손 축은 INSUFFICIENT_DATA를 1급 결과로(frugality proof — 측정 축이 빠지면 조작된 PASS 대신
 // 증명 불가를 정직하게): run.started 없는 런(계측 생존 마커 부재)의 H1, verdict 0 런의 Q2,
 // 해당 런이 0인 전체 축. 'unknown' 런(귀속 불가 verdict 버킷)은 별도 행+카운터로만 보고하고
@@ -88,6 +93,7 @@ for (const f of files) {
   let perm = 0
   const excluded = {}
   const verdicts = []
+  const compactions = []
   for (const e of events) {
     if (e.type === 'permission.requested') {
       const s = e.payload?.surface
@@ -99,9 +105,28 @@ for (const f of files) {
       }
     } else if (e.type.startsWith('verdict.')) {
       verdicts.push(e)
+    } else if (e.type === 'compaction') {
+      compactions.push(e)
     }
   }
   verdicts.sort((x, y) => String(x.ts).localeCompare(String(y.ts))) // ts 순 안정 정렬(파일 순 보조)
+
+  // 압축 상관(BAC-746): (compaction ∪ verdict.*)를 ts순으로 걸어, 압축 뒤 처음 만나는 verdict 1건만
+  // "post-compaction"으로 태그한다(헤더 참조 — 압축 연타는 "최근 압축됨" 불리언 상태 취급).
+  const timeline = [...compactions, ...verdicts].sort((x, y) =>
+    String(x.ts).localeCompare(String(y.ts)),
+  )
+  let pendingCompaction = false
+  const postCompactionRed = []
+  for (const e of timeline) {
+    if (e.type === 'compaction') {
+      pendingCompaction = true
+    } else if (pendingCompaction) {
+      postCompactionRed.push(e.type === 'verdict.failed')
+      pendingCompaction = false
+    }
+  }
+
   runs.push({
     run_id: runId,
     instrumented,
@@ -109,6 +134,8 @@ for (const f of files) {
     q2: verdicts.length > 0 ? verdicts.length : INSUFFICIENT,
     first_pass: verdicts.length > 0 ? verdicts[0].type === 'verdict.passed' : null,
     excluded,
+    compactions: compactions.length,
+    post_compaction_red: postCompactionRed,
   })
 }
 
@@ -127,6 +154,9 @@ const instrumentedRuns = attributed.filter((r) => r.instrumented)
 const verdictRuns = attributed.filter((r) => typeof r.q2 === 'number')
 const firstPassRuns = verdictRuns.filter((r) => r.first_pass === true)
 const h1Values = instrumentedRuns.map((r) => r.h1)
+const compactionsTotal = attributed.reduce((sum, r) => sum + r.compactions, 0)
+const postCompactionSamples = attributed.flatMap((r) => r.post_compaction_red)
+const postCompactionRedCount = postCompactionSamples.filter(Boolean).length
 
 const overall = {
   runs: runs.length,
@@ -146,6 +176,14 @@ const overall = {
   unknown_verdict_events: unknownVerdictEvents,
   skipped_lines: skippedLines,
   skipped_files: skippedFiles,
+  compactions_total: compactionsTotal,
+  post_compaction_red: postCompactionSamples.length
+    ? {
+        ratio: postCompactionRedCount / postCompactionSamples.length,
+        red: postCompactionRedCount,
+        total: postCompactionSamples.length,
+      }
+    : INSUFFICIENT,
 }
 
 if (asJson) {
@@ -174,9 +212,17 @@ if (asJson) {
   lines.push(`unknown_verdict_events: ${unknownVerdictEvents} (귀속 불가 — overall 집계 제외)`)
   lines.push(`skipped_lines: ${skippedLines}`)
   lines.push(`skipped_files: ${skippedFiles}`)
+  lines.push(`compactions_total: ${overall.compactions_total}`)
+  lines.push(
+    typeof overall.post_compaction_red === 'object'
+      ? `post_compaction_red (압축 직후 첫 verdict가 RED인 비율): ${fmt(overall.post_compaction_red.ratio)} (${overall.post_compaction_red.red}/${overall.post_compaction_red.total})`
+      : `post_compaction_red (압축 직후 첫 verdict가 RED인 비율): ${overall.post_compaction_red}`,
+  )
   for (const r of runs) {
     const tag = r.run_id === 'unknown' ? ' (귀속 불가 verdict — current 포인터 부재분)' : ''
-    lines.push(`  ${r.run_id}: H1=${fmt(r.h1)} Q2=${fmt(r.q2)} first_pass=${r.first_pass}${tag}`)
+    lines.push(
+      `  ${r.run_id}: H1=${fmt(r.h1)} Q2=${fmt(r.q2)} first_pass=${r.first_pass} compactions=${r.compactions}${tag}`,
+    )
   }
   lines.push('=== END RUN METRICS ===')
   process.stdout.write(`${lines.join('\n')}\n`)

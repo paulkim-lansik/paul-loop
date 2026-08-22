@@ -162,4 +162,53 @@ printf '%s' "$OUT" | grep -q "excluded_by_surface" || fail "text output must sho
 printf '%s' "$OUT" | grep -q "merge=1" || fail "text output must show merge exclusion count, got: $OUT"
 echo "PASS: text output shows the metrics block and per-surface exclusion breakdown"
 
+# ── 8) 압축 상관(BAC-746) — 런당 compaction 카운트 + 압축 직후 첫 verdict RED 비율 ────────────
+# runE: compaction(auto) -> verdict.failed(post-compaction RED) -> compaction(manual) ->
+#       compaction(auto, 연타) -> verdict.passed(연타의 다음 verdict 1건만 post-compaction) ->
+#       verdict.passed(짝없음 — 앞선 compaction이 이미 다음 verdict에 소비됨, 카운트 제외)
+# runF: compaction 없음 — compactions=0, post_compaction_red 표본에 기여 없음
+COMP="$DIR/comp"
+mkdir -p "$COMP"
+cat > "$COMP/runE.jsonl" <<'EOF'
+{"id":"e1","type":"run.started","ts":"2026-08-20T00:00:00.000Z","aggregate_id":"runE","payload":{},"version":1}
+{"id":"e2","type":"compaction","ts":"2026-08-20T00:01:00.000Z","aggregate_id":"runE","payload":{"trigger":"auto"},"version":1}
+{"id":"e3","type":"verdict.failed","ts":"2026-08-20T00:02:00.000Z","aggregate_id":"runE","payload":{},"version":1}
+{"id":"e4","type":"compaction","ts":"2026-08-20T00:03:00.000Z","aggregate_id":"runE","payload":{"trigger":"manual"},"version":1}
+{"id":"e5","type":"compaction","ts":"2026-08-20T00:04:00.000Z","aggregate_id":"runE","payload":{"trigger":"auto"},"version":1}
+{"id":"e6","type":"verdict.passed","ts":"2026-08-20T00:05:00.000Z","aggregate_id":"runE","payload":{},"version":1}
+{"id":"e7","type":"verdict.passed","ts":"2026-08-20T00:06:00.000Z","aggregate_id":"runE","payload":{},"version":1}
+EOF
+cat > "$COMP/runF.jsonl" <<'EOF'
+{"id":"f1","type":"run.started","ts":"2026-08-20T01:00:00.000Z","aggregate_id":"runF","payload":{},"version":1}
+{"id":"f2","type":"verdict.passed","ts":"2026-08-20T01:01:00.000Z","aggregate_id":"runF","payload":{},"version":1}
+EOF
+JSON="$(node "$METRICS" --runs-dir "$COMP" --json)" || fail "run-metrics with compaction events must exit 0"
+node -e '
+  const m = JSON.parse(process.argv[1]);
+  const runE = m.runs.find((r) => r.run_id === "runE");
+  const runF = m.runs.find((r) => r.run_id === "runF");
+  if (runE.compactions !== 3) throw new Error("runE compactions must be 3, got " + runE.compactions);
+  if (JSON.stringify(runE.post_compaction_red) !== JSON.stringify([true, false]))
+    throw new Error("runE post_compaction_red must be [true(e3 after e2), false(e6 after e4+e5 collapsed)], got " + JSON.stringify(runE.post_compaction_red));
+  if (runF.compactions !== 0) throw new Error("runF compactions must be 0, got " + runF.compactions);
+  if (m.overall.compactions_total !== 3) throw new Error("overall compactions_total must be 3, got " + m.overall.compactions_total);
+  if (m.overall.post_compaction_red.total !== 2) throw new Error("overall post_compaction_red.total must be 2, got " + JSON.stringify(m.overall.post_compaction_red));
+  if (m.overall.post_compaction_red.red !== 1) throw new Error("overall post_compaction_red.red must be 1, got " + JSON.stringify(m.overall.post_compaction_red));
+  if (m.overall.post_compaction_red.ratio !== 0.5) throw new Error("overall post_compaction_red.ratio must be 0.5, got " + JSON.stringify(m.overall.post_compaction_red));
+' "$JSON" || fail "compaction fold values wrong"
+OUT="$(node "$METRICS" --runs-dir "$COMP")"
+printf '%s' "$OUT" | grep -q "compactions_total: 3" || fail "text output must show compactions_total, got: $OUT"
+printf '%s' "$OUT" | grep -q "post_compaction_red" || fail "text output must show post_compaction_red, got: $OUT"
+echo "PASS: per-run compactions + post-compaction-RED fold correctly (back-to-back compactions collapse to one pending state, not double-counted)"
+
+# ── 9) compaction 없는 원장(모든 기존 픽스처)은 post_compaction_red=INSUFFICIENT_DATA ─────────
+JSON="$(node "$METRICS" --runs-dir "$AB" --json)" || fail "run-metrics on non-compaction fixture must exit 0"
+node -e '
+  const m = JSON.parse(process.argv[1]);
+  if (m.overall.post_compaction_red !== "INSUFFICIENT_DATA")
+    throw new Error("no compaction events -> post_compaction_red must be INSUFFICIENT_DATA, got " + JSON.stringify(m.overall.post_compaction_red));
+  if (m.overall.compactions_total !== 0) throw new Error("no compaction events -> compactions_total must be 0, got " + m.overall.compactions_total);
+' "$JSON" || fail "no-compaction fixture must report INSUFFICIENT_DATA, not a fabricated ratio"
+echo "PASS: runs with no compaction events report post_compaction_red=INSUFFICIENT_DATA (no fabricated ratio)"
+
 exit 0

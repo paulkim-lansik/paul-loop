@@ -110,6 +110,18 @@ LOOP_DOCTOR_HEARTBEAT_OFF=1 node "$HOOKS/loop-doctor-heartbeat.mjs" </dev/null >
   || fail "loop-doctor-heartbeat.mjs threw with the kill switch on (stderr: $(cat "$DIR/stderr.doctor"))"
 rm -f "$DIR/.loop/runs" 2>/dev/null
 
+# -- PreCompact -> compaction ledger event (BAC-746) — behavioral, not just "didn't throw": confirms
+# the event actually lands with type=compaction and the trigger payload field set.
+PC_DIR="$DIR/precompact"
+mkdir -p "$PC_DIR"
+printf '{"session_id":"precompact-test","hook_event_name":"PreCompact","trigger":"auto","cwd":"%s"}' "$PC_DIR" \
+  | CLAUDE_PROJECT_DIR="$PC_DIR" node "$HOOKS/record-run-event.mjs" >/dev/null 2>"$DIR/stderr.precompact" \
+  || fail "record-run-event.mjs threw on a valid PreCompact input (stderr: $(cat "$DIR/stderr.precompact"))"
+LEDGER_LINE="$(cat "$PC_DIR/.loop/runs/precompact-test.jsonl" 2>/dev/null)"
+[ -n "$LEDGER_LINE" ] || fail "PreCompact must append a ledger event, found none at $PC_DIR/.loop/runs/precompact-test.jsonl"
+printf '%s' "$LEDGER_LINE" | grep -q '"type":"compaction"' || fail "PreCompact ledger event must have type=compaction, got: $LEDGER_LINE"
+printf '%s' "$LEDGER_LINE" | grep -q '"trigger":"auto"' || fail "PreCompact ledger event payload must carry trigger=auto, got: $LEDGER_LINE"
+
 # -- Deny-path behavioral check: gate-before-merge.mjs on a protected branch, no ship-flow.config.json
 # present (the fallback-default path — protected = {main, master}) must deny a merge into main.
 REPO="$DIR/repo"
@@ -133,4 +145,4 @@ OUT="$(printf '{"tool_name":"Bash","tool_input":{"command":"git merge origin/dev
   | CLAUDE_PROJECT_DIR="$REPO" node "$HOOKS/gate-before-merge.mjs")"
 [ -z "$OUT" ] || fail "gate-before-merge.mjs: with ship-flow.config.json declaring release/trunk, a merge on 'main' must be allowed (main is no longer in the protected set), got: $OUT"
 
-echo "PASS: hooks/hooks.json — plugin.json wiring, file resolution, allow-path smoke test (8 hooks), gate-before-merge deny + config-driven protected-branch behavior"
+echo "PASS: hooks/hooks.json — plugin.json wiring, file resolution, allow-path smoke test (8 hooks), gate-before-merge deny + config-driven protected-branch behavior, PreCompact->compaction event"
