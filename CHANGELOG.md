@@ -5,6 +5,39 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.7.0
+
+- Compaction instrumentation (BAC-746, Aside harness-benchmarking research §5.1 #2): bundles a
+  `PreCompact` (matcher `auto`/`manual`) hook registration and a new `compaction` run-ledger event
+  type (payload: `cwd`, `trigger`, `custom_instructions`) via `hooks/record-run-event.mjs`. Measures
+  whether context compaction correlates with subsequent verifier failure — previously only known
+  indirectly via `instructions.loaded`'s `load_reason:"compact"` count, with no signal on whether
+  compaction actually hurt outcomes.
+- `bin/run-metrics.mjs` adds two fold outputs (both text and `--json`): per-run `compactions` (count)
+  and overall `post_compaction_red` — the fraction of "first verdict after a compaction" events that
+  were `verdict.failed`. Back-to-back compactions with no intervening verdict collapse to one pending
+  "recently compacted" state rather than double-counting the same next verdict. Follows the existing
+  `INSUFFICIENT_DATA` convention when no compaction events exist in the ledger.
+- `hooks/hooks.json` gains 2 more hook commands (14→16, still 8 distinct files — `PreCompact`'s two
+  matchers both point at the already-existing `record-run-event.mjs`) — regression-tested end-to-end
+  (a real `PreCompact` input must append a `type:"compaction"` ledger event, not just parse without
+  throwing).
+- Consuming repos: bump loop-engine (and re-tag `PreCompact` reaches them automatically via the
+  bundled hook — no local `.claude/settings.json` wiring needed per BAC-752's plugin-first decision).
+  After ~1 week of real usage, check `run-metrics.mjs`'s `post_compaction_red` to decide whether the
+  separate conditional "compaction checkpoint" issue is worth starting.
+
+## ship-flow 0.2.7
+
+- No content change — `dependencies` range on loop-engine bumped `^0.6.0` → `^0.7.0` to stay
+  satisfiable after loop-engine's minor bump above (joint-constraint: a 0.x caret range is
+  same-minor-strict, so this must land in the same PR as the loop-engine bump it depends on).
+
+## loop-memory 0.2.5
+
+- No content change — same joint-constraint dependency bump as ship-flow 0.2.7 above
+  (`loop-engine` `^0.6.0` → `^0.7.0`).
+
 ## loop-engine 0.6.2
 
 - `test/lesson-codification-bac756.test.sh` updated for the ship-flow 0.2.6 correction below — its

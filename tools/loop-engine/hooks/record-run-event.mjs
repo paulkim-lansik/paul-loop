@@ -24,6 +24,7 @@ const TYPE = {
   SubagentStart: 'subagent.started',
   SubagentStop: 'subagent.stopped',
   InstructionsLoaded: 'instructions.loaded',
+  PreCompact: 'compaction',
 };
 
 // Common stdin fields (official hooks doc) — noise to drop from instructions.loaded's "everything
@@ -69,6 +70,11 @@ function pickPayload(type, input, surfaceOf) {
   }
   if (type === 'run.started' || type === 'run.ended') {
     return { cwd: input.cwd, reason: input.reason, permission_mode: input.permission_mode };
+  }
+  if (type === 'compaction') {
+    // trigger: 'auto' | 'manual' (official PreCompact hook doc). custom_instructions only exists for
+    // manual — carry it capped, since a user could paste something long into it.
+    return { cwd: input.cwd, trigger: input.trigger, custom_instructions: capStr(input.custom_instructions) };
   }
   // instructions.loaded — the event-specific fields aren't documented: carry everything except the
   // common fields, still pre-truncating unknown long strings (sanitize's blocklist/cap defends the

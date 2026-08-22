@@ -5,6 +5,8 @@
 // 스키마 v1: {id, type(dot.past_tense), ts(ISO), aggregate_id(run-id), payload, version:1}
 //   - 런 경계 = 세션 경계(1 session = 1 run): SessionStart=run.started, SessionEnd=run.ended.
 //   - 토큰 귀속 필드(token_source 등)는 v1에 없음 — BAC-587/582에서 이벤트 확장 시 예약.
+//   - compaction(PreCompact=auto|manual, BAC-746): payload={cwd, trigger, custom_instructions}. 압축
+//     빈도·직후 RED 상관을 bin/run-metrics.mjs가 fold한다(체크포인트 여부 판단의 실측 근거).
 // payload는 기록 시점에 BAC-628 sanitize(sanitizeRecord)를 통과한다 — 시크릿 키 blocklist 낙하 +
 // 장문 sha256+preview 캡. .loop/runs/*는 gitignore(로컬 텔레메트리, 커밋 금지).
 //
