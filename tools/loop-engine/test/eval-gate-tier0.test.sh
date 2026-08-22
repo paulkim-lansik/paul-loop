@@ -14,7 +14,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$TIER0RUN" ] || fail "tier0-run.sh not executable at $TIER0RUN"
 [ -d "$DATASET" ] || fail "tier0 golden dataset dir not found at $DATASET"
 
-WORK="$(mktemp -d)" || fail "mktemp -d failed"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 
 # ── case 1: 전체 골든셋이 PASS로 채점되어야 한다(결정론적 — k=1 기본값으로 충분, LLM 없음) ─────
