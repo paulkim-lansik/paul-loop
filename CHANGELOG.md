@@ -5,6 +5,55 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.8.0
+
+- New `templates/risk-rules.example.json` (BAC-757) — a shape-only starter for `classify-risk.mjs`'s
+  externalized rule table (this plugin ships zero product-specific rules by design, BAC-698/BAC-563
+  C5). Every path/pattern is a `<placeholder>` a consuming repo must replace, but the `harness` rule's
+  self-coverage property (it matches `risk-rules.json` itself, so silently weakening a rule and the
+  file that defines rules in the same PR still gets flagged) is meant to survive the copy — called out
+  explicitly in both the template's own `$comment` and `setup`'s guidance (ship-flow, below).
+- New `test/classify-risk-rules.test.sh` case (8) locking the template: valid JSON, its harness rule
+  self-covers (`risk-rules.json` and `CLAUDE.md` both match, both raise `blast=high`), and its per-rule
+  `deep` gate lists are pinned so a future edit can't silently drop one.
+- New `test/skill-frontmatter-bac757.test.sh` (BAC-757) — locks which ship-flow skills declare
+  `context: fork` and which don't (see ship-flow 0.2.9 below for what that split is and why).
+
+## ship-flow 0.2.9
+
+- Skill frontmatter modernization (BAC-757, backport of BAC-621's glucofit-partners pattern): three
+  ship-flow skills — `deps-audit`, `retrospect`, `resolving-merge-conflicts` — gain `context: fork`.
+  Each was read end-to-end to confirm it never blocks mid-run on a live user question (a forked
+  subagent's questions never reach the user); any "get a human's OK" moment in these three is async —
+  producing a report/candidate list for a *later*, separate review, not something the run itself
+  blocks on. The other 9 skills (`setup`, `grill-with-docs`, `to-issues`, `hotfix`, `ship-feature`,
+  `harness-maturity-audit`, `improve-codebase-architecture`, `tdd`, `to-prd`) deliberately do NOT get
+  `context: fork` — each has at least one load-bearing mid-flow question the rest of that same run
+  depends on (an explicit `AskUserQuestion` gate, or a "confirm/ask the user" checkpoint prose
+  describes as blocking) — full audit trail of which line justified each exclusion is in
+  `test/skill-frontmatter-bac757.test.sh`'s header comment (loop-engine, above).
+- `setup` now offers loop-engine's new `templates/risk-rules.example.json` alongside the other optional
+  scaffolding in step 4, calling out its self-coverage property so a repo's copy doesn't silently drop
+  it while filling in the placeholders.
+- **`allowed-tools` and `paths` frontmatter fields were deliberately NOT added in this pass** (unlike
+  BAC-621's glucofit-partners precedent, which uses both) — verified against the current official
+  syntax first (`allowed-tools` is a non-restrictive pre-approval hint only, cleared every turn; it
+  cannot break a skill even if incomplete) rather than assumed. `paths` doesn't semantically fit any of
+  these 12 skills — they're all intent-triggered ("Use when the user..."), not file-path-triggered like
+  `design-sync`/`partners-web-design` are in glucofit-partners. `allowed-tools` would fit, but ship-flow
+  skills are deliberately consuming-repo-agnostic (Bash commands route through "however this repo
+  invokes its bin scripts"), so a literal command-pattern list is either wrong per-repo or so broad
+  (`Read Write Edit Bash Task`) it adds no real precision — low value for the effort/review-risk of
+  enumerating 12 skills' full tool needs, especially the complex multi-agent ones. Left for a future
+  pass if a concrete need surfaces.
+- `loop-engine` dependency range `^0.7.0`→`^0.8.0` (joint-constraint: loop-engine's own bump above is
+  minor, so the old range would become unsatisfiable).
+
+## loop-memory 0.2.6
+
+- No content change — same joint-constraint dependency bump as ship-flow 0.2.9 above
+  (`loop-engine` `^0.7.0` → `^0.8.0`).
+
 ## loop-engine 0.7.1
 
 - New `test/runtime-verify-evidence-bac749.test.sh` (BAC-749) — locks the two ship-feature step 3

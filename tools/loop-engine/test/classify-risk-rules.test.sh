@@ -13,10 +13,15 @@
 #     empty-rules fallback — a rules file the tool couldn't read must not under-report risk,
 # (6) a --rules path that does not exist is also a loud usage error, not a silent fallback,
 # (7) excludeStartsWith carves an exception out of a broader startsWith match.
+# (8) templates/risk-rules.example.json (BAC-757, shape-only starter for a consuming repo) is itself
+#     valid, self-covering (its own harness rule matches "risk-rules.json" — the same self-coverage
+#     idea as a consuming repo's own verify-loop-wiring "harness-covers-risk-rules-json" case), and
+#     its per-rule deep-gate lists are locked so a future edit can't silently drop one.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$HERE/../../.."
 CR="$ROOT/tools/loop-engine/bin/classify-risk.mjs"
+EXAMPLE_RULES="$ROOT/tools/loop-engine/templates/risk-rules.example.json"
 
 fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$CR" ] || fail "classify-risk.mjs not found at $CR"
@@ -103,5 +108,44 @@ OUT_EX="$(node "$CR" --path ".loop/lessons/foo.json" --rules "$DIR/exclude-rules
 echo "$OUT_EX" | grep -q "harness-like" && fail "excludeStartsWith must carve out the excluded prefix, got: $OUT_EX"
 echo "$OUT_EX" | grep -q "app-code-low-risk-baseline" || fail "the excluded path must fall through to the low-risk baseline, got: $OUT_EX"
 echo "PASS: excludeStartsWith carves an exception out of a broader startsWith match"
+
+# ── 8) templates/risk-rules.example.json — self-coverage, deep-gates locked, structurally sound ─
+[ -f "$EXAMPLE_RULES" ] || fail "templates/risk-rules.example.json not found at $EXAMPLE_RULES"
+node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$EXAMPLE_RULES" \
+  || fail "templates/risk-rules.example.json is not valid JSON"
+
+OUT_SELF="$(node "$CR" --path "risk-rules.json" --rules "$EXAMPLE_RULES" --no-gate 2>&1)"
+echo "$OUT_SELF" | grep -q "MATCHED: harness" || fail "the example template's own harness rule must match a change to risk-rules.json itself, got: $OUT_SELF"
+echo "$OUT_SELF" | grep -q "blast_radius=high" || fail "a self-covering harness match must raise blast=high, got: $OUT_SELF"
+echo "PASS: templates/risk-rules.example.json's harness rule covers risk-rules.json itself (self-coverage)"
+
+OUT_CLAUDE="$(node "$CR" --path "CLAUDE.md" --rules "$EXAMPLE_RULES" --no-gate 2>&1)"
+echo "$OUT_CLAUDE" | grep -q "MATCHED: harness" || fail "the example template's harness rule must also cover CLAUDE.md, got: $OUT_CLAUDE"
+echo "PASS: templates/risk-rules.example.json's harness rule also covers CLAUDE.md"
+
+node -e '
+  const rules = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const byId = Object.fromEntries(rules.pathRules.map((r) => [r.id, r.deep ?? []]));
+  const expected = {
+    "example-irreversible-migration": ["<your-deep-verify-command, e.g. verify:db>"],
+    "example-security-surface": ["<your-deep-verify-command, e.g. verify:auth>"],
+    "example-outbound-side-effect": [],
+    harness: [],
+    "ci-deploy-infra": [],
+    "workspace-root": [],
+  };
+  for (const [id, want] of Object.entries(expected)) {
+    const got = byId[id];
+    if (got === undefined) throw new Error(`rule id missing from example template: ${id}`);
+    if (JSON.stringify(got) !== JSON.stringify(want))
+      throw new Error(`rule ${id} deep gates changed — want ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+  }
+  for (const r of rules.pathRules) {
+    for (const g of r.deep ?? []) {
+      if (typeof g !== "string" || !g.trim()) throw new Error(`rule ${r.id} has an empty/non-string deep-gate entry`);
+    }
+  }
+' "$EXAMPLE_RULES" || fail "templates/risk-rules.example.json per-rule deep-gate lists changed unexpectedly or are malformed"
+echo "PASS: templates/risk-rules.example.json's per-rule deep-gate lists are locked and structurally sound"
 
 exit 0
