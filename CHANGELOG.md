@@ -5,6 +5,37 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.10.1
+
+The reward-hack guard was structurally never armed in the workflow its consuming repo mandates.
+
+- **`hooks/protect-during-loop.mjs` judged arming and glob matching at `CLAUDE_PROJECT_DIR` (BAC-785).**
+  In a worktree-isolated session that is the *main* worktree, parked on an unprotected branch — so
+  `guardState(root)` returned `unprotected-branch` and the hook `exit(0)`'d **before stdin was even
+  parsed**, reaching a verdict before it knew what file was being touched. A second, independent break
+  sat behind it: even when armed, `relative(root, filePath)` produced `../<sibling-worktree>/…`, which
+  the hook explicitly let through. Measured in a consuming repo: five protected paths
+  (`.claude/settings.json`, `**/*.test.sh`, `package.json`, …) were edited across one task with no
+  `.loop/guard-off` window and no denial.
+- **The effective root is now derived from what is being touched**: the target's own worktree, else the
+  session cwd's worktree, else `root`. Re-rooting only happens for a worktree of the *same* repository
+  (`--git-common-dir`, resolved and realpath'd — a main worktree prints it relative, a linked one
+  absolute, and on macOS `/var` is a symlink to `/private/var`), so an unrelated repo stays out of
+  scope. This is the pattern `hooks/gate-before-merge.mjs` already used for direction inference.
+- **Re-rooting can never disarm.** It exists to find protection `root` missed, not to escape protection
+  `root` had: a session on an armed worktree running a Bash command with cwd back in the main worktree
+  would otherwise have been handed a way out.
+- **A worktree nested inside the root** (an untracked `.worktrees/…`, a layout consuming repos allow)
+  counts as a separate worktree. Detected filesystem-only, so an ordinary in-root edit still spawns no
+  extra git.
+- **The plugin's own install path is protected again in these sessions.** That absolute-prefix
+  self-protection sits behind the arming check, so it was off for the same reason — the session-cwd
+  fallback is what restores it.
+- New `lib/protect-globs.mjs` exports `isInsideRoot` / `resolveWorktreeRoot`; new
+  `test/protect-worktree-root.test.sh` pins 19 cases (5 of them red against 0.9.0), including
+  ancestor-walk resolution for a file under a not-yet-created directory — a protected `**/*.test.sh`
+  written into a fresh directory was the one reward-hack path left open.
+
 ## ship-flow 0.5.0
 
 Adds a new skill: **`diagnosing-bugs`**, ported from `mattpocock/skills` (upstream renamed it from
@@ -94,7 +125,6 @@ Genericity repair, a false-alarm fix in the heartbeat, and coverage for four pre
 ⚠️ **Dependency ranges**: `ship-flow` and `loop-memory` both declare `loop-engine ^0.9.0`, which
 `0.10.0` falls outside of. They need `^0.10.0` in a companion bump, following the convention of every
 prior loop-engine minor.
-
 ## loop-memory 0.4.0
 
 Hook liveness is now recorded always-on, so "the hooks fired" stops being an anecdote (issue #35).

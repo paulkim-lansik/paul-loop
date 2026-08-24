@@ -19,6 +19,11 @@
 // that hits a protected glob. Pure reads (cat/grep/pnpm test/etc.) pass through. The real boundary is
 // PR review, not this hook.
 //
+// Rooting: arming and glob matching are judged at the *target's* worktree, not the session's
+// CLAUDE_PROJECT_DIR (BAC-785) — see the effective-root block below. On the Bash channel "the target"
+// can only mean the session's cwd (what a shell touches is undecidable), so that channel is rooted at
+// cwd's worktree — a coarser net, in keeping with it being a guardrail and not a boundary.
+//
 // fail-open: internal error / non-git / detached -> allow (never wedge the session).
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -36,19 +41,22 @@ const pluginPath = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, 
 let GUARD_OFF_TTL_MS;
 let globToRegExp;
 let guardState;
+let isInsideRoot;
 let loadPatterns;
-let state;
+let resolveWorktreeRoot;
 try {
-  ({ GUARD_OFF_TTL_MS, globToRegExp, guardState, loadPatterns } = await import(
-    '../lib/protect-globs.mjs'
-  ));
-  state = guardState(root);
+  ({ GUARD_OFF_TTL_MS, globToRegExp, guardState, isInsideRoot, loadPatterns, resolveWorktreeRoot } =
+    await import('../lib/protect-globs.mjs'));
 } catch (e) {
   console.error(`[protect-during-loop] judge module load failed (fail-open): ${String(e?.message ?? e)}`);
   process.exit(0);
 }
-if (!state.armed) process.exit(0);
 
+// stdin is parsed BEFORE the arming verdict (BAC-785). It used to be the other way round:
+// `guardState(root)` ran first and `if (!state.armed) process.exit(0)` reached a verdict before the
+// target path was even known. In a worktree-isolated session root is the MAIN worktree, parked on an
+// unprotected branch — so the guard disarmed itself for every edit the session made, in the exact
+// workflow the consuming repo mandates.
 let payload;
 try {
   payload = JSON.parse(readFileSync(0, 'utf8'));
@@ -58,10 +66,62 @@ try {
 const tool = payload?.tool_name;
 const input = payload?.tool_input ?? {};
 
-const globFile = join(root, '.loop', 'protect.globs');
+const str = (v) => (typeof v === 'string' && v ? v : '');
+// `cwd` is documented as a field on every hook event; process.cwd() backs it up so behaviour doesn't
+// hinge on a premise no captured PreToolUse payload in this repo confirms. Both candidates still have
+// to pass the same-repository check below, so neither can re-root anywhere wrong.
+const sessionDir = str(payload?.cwd) || process.cwd();
+const target = tool === 'Bash' ? sessionDir : str(input?.file_path);
+
+// Effective root: the target's own worktree -> the session's worktree -> root.
+let effRoot = root;
+let rerooted = null;
+try {
+  rerooted = resolveWorktreeRoot(root, target);
+  if (rerooted) {
+    effRoot = rerooted.top;
+  } else if (target && target !== sessionDir && !isInsideRoot(root, target)) {
+    // The target belongs to no worktree of this repo — the plugin's own install path being the case
+    // that matters. Without this step the absolute-prefix self-protection further down stays off in
+    // exactly the sessions it exists for, because arming would still be judged at `root`.
+    // (Skipped when target IS sessionDir — the Bash channel — since that call just failed above.)
+    const viaSession = resolveWorktreeRoot(root, sessionDir);
+    if (viaSession) effRoot = viaSession.top;
+  }
+} catch (e) {
+  // Keep root (fail-open, unchanged behaviour) — but say so. What this hides is precisely the bug
+  // BAC-785 fixes: the guard quietly falling back to root and disarming itself. Its sibling catches
+  // both log; a silent one here would make a regression into this bug class indistinguishable from
+  // normal operation. Only reachable when the target is outside root, so it can't spam every call.
+  console.error(`[protect-during-loop] worktree re-root failed (fail-open): ${String(e?.message ?? e)}`);
+}
+
+let state;
+try {
+  state = guardState(effRoot);
+  // Re-rooting must never DISARM. It exists to find protection `root` missed, not to escape
+  // protection `root` had: with the session on an armed worktree, a Bash command whose cwd points at
+  // the main worktree used to be denied, and re-rooting to that unprotected branch would hand back a
+  // way out. Costs one extra branch lookup, and only on the rare unarmed-after-re-root path.
+  if (!state.armed && effRoot !== root) state = guardState(root);
+} catch (e) {
+  console.error(`[protect-during-loop] arming verdict failed (fail-open): ${String(e?.message ?? e)}`);
+  process.exit(0);
+}
+if (!state.armed) process.exit(0);
+
+const globFile = join(effRoot, '.loop', 'protect.globs');
 if (!existsSync(globFile)) process.exit(0);
 
-const patterns = loadPatterns(globFile);
+let patterns;
+try {
+  patterns = loadPatterns(globFile);
+} catch (e) {
+  // Unreadable glob file (permissions, a truncated write) -> allow. This file declares fail-open as
+  // its contract; an uncaught throw here would exit non-zero and wedge the tool call instead.
+  console.error(`[protect-during-loop] protect.globs unreadable (fail-open): ${String(e?.message ?? e)}`);
+  process.exit(0);
+}
 const matchesGlob = (tok) => patterns.some((p) => globToRegExp(p).test(tok));
 
 const TTL_MIN = Math.round(GUARD_OFF_TTL_MS / 60000);
@@ -143,7 +203,10 @@ if (filePath === pluginPath || filePath.startsWith(`${pluginPath}/`)) {
   );
 }
 
-const rel = relative(root, filePath).split('\\').join('/');
+// A target-based re-root already carries git's own repo-relative path. When only the *session*
+// fallback moved effRoot (the target resolved to no worktree), rel stays measured from `root`: the
+// target isn't inside effRoot, and measuring it from there would over-block a nested foreign repo.
+const rel = (rerooted ? rerooted.rel : relative(root, filePath)).split('\\').join('/');
 // Paths outside the repo (another repo, /tmp, $HOME, etc. — the plugin path is already handled above)
 // aren't protected -> allow (`../` and absolute paths are excluded from matching).
 if (rel === '..' || rel.startsWith('../') || rel.startsWith('/')) process.exit(0);
