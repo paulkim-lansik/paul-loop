@@ -5,6 +5,52 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.4.0
+
+`to-prd` and `to-issues` now produce a project per body of work, instead of accumulating every PRD and
+every issue under whatever long-lived project a repo already had.
+
+- **`to-prd` creates a new project for each PRD (was: only "if no project exists yet").** The old
+  wording was conditional, and the condition was almost never false — any repo that has been running a
+  while has *some* project — so in practice the skill never created one. Measured in the consuming
+  repo: a project named `… 보일러플레이트 설계` held two PRD documents for entirely unrelated bodies of
+  work (product analytics instrumentation, and hospital-admin account provisioning) plus issues for
+  message scheduling, call timelines, and test-DB reset. The project's name had stopped describing its
+  contents, and neither PRD had a grouping of its own. The skill now creates the project as step 3 and
+  names the two narrow exceptions (the PRD amends an existing PRD's scope; the repo's tracker doc pins
+  PRDs somewhere) rather than leaving reuse to judgement.
+- **`to-prd` attaches supporting material to the project** — tracker documents for prose, links for
+  artifacts that live outside it (ADRs, PRs, published artifacts, dashboards). The project becomes the
+  single place to land for a body of work, rather than a bare issue list. Only material that already
+  exists gets attached; the skill does not block on artifacts not yet produced.
+- **`to-prd` reports the project identifier**, because `to-issues` cannot recover it otherwise.
+- **`to-issues` resolves a target project explicitly, as a new step 5, and stops if it cannot.**
+  Previously project routing was one clause inside "check this repo's tracker-integration doc" — so
+  when that doc pinned a fixed project (as the consuming repo's did), every issue went there, and when
+  it said nothing, issues were filed with no project at all. Measured: 51 of the first 250 issues
+  carrying the repo's own label had no project. Resolution order is now PRD's project → user-named →
+  the repo's standing non-PRD project → **ask**. Both silent failures are called out by name, because
+  each looks like success at the moment of filing.
+
+Alongside it, finished issues now end up owned by someone.
+
+- **`ship-feature` step 0 says who to assign the claim to.** It already said to "claim the issue to
+  yourself", but an agent has no account on the tracker, so "yourself" resolved to nothing and the
+  assignee was routinely left empty. It now names the target explicitly — the human whose account the
+  session is authenticated as — and spells out why an empty assignee is invisible until much later:
+  the tracker's merge automation closes the issue without setting one, so it lands in Done owned by
+  nobody. Measured in the consuming repo: the completed issues carrying its own label include roughly
+  200 with no assignee at all.
+- **`retrospect` gains a tracker close-out backstop.** Claiming at step 0 only helps runs that went
+  through `ship-feature`; issues closed by hand or by merge automation still arrive unowned. Before
+  reporting, retrospect now assigns the session's user to any issue *this session finished* that is
+  done with an empty assignee — scoped deliberately to this session's own work, because a blanket
+  sweep would attribute other people's issues to whoever happened to run it. A backlog it declines to
+  touch gets surfaced in the report instead.
+
+Nothing here is repo-specific: "which project" is still resolved from the consuming repo's own
+tracker-integration doc, and Linear remains the worked example rather than a requirement.
+
 ## ship-flow 0.3.2
 
 Skill-layer hygiene closing the 2026-08-20 harness maturity audit's remaining findings. No behaviour

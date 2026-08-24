@@ -76,9 +76,30 @@ Ask the user:
 
 Iterate until the user approves the breakdown.
 
-### 5. Publish the issues to the issue tracker
+### 5. Resolve the target project
 
-For each approved slice, publish a new issue to this repo's issue tracker. Check this repo's own tracker-integration doc, if it has one, for the exact conventions it expects (team/project routing, required fields) — apply this repo's own required labels/conventions, if any. Use the issue body template below.
+Every issue you create belongs to a project (Linear's Project is the worked example; other trackers
+may call it an epic or a milestone). **Resolve which one before you create anything**, in this order:
+
+1. **The project of the PRD this plan came from.** If the source is a PRD, `to-prd` created a project
+   for it and reported the identifier — use that one. If you were handed the PRD document rather than
+   the identifier, read the document's parent project off the tracker.
+2. **What the user named**, if they specified a project.
+3. **The repo's standing project for non-PRD work**, if its tracker-integration doc names one — the
+   home for bugfixes, ops hygiene, and chores that have no PRD behind them.
+
+**If none of the three resolves, stop and ask the user.** Do not file the issues with no project, and
+do not fall back to whichever long-lived project happens to exist. Both failures look like success at
+the moment of filing and are tedious to unpick later: project-less issues become indistinguishable
+from ones that were *meant* to be unfiled, and a default catch-all silently accumulates work its name
+doesn't describe.
+
+If the slices clearly span more than one body of work, that's a signal the breakdown in step 3 mixed
+two plans together — raise it with the user rather than splitting the issues across projects.
+
+### 6. Publish the issues to the issue tracker
+
+For each approved slice, publish a new issue to this repo's issue tracker, **in the project resolved in step 5**. Check this repo's own tracker-integration doc, if it has one, for the exact conventions it expects (team routing, required fields) — apply this repo's own required labels/conventions, if any. Use the issue body template below.
 
 These issues are considered ready for AFK agents — if this repo's tracker has a triage-state or label vocabulary for that, apply it here (check the tracker-integration doc if unsure which value to use) unless instructed otherwise.
 

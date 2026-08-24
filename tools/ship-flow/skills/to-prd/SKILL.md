@@ -1,6 +1,6 @@
 ---
 name: to-prd
-description: Turn the current conversation context into a PRD and publish it as a document in this repo's issue tracker (creating the project first if none exists yet). Use when user wants to create a PRD from the current context.
+description: Turn the current conversation context into a PRD, create a dedicated project for it on this repo's issue tracker, and publish the PRD as a document under that project. Use when user wants to create a PRD from the current context.
 ---
 
 # to-prd — publish a PRD from conversation context
@@ -21,9 +21,47 @@ This skill takes the current conversation context and codebase understanding and
 
 Check with the user that these seams match their expectations.
 
-3. Write the PRD using the template below, then publish it as a **document in the project** (not as an issue):
-   - Determine the target project on this repo's issue tracker (Linear's Project is the worked example — other trackers may call the equivalent grouping an epic, milestone, or something else). **If no project exists yet for this work, create the project first**, then create the PRD document under it.
-   - Create the PRD as a **project document**, if this repo's tracker has a document/PRD concept — Linear's Document feature is the worked example. If the tracker has no separate document concept, the closest equivalent (e.g. a pinned top-level issue) is fine. The PRD document doesn't need this repo's issue-workflow labels, if it uses them — those apply to issues, not documents. Any actionable label marking work ready to pick up belongs on the slice issues produced later by `to-issues`, which reference this PRD document as their source.
+3. **Create a new project for this PRD.** A PRD defines a distinct body of work, and that body of work
+   gets its own grouping on the tracker — Linear's Project is the worked example; other trackers may
+   call it an epic, a milestone, or something else.
+
+   **Create it new. Do not file the PRD under an existing project because one happens to be there.**
+   That is the failure this step exists to prevent: reusing whatever long-lived project the repo
+   already has turns it into a catch-all whose name stops describing its contents, and the PRDs inside
+   it lose any grouping of their own. If you find yourself reaching for an existing project, the
+   question to ask is not "does a project exist?" but "is this PRD an amendment to *that specific*
+   PRD's scope?" — and only a yes justifies reuse.
+
+   Two legitimate exceptions, both narrow: the PRD genuinely amends an existing PRD's scope (then
+   reuse that PRD's project), or this repo's tracker-integration doc explicitly pins PRDs somewhere.
+   Anything else — create the project.
+
+   Give the project a name that describes *this* body of work, a summary, and a description saying
+   what is in and out of scope.
+
+4. Write the PRD using the template below and publish it as a **document under the project created in
+   step 3** (not as an issue) — Linear's Document feature is the worked example. If the tracker has no
+   separate document concept, the closest equivalent (e.g. a pinned top-level issue) is fine.
+
+   The PRD document doesn't need this repo's issue-workflow labels, if it uses them — those apply to
+   issues, not documents. Any actionable label marking work ready to pick up belongs on the slice
+   issues produced later by `to-issues`, which reference this PRD document as their source.
+
+5. **Attach the supporting material to the project**, so the project is the one place someone lands to
+   find everything about this body of work:
+   - **Documents** for prose that lives in the tracker — research notes, design write-ups, decision
+     records drafted during this conversation.
+   - **Links** for artifacts that live outside it — ADRs and design docs in the repo, pull requests,
+     published artifacts, dashboards, external specs. Where the tracker's link list is append-only
+     (Linear's is), adding a link never removes an existing one.
+
+   Only attach what already exists. Don't invent artifacts to fill the list, and don't block on
+   material that hasn't been produced yet — `to-issues` and the implementation runs will add more
+   links as they go.
+
+6. **Report the project identifier** in your final message, alongside the PRD document reference.
+   `to-issues` needs it: the slice issues it creates must land in this same project, and it has no way
+   to recover the identifier if you don't hand it over.
 
 <prd-template>
 
