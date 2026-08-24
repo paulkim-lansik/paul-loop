@@ -2,8 +2,18 @@
 // Kept as a named workflow (rather than an inline script pasted into a skill) so a run that
 // finishes the investigate phase but gets interrupted before synthesis can be resumed instead
 // of re-run from scratch. The wrapping skill (harness-maturity-audit) is a thin caller: it
-// invokes Workflow({ name: 'harness-audit' }) and owns saving the report and any follow-up
-// hand-off (e.g. to an issue-creation skill) once this workflow returns.
+// invokes Workflow({ name: 'ship-flow:harness-audit' }) and owns saving the report and any
+// follow-up hand-off (e.g. to an issue-creation skill) once this workflow returns.
+//
+// On the name: `meta.name` below is the BARE name; the INVOCATION name is plugin-namespaced.
+// Claude Code namespaces plugin-provided workflows as `<plugin-name>:<meta.name>` (docs:
+// code.claude.com/docs/en/workflows.md — "Plugin workflows are namespaced by the plugin name"),
+// which is also what first-party plugins do: the official claude-security plugin declares
+// `meta.name: "scan"` in workflows/scan.js and its skill invokes `Workflow({ name:
+// "claude-security:scan" })`. So the two are SUPPOSED to differ — do not "fix" this by
+// prefixing `meta.name`. (An alternative invocation form exists, `Workflow({ scriptPath:
+// "${CLAUDE_PLUGIN_ROOT}/workflows/<file>.js" })`, used by the official code-modernization
+// plugin; it bypasses name resolution entirely and is not what this plugin uses.)
 
 export const meta = {
   name: 'harness-audit',

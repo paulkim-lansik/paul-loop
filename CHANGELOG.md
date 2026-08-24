@@ -5,6 +5,44 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.3.2
+
+Skill-layer hygiene closing the 2026-08-20 harness maturity audit's remaining findings. No behaviour
+was removed — the reductions below are progressive disclosure, and every property asserted by
+`ship-flow-executable-contract.test.sh`, `verdict-wrap-required.test.sh`,
+`skill-guard-prose-wiring.test.sh`, `lesson-codification-bac756.test.sh` and
+`runtime-verify-evidence-bac749.test.sh` stayed inline in `SKILL.md` by construction.
+
+- **Workflow invocation name settled (audit finding 11).** The audit flagged
+  `harness-maturity-audit/SKILL.md`'s `Workflow({ name: 'ship-flow:harness-audit' })` as disagreeing
+  with `workflows/harness-audit.js`'s own `meta.name: 'harness-audit'`, and could not test which was
+  right. It is the **workflow file's header comment** that was wrong, not the call site: Claude Code
+  namespaces plugin-provided workflows as `<plugin-name>:<meta.name>` (docs:
+  `code.claude.com/docs/en/workflows.md` — "Plugin workflows are namespaced by the plugin name"), and
+  the first-party `claude-security` plugin does exactly this — `workflows/scan.js` declares
+  `meta.name: "scan"` while its skill invokes `Workflow({ name: "claude-security:scan" })`. The
+  comment now states the rule and warns against "fixing" the mismatch by prefixing `meta.name`.
+- **`ship-feature/SKILL.md`: 4771 → 4067 words** (hard cap 5000; headroom 229 → 933). Background,
+  rationale and worked examples moved into three bundled reference files linked from the point of
+  use, following the pattern `tdd/` and `improve-codebase-architecture/` already use:
+  `RISK-GATE.md` (what the rule set covers, why agent input may only raise a classification, the two
+  channels of `DENY_AND_LOG`), `AC-CONTRACTS.md` (full AC syntax, field semantics, examples, why the
+  one-contract floor exists), and `PUBLISH-HANDOFF.md` (why the Builder session doesn't publish its
+  own work, and why a heredoc is unsafe for untrusted-derived text). The 2000-word soft target is not
+  reachable without deleting codified behaviour: ~2100 words are the act-moment step sequence and
+  ~440 are the non-negotiable invariants.
+- **`publisher` is now referenced as `ship-flow:publisher`** in `ship-feature/SKILL.md`, matching the
+  three review agents and `ship-flow:planner` (namespaced in 0.3.0). No known collision exists today;
+  the point is that `code-reviewer`'s collision with `pr-review-toolkit:code-reviewer` arrived
+  unannounced, and a generic noun like `publisher` is the same shape of risk. The namespaced form
+  resolves identically either way, so there is no downside to aligning it.
+- **`improve-codebase-architecture/DEEPENING.md` wired into `SKILL.md`.** The audit called it
+  orphaned; it was in fact reachable, but only via `INTERFACE-DESIGN.md` (which *is* linked from
+  `SKILL.md`) off a niche "want to explore alternative interfaces?" branch. Its content — the four
+  dependency categories, seam discipline, replace-don't-layer testing — is core to step 3's grilling
+  loop, which decides "what sits behind the seam, what tests survive", so it is now linked there
+  directly. Kept rather than deleted for that reason.
+
 ## ship-flow 0.3.1 · loop-memory 0.3.1
 
 - Dependency range only: both declared `loop-engine ^0.8.0`, which `0.9.0` (below) falls outside of.
