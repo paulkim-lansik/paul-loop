@@ -14,6 +14,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadDotenv } from './lib/load-dotenv.mjs';
 
 const env = process.env;
 const projectDir = env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -65,9 +66,16 @@ try {
     ['CLAUDE_PLUGIN_OPTION_LOOP_MEMORY_SIGNING_KEY', 'LOOP_MEMORY_SIGNING_KEY'],
     ['CLAUDE_PLUGIN_OPTION_LOOP_RECALL_MAX_DISTANCE', 'LOOP_RECALL_MAX_DISTANCE'],
     ['CLAUDE_PLUGIN_OPTION_LOOP_KNOWLEDGE_MAX_DISTANCE', 'LOOP_KNOWLEDGE_MAX_DISTANCE'],
+    ['CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH', 'LOOP_DOTENV_PATH'],
   ]) {
     if (!childEnv[plain] && env[pluginOpt]) childEnv[plain] = env[pluginOpt];
   }
+  // Then the repo's gitignored dotenv file, for keys neither the session env nor userConfig supplied
+  // (Claude Code passes hooks the session process env only — it does not read .env files, so a key
+  // that lives solely in .env would hit the no-key gate below and no-op silently). Runs *after* the
+  // bridge above so the file never overrides an explicit export or userConfig value.
+  const dotenv = loadDotenv(projectDir, childEnv.LOOP_DOTENV_PATH, childEnv);
+  dbg(dotenv ? `dotenv: loaded ${dotenv}` : 'dotenv: none found');
   // Source tag (paul-loop issue #35) — self-reported, good-faith metadata for observability/debugging,
   // NOT a security or forgery-proof signal. Anyone with shell access can run the CLI directly and set
   // this same env var by hand, at the same trust level as querying the database directly — there is
