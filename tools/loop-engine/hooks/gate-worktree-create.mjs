@@ -31,8 +31,41 @@
 // scope. Any `origin/*` ref is accepted, not just the integration branch — covering both the common
 // case and the documented exception (e.g. `git worktree add -b main <path> origin/main`, a
 // main-tracking-only worktree) with one rule.
+//
+// ── Second feature worktree in one session -> REQUIRE (human approval) ───────────────────────────
+// Second job (BAC-778): opening a *second* `feature/*` worktree inside one session is the mechanical
+// half of a scope boundary this harness draws in prose — a run takes one issue to an open PR and
+// STOPS there for the human. An audited run opened its PR and then started an entirely new issue in
+// the same session, with nothing to catch it. A second feature worktree is the earliest mechanically
+// observable moment of that, so this hook escalates it to `permissionDecision: "ask"` (Claude Code's
+// human-approval prompt = the gate vocabulary's REQUIRE) rather than denying: starting a second
+// feature is legitimate when a human says so, and only when a human says so.
+//
+// Exempt: everything that isn't a feature branch — `lessons/*`, `chore/*`, `fix/*`, `docs/*`, and a
+// detached or existing-branch worktree (already out of this hook's newBranch scope). The prefix is
+// read from a consuming repo's `.claude/ship-flow.config.json` -> `featureBranchPrefix`; without
+// config it defaults to `feature/`. Kill switch: LOOP_WORKTREE_SESSION_GATE_OFF=1.
+//
+// ⚠️ How "one session" is determined, and what that can't see (be honest about the limits):
+//   - The counter is keyed on the PreToolUse payload's `session_id`, persisted at
+//     `<CLAUDE_PROJECT_DIR>/.loop/worktree-gate.<session>.json` (same per-session-file technique as
+//     gate-stop-verdict.mjs's deny counter, and for the same reason — a shared file would let two
+//     concurrent sessions reset each other).
+//   - No `session_id` on the payload -> no escalation at all (allow). A missing id can't be told
+//     apart from "some other session", and collapsing every session into one bucket would REQUIRE on
+//     the second feature worktree *ever created in this repo*. Undeterminable -> don't claim it.
+//   - A subagent has its own session id, so a subagent-created worktree neither counts toward nor
+//     sees the parent's budget. A `--resume`/`--continue` that starts a new session id starts a new
+//     budget. Deleting `.loop/worktree-gate.*.json` resets it.
+//   - Worktrees created through Claude Code's own mechanisms (`EnterWorktree`, `Agent
+//     isolation:"worktree"`) never reach a Bash PreToolUse hook — same blind spot the header above
+//     already describes for the origin/* rule.
+//   - It counts *attempts*, deduped by branch name: a `git worktree add` that later fails on its own
+//     still consumes the budget (the hook runs before the command does), while retrying the same
+//     branch name doesn't double-count.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import {
   firstSubcommand,
   GIT_VALUE_GLOBAL,
@@ -44,24 +77,43 @@ import {
 import { logRedEvent } from './red-events-log.mjs';
 
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: Claude Code injects this at hook runtime.
-const root = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+const env = process.env;
+const root = env.CLAUDE_PROJECT_DIR ?? process.cwd();
+
+const DEFAULT_FEATURE_PREFIX = 'feature/';
+
+function featureBranchPrefix(projectRoot) {
+  try {
+    const cfg = JSON.parse(
+      readFileSync(join(projectRoot, '.claude', 'ship-flow.config.json'), 'utf8'),
+    );
+    if (typeof cfg.featureBranchPrefix === 'string' && cfg.featureBranchPrefix) {
+      return cfg.featureBranchPrefix;
+    }
+  } catch {
+    /* missing/unreadable config -> fall through to the default */
+  }
+  return DEFAULT_FEATURE_PREFIX;
+}
 
 function allow() {
   process.exit(0);
 }
-function deny(reason, code) {
+function decide(decision, reason, code) {
   logRedEvent(root, { kind: 'worktree-create-guard', code });
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
+        permissionDecision: decision,
         permissionDecisionReason: reason,
       },
     }),
   );
   process.exit(0);
 }
+const deny = (reason, code) => decide('deny', reason, code);
+const ask = (reason, code) => decide('ask', reason, code);
 
 // `git worktree add`'s own value flags — -b/-B are the new branch name, --reason is a --lock message.
 const VALUE_WORKTREE_ADD = new Set(['-b', '-B', '--reason']);
@@ -75,10 +127,14 @@ function parseWorktreeAdd(rawToks) {
   let i = wIdx + 2;
   let explicitNewBranch = false;
   let detachOrOrphan = false;
+  let explicitBranchName = null;
   const positional = [];
   while (i < toks.length) {
     const t = toks[i];
-    if (t === '-b' || t === '-B') explicitNewBranch = true;
+    if (t === '-b' || t === '-B') {
+      explicitNewBranch = true;
+      explicitBranchName = toks[i + 1] ?? null;
+    }
     if (t === '--detach' || t === '-d' || t === '--orphan') detachOrOrphan = true;
     if (t.startsWith('-')) {
       i += VALUE_WORKTREE_ADD.has(t) && !t.includes('=') ? 2 : 1;
@@ -91,7 +147,37 @@ function parseWorktreeAdd(rawToks) {
   // branch from local HEAD as if -b $(basename <path>) were given (per `git worktree add` docs) — the
   // same risk as an explicit -b/-B, so treated identically.
   const dwimNewBranch = !explicitNewBranch && !detachOrOrphan && positional.length <= 1;
-  return { newBranch: explicitNewBranch || dwimNewBranch, ref: positional[1] ?? null };
+  // The DWIM branch name is the path's basename, by the same doc'd rule.
+  const branch = explicitNewBranch
+    ? explicitBranchName
+    : dwimNewBranch && positional[0]
+      ? basename(positional[0])
+      : null;
+  return { newBranch: explicitNewBranch || dwimNewBranch, ref: positional[1] ?? null, branch };
+}
+
+// Per-session record of feature branches this session already opened a worktree for. Best-effort:
+// an unreadable/unwritable state file means the escalation simply doesn't fire (it must never turn
+// into a broken-state deny — the origin/* rule above is this hook's actual gate).
+function sessionStatePath(sessionId) {
+  const safe = String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+  return safe ? join(root, '.loop', `worktree-gate.${safe}.json`) : null;
+}
+function readSessionBranches(file) {
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    return Array.isArray(parsed?.branches) ? parsed.branches.filter((b) => typeof b === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function writeSessionBranches(file, branches) {
+  try {
+    if (!existsSync(dirname(file))) mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify({ branches })}\n`);
+  } catch {
+    /* best-effort — a state-write failure must not change this hook's verdict */
+  }
 }
 
 // -- Detection (fail-open: an uncertain parse / a non-target command passes) -------------------------
@@ -133,6 +219,37 @@ try {
           "`git fetch origin && git worktree add -b <branch> <path> origin/<integration-branch>`.",
         'non-origin-ref',
       );
+    }
+  }
+
+  // -- Every origin/* check passed. Now the session-scope escalation (see header) ------------------
+  // Deliberately after the deny checks: a command that never runs must not consume the budget.
+  if (env.LOOP_WORKTREE_SESSION_GATE_OFF !== '1') {
+    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : '';
+    const stateFile = sessionId ? sessionStatePath(sessionId) : null;
+    if (stateFile) {
+      const prefix = featureBranchPrefix(root);
+      const newFeatureBranches = segs
+        .filter((s) => s.newBranch && typeof s.branch === 'string' && s.branch.startsWith(prefix))
+        .map((s) => s.branch);
+      if (newFeatureBranches.length) {
+        const seen = readSessionBranches(stateFile);
+        const unseen = newFeatureBranches.filter((b) => !seen.includes(b));
+        if (unseen.length) {
+          const after = [...seen, ...unseen];
+          writeSessionBranches(stateFile, after);
+          if (after.length > 1) {
+            ask(
+              `REQUIRE (human approval): this session already opened a ${prefix}* worktree ` +
+                `(${seen.join(', ')}), and this creates another one (${unseen.join(', ')}). One run ` +
+                `takes one issue to an open PR and stops there — starting a second feature in the ` +
+                `same session is a scope-boundary decision a human makes, not the run. Approve if ` +
+                `that's intended; otherwise finish (or hand off) the first one in a fresh session.`,
+              'second-feature-worktree',
+            );
+          }
+        }
+      }
     }
   }
   allow();

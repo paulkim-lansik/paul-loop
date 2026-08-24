@@ -22,9 +22,10 @@
 // 제어 입력(stall 판정·승격 신호 등)으로 승격하려면 protect 편입 또는 산출기 서명을 먼저 결정할
 // 것 — 머지 게이트의 진실은 여전히 verdict-state.json + Stop 훅이다.
 
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { sanitizeRecord } from './sanitize.mjs'
 
 export function runsDir(root) {
@@ -80,4 +81,68 @@ export function appendRunEvent(root, { type, sessionId, runId, payload, writeCur
     }
   }
   return event
+}
+
+// ── verdict 이벤트 귀속 해소 (BAC-778) ───────────────────────────────────────────────────────
+// 문제(실측): 계측 훅(record-run-event.mjs)은 CLAUDE_PROJECT_DIR 아래 원장에 쓰는데 verdict-run.sh는
+// **cwd** 아래에 쓴다. 워크트리 격리 규약을 지키는 레포에선 이 둘이 상시로 갈린다 — 검증은 링크된
+// 워크트리에서 돌고 세션 이벤트는 메인 워크트리에 남는다. 게다가 워크트리엔 `.loop/runs/current`가
+// 없어 run-id까지 'unknown'으로 떨어진다. 결과: 세션 원장에 verdict.* 이벤트가 한 건도 없고
+// run-metrics의 Q1(first-pass)·Q2가 전 런 INSUFFICIENT_DATA가 된다. (glucofit-partners 7일 실측:
+// 메인 원장 = 3,096 이벤트 / 111 런 / verdict.* 0건. 같은 시점 워크트리 하나의 unknown.jsonl =
+// verdict.passed 14 + verdict.failed 2 — 이벤트는 산출되고 있었고, 원장이 갈려 있었을 뿐이다.)
+//
+// 해소는 **추측이 아니라 확증(corroboration)**으로 한다: 후보 루트 중 `<root>/.loop/runs/<run-id>.jsonl`이
+// **이미 존재하는** 곳에만 붙인다 — 그 파일 자체가 "훅이 이 세션의 이벤트를 여기 쓰고 있다"는 증거다.
+// 확증이 하나도 없으면 기존 동작(cwd + current 포인터 + unknown 버킷)이 한 글자도 안 바뀐다.
+//
+// run-id 우선순위: ① CLAUDE_CODE_SESSION_ID ② `.loop/runs/current` ③ 'unknown'.
+//   ①은 Bash 툴 호출 환경에 실제로 주입된다(실측 확인) — 훅이 stdin으로 받는 session_id와 같은 값이라
+//   세션 원장 파일명과 일치하고, current 포인터의 동시-세션 last-writer-wins 오귀속에 면역이다.
+// 루트 후보: CLAUDE_PROJECT_DIR → cwd → 메인 워크트리 루트.
+//   ⚠️ CLAUDE_PROJECT_DIR는 **훅 프로세스에만** 주입되고 Bash 툴 호출에는 없다(실측: UNSET) — 그래서
+//   `git rev-parse --git-common-dir`로 메인 워크트리를 유추하는 세 번째 후보가 필요하다. git 호출은
+//   best-effort(2초 타임아웃 — 실패하면 그 후보가 없는 것으로 친다).
+function mainWorktreeRoot(cwd) {
+  try {
+    const common = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim()
+    if (!common) return null
+    const abs = resolve(cwd, common)
+    // 통상 형태는 `<메인 워크트리>/.git` — bare repo 등 그 외 형태는 메인 워크트리가 없다고 본다.
+    return abs.endsWith('/.git') ? dirname(abs) : null
+  } catch {
+    return null
+  }
+}
+
+export function resolveLedgerTarget({ cwd, env } = {}) {
+  const base = cwd ?? process.cwd()
+  const e = env ?? {}
+  const roots = []
+  const push = (d) => {
+    if (typeof d === 'string' && d && !roots.includes(d)) roots.push(d)
+  }
+  push(e.CLAUDE_PROJECT_DIR)
+  push(base)
+  push(mainWorktreeRoot(base))
+
+  const sid = runIdFrom(e.CLAUDE_CODE_SESSION_ID)
+  if (sid !== 'unknown') {
+    for (const r of roots) {
+      // 확증: 훅이 이미 이 세션 파일을 쓰고 있는 원장에만 붙는다.
+      if (existsSync(join(runsDir(r), `${sid}.jsonl`))) {
+        return { root: r, runId: sid, source: 'session-id' }
+      }
+    }
+  }
+  for (const r of roots) {
+    const rid = readCurrentRunId(r)
+    if (rid !== 'unknown') return { root: r, runId: rid, source: 'current-pointer' }
+  }
+  return { root: base, runId: 'unknown', source: 'unattributed' }
 }

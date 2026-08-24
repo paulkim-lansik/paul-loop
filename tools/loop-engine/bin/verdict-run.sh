@@ -120,9 +120,12 @@ write_state() {
   # 신뢰 경계 참조; 머지 게이트 진실은 verdict-state.json + Stop 훅). best-effort: 원장 실패는
   # verdict·exit code 불변(위 state 계약과 동일). payload는 stdin으로 — 초대형 CMD_STR의 argv
   # 전달은 E2BIG로 죽는다. 중첩 시 최상위 래퍼만 append(상단 _LEDGER_NESTED — Q2 이중 기록 방지).
+  # cwd를 payload에 싣는 이유(BAC-778): --auto-run-id는 세션 원장이 있는 루트로 이벤트를 보낼 수
+  # 있다(워크트리에서 돈 검증 → 메인 워크트리 세션 원장). 그러면 이벤트만 보고는 "어느 워크트리의
+  # 검증이었나"를 알 수 없어진다 — 귀속을 고치면서 출처를 잃지 않도록 실행 위치를 함께 남긴다.
   if [ -z "$_LEDGER_NESTED" ]; then
-    printf '{"verdict":"%s","exit":%s,"cmd":"%s","log":"%s"}' \
-      "$_v" "$_c" "$(json_esc "$CMD_STR")" "$(json_esc "$LOG_ABS")" \
+    printf '{"verdict":"%s","exit":%s,"cmd":"%s","log":"%s","cwd":"%s"}' \
+      "$_v" "$_c" "$(json_esc "$CMD_STR")" "$(json_esc "$LOG_ABS")" "$(json_esc "$(pwd)")" \
       | node "$HERE/ledger-append.mjs" \
           --type "$([ "$_v" = "PASS" ] && echo verdict.passed || echo verdict.failed)" \
           --auto-run-id >/dev/null 2>&1 || true

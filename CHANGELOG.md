@@ -5,6 +5,90 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.3.1 · loop-memory 0.3.1
+
+- Dependency range only: both declared `loop-engine ^0.8.0`, which `0.9.0` (below) falls outside of.
+  Bumped to `^0.9.0`, following the convention of every prior loop-engine minor (`^0.6.0`→`^0.7.0` with
+  0.7.0, `^0.7.0`→`^0.8.0` with 0.8.0). Neither plugin's behaviour changed and neither actually needs a
+  0.9.0 feature — the patch bump exists because this is an explicit-version channel, so changed manifest
+  content must not ship under an already-published version number.
+
+## loop-engine 0.9.0
+
+Ledger instrumentation repairs + two new gates, all evidence-driven from a 7-day audit of a consuming
+repo's own `.loop/runs/` (3,096 events across 111 run files).
+
+- **Verdict events now reach the session ledger (BAC-778).** Measured hole: the instrumentation hook
+  writes under `CLAUDE_PROJECT_DIR` while `bin/verdict-run.sh` writes under its own **cwd**, so any
+  repo that isolates work in git worktrees split the two apart on every run — the main ledger held
+  **zero** `verdict.*` events across all 111 runs while one worktree's `.loop/runs/unknown.jsonl`
+  held 14 `verdict.passed` + 2 `verdict.failed`. `bin/run-metrics.mjs` therefore reported `q2` and
+  `first_pass` as `INSUFFICIENT_DATA` for every single run: the loop's headline metric (verify
+  first-pass rate) was unmeasurable from its own ledger. New `lib/run-ledger.mjs` →
+  `resolveLedgerTarget()`, used by `bin/ledger-append.mjs --auto-run-id`, resolves both the ledger
+  root and the run-id by **corroboration** — an event only moves to another root if that root already
+  holds `<run-id>.jsonl` (proof the hook is writing this session there). Run-id prefers
+  `CLAUDE_CODE_SESSION_ID` (present in the Bash tool's env — verified empirically; `CLAUDE_PROJECT_DIR`
+  is **not**, which is why the main worktree also has to be inferred via `git rev-parse
+  --git-common-dir`), which is immune to the `current` pointer's concurrent-session last-writer-wins.
+  With no corroboration the previous behaviour (cwd + `current` pointer + `unknown` bucket) is
+  unchanged byte-for-byte. `verdict-run.sh` now also records `payload.cwd`, so a redirected event
+  doesn't lose which worktree it actually ran in.
+- **Subagent events stop implying a count they can't support (BAC-778).** Measured: 2,307
+  `subagent.stopped` vs 472 `subagent.started`, with 1,896 stops carrying `agent_type: ""`.
+  Cross-checking `agent_id` across the whole ledger settles the cause and rules out a payload bug on
+  our side — **405/405** distinct *typed* stop ids have a matching `started`; **1,901/1,901** distinct
+  *untyped* stop ids have none. The platform fires `SubagentStop` for agent kinds whose
+  `SubagentStart` never fires, and its stdin for those carries no `agent_type`; a hook cannot invent
+  it. So the shape gets honest instead: absent → `agent_type: null` (never `""`, which reads as "we
+  captured a type and it was blank"), plus `attributable: false` and an `extra` bag preserving
+  whatever else the platform did send — the only way a later audit discovers an identity field under
+  a name we don't know yet. `bin/run-metrics.mjs` gains a `subagents` axis splitting `started` /
+  `stopped_paired` / `stopped_unattributed`, so per-agent duration/success can only be derived from
+  the paired population.
+- **`permission.denied` is diagnosable for every tool shape (BAC-778).** Bash denials already
+  recorded `command` and Edit/Write `file_path` (checked against 28 real denial events — the audit's
+  "Bash denials record only the tool name" did not reproduce against this code), but every other tool
+  landed with `tool_name` and nothing else (measured: `SendMessage`, `ScheduleWakeup`). Denial events
+  now carry `tool_input_keys` — the key **names** only, never the values, so it can't carry a secret
+  or grow the ledger.
+- **New gate `hooks/gate-verify-pipe.mjs` (PreToolUse/Bash).** Denies a verify-shaped command piped
+  into another command when the same invocation preserves no real exit status. Measured in four
+  audited runs: `cd <wt> && timeout 590 pnpm verify 2>&1 | tail -200` followed, in a *separate* Bash
+  call, by `echo "exit code of last pnpm verify: $?"` → `0`. That `0` was unrelated to verify twice
+  over (a pipeline's `$?` is the last stage's, and the tool resets the shell between calls). Those
+  runs happened to be green, so the evidence was merely worthless rather than wrong — and the same
+  sessions used the correct `> log 2>&1; echo EXIT:$?` form elsewhere. `pipefail`/`PIPESTATUS`
+  anywhere in the invocation, or a redirect instead of a pipe, pass untouched. Reuses
+  `hooks/command-tokenizer.mjs` (no second parser) and follows the established
+  fail-open-on-detection / fail-closed-once-certain shape. Verify vocabulary is config
+  (`.claude/ship-flow.config.json` → `verifyCommandPattern`), defaulting to this harness's own
+  `verify`/`verdict`; kill switch `LOOP_VERIFY_PIPE_GATE_OFF=1`.
+- **`hooks/gate-worktree-create.mjs` escalates a second feature worktree in one session** to
+  `permissionDecision: "ask"` (the human-approval prompt = the gate vocabulary's REQUIRE) — the
+  mechanical half of a boundary violation where an audited run opened its PR and then began an
+  entirely new issue. The existing `origin/*` deny rule is unchanged and still wins, and a denied
+  command doesn't consume the budget. Non-feature branches (`lessons/*`, `chore/*`, …) are exempt.
+  Prefix is config (`featureBranchPrefix`, default `feature/`); kill switch
+  `LOOP_WORKTREE_SESSION_GATE_OFF=1`. **The limits are stated in the file header and are real**: "one
+  session" is the payload's `session_id` and nothing else — no `session_id` means no escalation at
+  all (undeterminable must not become "everything is one session"); a subagent has its own session id
+  so it neither counts toward nor sees the parent's budget; `EnterWorktree` / `Agent
+  isolation:"worktree"` never reach a Bash hook; and it counts *attempts* (deduped by branch name),
+  so a `git worktree add` that later fails on its own still consumes the budget.
+- **`bin/check-pr-hygiene.mjs` gains opt-in reviewer coverage** (`--reviewers a,b,c`,
+  `--result-pattern`): each named reviewer must appear in the PR body with a result token on its line
+  or within the next 2 lines — a bare mention in prose is not a result block. Motivated by an audited
+  run that summoned 2 of 3 mandated review agents with no gate catching it. Reviewer names are
+  consumer-repo config, never hardcoded here (a self-test asserts the plugin's code contains none),
+  and without `--reviewers` the existing tracker-reference contract is untouched.
+- 5 new self-tests (`ledger-attribution`, `subagent-event-shape`, `gate-verify-pipe`,
+  `worktree-session-scope`, `pr-reviewer-coverage`); suite 42 → 47 files. `hooks/hooks.json` gains 1
+  hook command (16→17, 8→9 distinct files).
+- **Follow-up needed elsewhere**: `tools/ship-flow/.claude-plugin/plugin.json` declares
+  `loop-engine ^0.8.0`, which excludes 0.9.0 — that range needs widening in a separate PR.
+  Deliberately not edited here: concurrent work owns that file.
+
 ## ship-flow 0.3.0
 
 Forensic audit of 12 real `ship-feature` runs (2026-08-24) found the skill's own mandated deterministic
@@ -69,6 +153,7 @@ AC-contract authoring 1/5. This release fixes the cause and five adjacent findin
   output language (measuring a target-language ratio in an agent's actual prose) was considered and
   rejected: this plugin never sees agent output — `verdict-run.sh`'s LOG captures the *verifier's*
   output, not the agent's — so there is nothing here to measure it against.
+
 
 ## loop-memory 0.3.0
 
