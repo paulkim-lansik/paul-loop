@@ -95,9 +95,11 @@ similarity, no ranking (see CONTEXT.md and ADR-0062). Both stay silent on stdout
 pipes this through `2>/dev/null`), but write one stderr line each:
 
 - **No lesson recorded** for this signature — names the normalized key and routes hand-written
-  natural-language queries to **semantic recall**
-  (`pnpm --filter @glucofit-partners/loop-memory recall --query "<text>" --json`) instead, since a miss
-  here is often a query that was never a supported input for this exact-match store.
+  natural-language queries to **semantic recall** instead, since a miss here is often a query that was
+  never a supported input for this exact-match store. The command to run is repo-specific, so it comes
+  from your `.claude/ship-flow.config.json` → `semanticRecallCommand` (e.g. the `loop-memory` plugin's
+  `recall --query "<text>" --json` invocation, however your repo runs it). Unset, the hint names that
+  config key rather than a command.
 - **A lesson exists but `--category` filters it out** — names the key and the category mismatch (the
   signature DID match; this isn't the "wrong store" case above, so no semantic-recall routing hint).
 

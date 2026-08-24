@@ -85,6 +85,27 @@ try {
   process.stderr.write(`lessons: regression-signals 로드 실패(${e?.message ?? e}) — 회귀 신호·게이트 정규화 없이 진행\n`)
 }
 
+// Semantic-recall routing hint (this plugin ships no product-specific rules): a signature-recall miss
+// is often a hand-typed natural-language query, which belongs in a *semantic* store instead. Naming
+// that store's command is necessarily repo-specific — a consuming repo declares it in
+// `.claude/ship-flow.config.json` -> `semanticRecallCommand`, the same convention loop-engine's hooks
+// already use for repo-specific values (gate-verify-pipe's `verifyCommandPattern`,
+// gate-before-merge's `releaseBranch`/`integrationBranch`). Without config the hint stays generic and
+// names the config key rather than inventing a command: hardcoding ONE repo's invocation here told
+// every other consuming repo to run something that does not exist for them.
+function semanticRecallHint() {
+  const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
+  try {
+    const cfg = JSON.parse(readFileSync(join(root, '.claude', 'ship-flow.config.json'), 'utf8'))
+    if (typeof cfg.semanticRecallCommand === 'string' && cfg.semanticRecallCommand.trim()) {
+      return `use semantic recall instead: ${cfg.semanticRecallCommand.trim()}`
+    }
+  } catch {
+    /* missing/unreadable/invalid config -> fall through to the generic, command-less hint */
+  }
+  return 'use semantic recall instead (set `semanticRecallCommand` in .claude/ship-flow.config.json to name this repo\'s command here)'
+}
+
 function usage(msg) {
   if (msg) process.stderr.write(`lessons: ${msg}\n`)
   process.stderr.write('Usage: lessons <record|recall|promote|stats|challenge|retire|invalidate|mark-clean> [options]  (see header)\n')
@@ -440,7 +461,7 @@ if (cmd === 'recall') {
   // but writes ONE stderr line: the key it looked up, and a routing hint since a miss is often a
   // hand-typed natural-language query — not a supported input for this store.
   if (!l || (!l.verified && !opt.includeUnverified)) {
-    process.stderr.write(`lessons: no verified lesson for signature ${s.key} (exact match only — if this was a natural-language query, use semantic recall instead: pnpm --filter @glucofit-partners/loop-memory recall --query "<text>" --json)\n`)
+    process.stderr.write(`lessons: no verified lesson for signature ${s.key} (exact match only — if this was a natural-language query, ${semanticRecallHint()})\n`)
     process.exit(0)   // nothing authoritative to say
   }
   if (opt.category && l.category !== opt.category) {

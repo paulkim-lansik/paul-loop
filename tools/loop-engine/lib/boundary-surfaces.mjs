@@ -10,6 +10,9 @@
 // 지표 제외라 과잉매치가 안전 방향이다(경계 프롬프트가 H1에 섞이는 것보다 과잉 제외가 낫다).
 // 태깅은 기록 시점(.claude/hooks/record-run-event.mjs) — BAC-628 preview cap 이후엔 장문 명령의
 // 판정이 불가할 수 있어서다.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 export const H1_EXCLUDED_SURFACES = [
   { surface: 'merge', re: /\bgh\b[^\n;|&]*\bpr\b[^\n;|&]*\bmerge\b/ },
   { surface: 'merge', re: /\bgit\s+push\b[^\n]*\b(main|develop)\b/ },
@@ -20,6 +23,23 @@ export const H1_EXCLUDED_SURFACES = [
   // 과잉 제외(git send-email류 오탐)라 배제.
   { surface: 'send', re: /alimtalk|biz-?message|revisit-calls/i },
 ]
+
+// 위 `send` 토큰들은 이 하네스가 처음 자란 레포의 outbound 경로 이름이다 — 다른 소비 레포에선 절대
+// 매치되지 않아 *그 레포의* 발송 명령이 H1에서 제외되지 않는다. 즉 이 파일이 막으려던 실패(사람-승인
+// 경계가 H1 최적화 대상이 되는 것)가 그 레포에선 그대로 열려 있다. 그래서 소비 레포가 자기 발송
+// 어휘를 `.claude/ship-flow.config.json` -> `sendSurfacePattern`(정규식 문자열)로 선언하면 여기에
+// 추가 규칙으로 붙는다. loop-engine 훅들이 repo-specific 값에 쓰는 관례와 동일
+// (gate-verify-pipe `verifyCommandPattern`, gate-before-merge `releaseBranch`). 기본 규칙은 그대로
+// 남는다 — 설정은 *확장*이지 교체가 아니다(과잉 제외가 안전 방향이라는 위 판단 그대로).
+try {
+  const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
+  const cfg = JSON.parse(readFileSync(join(root, '.claude', 'ship-flow.config.json'), 'utf8'))
+  if (typeof cfg.sendSurfacePattern === 'string' && cfg.sendSurfacePattern.trim()) {
+    H1_EXCLUDED_SURFACES.push({ surface: 'send', re: new RegExp(cfg.sendSurfacePattern, 'i') })
+  }
+} catch {
+  /* 설정 없음·판독 불가·잘못된 정규식 -> 내장 기본값만 사용(fail-open, 지표 전용 경로) */
+}
 
 // 명령이 경계 표면에 닿으면 그 surface 이름을, 아니면 null을 반환한다(H1은 null만 센다).
 export function boundarySurface(toolName, command) {

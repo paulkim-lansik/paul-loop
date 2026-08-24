@@ -5,6 +5,82 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.4.1 · loop-memory 0.4.1
+
+- Dependency range only: both declared `loop-engine ^0.9.0`, which `0.10.0` (below) falls outside of.
+  Bumped to `^0.10.0`, following the convention of every prior loop-engine minor (`^0.7.0`→`^0.8.0`
+  with 0.8.0, `^0.8.0`→`^0.9.0` with 0.9.0). Neither plugin's behaviour changed and neither needs a
+  0.10.0 feature — the patch bump exists because this is an explicit-version channel, so changed
+  manifest content must not ship under an already-published version number.
+
+## loop-engine 0.10.0
+
+Genericity repair, a false-alarm fix in the heartbeat, and coverage for four previously untested
+`bin/` entries.
+
+- **The lessons recall miss hint no longer names one specific consuming repo.** `bin/lessons.mjs`
+  routed a signature-recall miss to semantic recall by printing a literal
+  `pnpm --filter @glucofit-partners/loop-memory recall …` — a command that exists in exactly one repo,
+  so every other consuming repo was told to run something that fails in their shell. The command is
+  now read from the consuming repo's `.claude/ship-flow.config.json` →
+  **`semanticRecallCommand`** (new, optional), matching the convention loop-engine's own hooks already
+  use for repo-specific values (`verifyCommandPattern`, `releaseBranch`/`integrationBranch`). With no
+  config the hint stays generic and names that key instead of inventing an invocation. The stderr-only
+  / silent-stdout / exit-0 recall contract is unchanged.
+- **`lib/boundary-surfaces.mjs` send vocabulary is now repo-declarable — and this one was a real hole,
+  not a cosmetic one.** That module exists so the H1 "human interventions per run" metric cannot
+  optimise away the human-approval boundary itself: merge/deploy/**send** must be excluded from the
+  count. Its `send` regex (`alimtalk|biz-?message|revisit-calls`) was one repo's outbound path
+  vocabulary, so in any other repo *no* send command ever matched and the exact failure the module was
+  written to prevent stayed open, silently. A consuming repo can now declare its own vocabulary via
+  `.claude/ship-flow.config.json` → **`sendSurfacePattern`** (new, optional regex string). It
+  **extends**, never replaces, the built-in rules — over-exclusion remains the safe direction for a
+  metrics filter — and a missing/unreadable config or an invalid regex degrades to the built-ins
+  rather than throwing (this module is imported by a hook).
+- **`hooks/loop-doctor-heartbeat.mjs` stopped crying wolf about the embedding key.** It read
+  `OPENAI_API_KEY`/`GEMINI_API_KEY` straight off the session env, but the loop-memory hooks it is
+  reporting *on* first load a dotenv file (that is what `loop-memory 0.3.1`'s `load-dotenv.mjs` exists
+  for — a key in a gitignored, un-exported `.env` is the normal way to hold that secret). So the two
+  asked different questions, and a repo with working recall was told `semantic recall is fully off —
+  no embedding key` on **every session**. A diagnostic that is wrong every time trains its reader to
+  ignore it, which costs more than the nudge is worth. The heartbeat now loads the same file before
+  the check, and bridges `CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH` — without that second half it would
+  still miss any repo whose dotenv is not at the default `.loop/.env`, which is the only case that
+  matters here. Verified in both directions: a repo whose key lives only in a non-default dotenv path
+  no longer nudges, and a repo with no key anywhere still does.
+
+  This is the fourth instance of one failure class — a component checking for the key without the
+  loader — and the first pointing the *other* way (false alarm rather than silence). Because plugins
+  install into separate cache directories, loop-memory cannot import from loop-engine's tree at
+  runtime, so `lib/load-dotenv.mjs` had to be vendored rather than shared. `dotenv-loader-no-drift.test.sh`
+  makes that duplication a checked one: it fails on any byte difference between the two copies, on the
+  heartbeat dropping the import or the call, and on either direction of the behaviour above.
+- **Coverage for tools that would fail *quietly*.** Four new hermetic test files (no network, no real
+  `gh`, sandbox `HOME`/`CLAUDE_PROJECT_DIR`), taking the suite from 48 to 52:
+  - `deps-audit-unknown-not-clean.test.sh` — locks `bin/deps-audit.mjs`'s own stated invariant that
+    "unknown" never collapses into "0 / clean / 최신". An unreadable `~/.claude.json` must suppress
+    every 🗑️ removal recommendation (collapsing it to `{}` would mark *everything* unused and
+    recommend deleting it); `gh` being unavailable must leave staleness `null`, never `false`/"최신";
+    a repo-specific `gh` failure must surface as `gone` rather than blending into "no gh"; a failed
+    `git` lookup must print 미상, not `0커밋`. A readable-telemetry control run proves the suppression
+    is suppression and not an accident of the fixture.
+  - `mattpocock-skills-sync-check.test.sh` — locks the four-state verdict and its exit codes
+    (`FIRST_RUN`/`UNCHANGED`/`CHANGED` = 0, `UNKNOWN` = 2), that the state file lands under
+    `CLAUDE_PROJECT_DIR` (writing it elsewhere makes every run report `FIRST_RUN` forever — no error,
+    drift never detected), that `--stamp` rejects a missing sha instead of poisoning the baseline,
+    that a failed compare still reports `CHANGED` with an unknown count, and that a corrupt state file
+    degrades to `FIRST_RUN` rather than a fabricated `UNCHANGED`.
+  - `bin-wrapper-contract.test.sh` — the thin `bin/*.sh` wrappers (discovered, not hardcoded: 5 today)
+    must pass argv through verbatim (whitespace / empty / glob arguments), resolve their `.mjs` from
+    their own location under both absolute and relative invocation, and propagate the exit code. Most
+    wrapper breakage is loud; unquoted `$@` is not, which is what this pins.
+  - `genericity-repo-agnostic.test.sh` — behavioural lock on both fixes above (default path, configured
+    path, malformed-config fallback, extends-not-replaces).
+
+⚠️ **Dependency ranges**: `ship-flow` and `loop-memory` both declare `loop-engine ^0.9.0`, which
+`0.10.0` falls outside of. They need `^0.10.0` in a companion bump, following the convention of every
+prior loop-engine minor.
+
 ## loop-memory 0.4.0
 
 Hook liveness is now recorded always-on, so "the hooks fired" stops being an anecdote (issue #35).
