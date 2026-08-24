@@ -19,7 +19,7 @@
       "name": "ship-flow",
       "source": "./tools/ship-flow",
       "description": "Delivery-loop skills — ship-feature (plan-to-PR autonomous loop), hotfix, retrospect, grill-with-docs, deps-audit, to-issues/to-prd, tdd, harness-maturity-audit, improve-codebase-architecture, resolving-merge-conflicts, plus review agents and audit/research workflows — parameterized by a consuming repo's own tracker/branch-model config instead of hardcoded to one repo. dependencies: loop-engine.",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "keywords": ["delivery", "git-flow", "hotfix", "ship", "release"]
     },
     {
