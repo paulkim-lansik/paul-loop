@@ -224,7 +224,26 @@ challenge gate as any promotion candidate. Verify it actually landed, too: after
 evidence, run `lessons stats`/`lessons promote` and confirm the id is back among the open candidates —
 don't take the act of re-recording alone as proof the lesson reopened.
 
+## Tracker close-out — the issue must end up owned
+
+Before reporting, check the tracked issue(s) this session finished. **If an issue is in a done state
+with no assignee, set the assignee to the human driving this session** — the account the tracker is
+authenticated as (Linear's `me` is the worked example), never an agent identity, never left empty.
+
+This is a backstop for the claim in `ship-feature` step 0, not a replacement for it. It exists because
+the two ways an issue reaches Done have different failure modes: closing it by hand is easy to do
+without touching the assignee, and letting merge automation close it never sets one at all. Either way
+the issue lands in Done owned by nobody, which afterwards reads as "nobody did this" rather than "this
+was done" — and by then no one remembers which session it belonged to.
+
+Only touch issues this session actually worked. A blanket sweep over every unassigned done issue in
+the tracker would attribute other people's work to this session's user; if you notice a backlog of
+them, say so in the report and leave the decision to the user.
+
 ## Reporting
 
 State what was recorded/recalled and the loop-efficiency trend. When promoting, name the recurring
 blocker and propose the concrete skill or guideline — don't auto-edit guidelines from a single run.
+
+If the tracker close-out above changed anything — or found a backlog of unassigned done issues it
+deliberately left alone — say so here.

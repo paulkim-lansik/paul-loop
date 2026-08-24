@@ -151,10 +151,16 @@ classification, the two channels of `DENY_AND_LOG`, and layering this repo's own
 ## Sequence (0 → PR is autonomous, merge is human, post-merge is `improve`)
 
 ### 0. Worktree isolation — `git worktree`
-If this repo tracks issues externally (Linear, GitHub Issues, etc.), claim the issue to yourself first
-— before creating the worktree — by assigning it and moving it into an in-progress state. Where
-concurrent sessions are common, claiming first is what stops two sessions picking up the same issue
-(worktree isolation alone prevents git conflicts, not duplicate starts).
+If this repo tracks issues externally (Linear, GitHub Issues, etc.), claim the issue first — before
+creating the worktree — by assigning it and moving it into an in-progress state. Where concurrent
+sessions are common, claiming first is what stops two sessions picking up the same issue (worktree
+isolation alone prevents git conflicts, not duplicate starts).
+
+**Assign it to the human driving this session — not to nobody, not to an agent identity.** You have no
+tracker account of your own; the one you are authenticated as is theirs, so assigning to the
+authenticated account is what puts their name on it (Linear's `me` is the worked example). An empty
+assignee here is the common failure and stays invisible for a long time: merge automation closes the
+issue without ever setting one, so it lands in Done owned by nobody.
 
 `git fetch origin && git worktree add -b <type>/<slug> <sibling-path-outside-repo> origin/<base>`. Check
 `git worktree list` first if concurrent work is common here. A fresh worktree has no installed
