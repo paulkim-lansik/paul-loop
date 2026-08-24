@@ -1,6 +1,6 @@
 {
   "name": "loop-engine",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Core loop mechanics: verdict-run (machine-readable PASS/FAIL contract), loop-fix (closed verify->fix loop), lessons (verified-fix memory), classify-risk, require-tests, check-docs-hygiene/check-pr-hygiene/check-module-size (repo hygiene gates). verifier=ceiling — the agent's self-judgement never substitutes for it.",
   "author": {
     "name": "paulkim-lansik"
