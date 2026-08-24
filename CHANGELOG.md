@@ -5,6 +5,68 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-memory 0.4.0
+
+Hook liveness is now recorded always-on, so "the hooks fired" stops being an anecdote (issue #35).
+
+- **The problem.** Both hooks are fail-open by contract, which means *never fired*, *fired and
+  self-gated* (no key / recall off / prompt too short), *fired and legitimately found nothing above
+  the distance cutoff*, and *fired and broke* all present identically from outside: exit 0, empty
+  stdout, nothing on disk. `LOOP_RECALL_DEBUG` / `LOOP_GRADUATE_DEBUG` do distinguish them but are
+  opt-in and default-off, so the normal state left no trace at all. That is how these hooks stayed a
+  silent no-op for days when a plugin migration dropped their `.env`-loading step (fixed in 0.3.0):
+  nothing anywhere recorded that they had stopped working, and it was found only because a human
+  noticed recall felt absent.
+- **What's new.** Every firing of either hook now appends exactly one small JSONL line to
+  loop-engine's existing session run ledger — `<repo>/.loop/runs/<run-id>.jsonl`, in its schema v1
+  shape (`{id, type, ts, aggregate_id, payload, version}`) under the new types `memory.recall` and
+  `memory.graduate`. Reusing that ledger instead of inventing a parallel one means a recall event
+  lands in the same file, under the same run-id, as the `run.started` that opened the session;
+  loop-engine's `bin/run-metrics.mjs` ignores types it doesn't know, so co-locating costs it nothing,
+  and a repo without loop-engine simply gets a `.loop/runs/` of its own.
+- **The four states, in the record.** `payload.outcome` is `injected` | `no_match` | `skipped` |
+  `error`, with a fixed `reason` slug saying which gate or failure (`no_embedding_key`, `recall_off`,
+  `prompt_too_short`, `stdin_parse_fail`, `no_hits`, `above_cutoff`, `cli_failed`, `exception`), plus
+  `key`/`dotenv` booleans, candidate counts, the nearest distance actually seen, and the cutoffs in
+  effect. So an honest miss ("one hit at 0.9 against a 0.65 cutoff") can no longer be confused with a
+  dead hook — and *never fired* is the absence of all of them, which is now a checkable fact rather
+  than an absence of evidence.
+- **Cost and safety.** It runs on every user prompt, so: one `appendFileSync` of a sub-`PIPE_BUF` line
+  (atomic under `O_APPEND`, so a concurrent writer can't interleave); the append is skipped once the
+  run file passes `LOOP_LIVENESS_MAX_BYTES` (default 8 MiB); `LOOP_LIVENESS_OFF=1` disables it
+  entirely. Nothing is recorded but counts, booleans, distances and fixed slugs — never the prompt,
+  note content, an env value, a resolved dotenv path, or an error *message* (a pg/undici message can
+  embed a connection URL, so only a short opaque `code` is kept). The fail-open contract is unchanged
+  and now regression-tested directly: with the ledger path made unwritable, both hooks still exit 0
+  with byte-identical behaviour — `UserPromptSubmit` exiting non-zero discards the user's prompt, so
+  instrumentation must never be able to reach the exit code.
+- **New `loop-memory liveness [--json] [--runs N] [--root DIR] [--assert]`.** Folds those events into
+  per-outcome counts, reasons, "recall fired in N of the last M runs", and last-injected time. Pure
+  filesystem — no database, no embedding key — so a `loop-doctor`-style consumer can call it
+  unconditionally, and one whose health check currently runs a *synthetic* recall probe can assert on
+  the real hook's real firings instead (a probe proves the CLI works, not that the hook ran).
+  `--assert` exits 1 only on *never fired*: self-gating and honest misses are evidence of life, and a
+  check that alarms on them is a check nobody keeps.
+- **Session attribution, without adding a way to hang.** Events are attributed to the run-id the rest
+  of the session's ledger is under, so `recall fired in N of the last M runs` is answerable — but no
+  gate that previously ran *before* a stdin read now runs after one. A read-to-EOF wedges forever
+  whenever fd 0 is a pipe nobody closes (measured: a hand-run inside `$(...)`; a FIFO held open
+  `O_RDWR` reproduces it deterministically, and both hooks now carry a regression test built on
+  exactly that). Concretely: `recall-lessons.mjs` keeps reading stdin where it always did — *after*
+  its recall-off and no-key gates, which is what keeps an unconfigured install immune on every single
+  prompt — and `graduate-lessons.mjs`, which never read stdin at all, still doesn't: it takes its
+  lifecycle label from a new `--event SessionStart` / `--event SessionEnd` flag in `hooks/hooks.json`.
+  Firings past those gates (i.e. every firing of a working install) carry the real session id;
+  firings gated before them fall back to `CLAUDE_CODE_SESSION_ID` and then to the honest `unknown`
+  run bucket — which still proves the firing, and "no key" needs no session correlation to act on.
+  A shared, TTY-guarded `hooks/lib/hook-stdin.mjs` holds the read. **Upgrade note:** installs get the
+  `--event` label automatically (the flag ships in this plugin's `hooks.json`); a hand-wired copy of
+  the old command keeps working and simply records `event: null`.
+- ⚠️ Same trust boundary as the rest of that ledger: `.loop/runs/*` is gitignored, unprotected local
+  telemetry and is **forgeable** by anyone with shell access. This is observability, not a security
+  signal, and must not become a gate input. It also does not by itself close #35's original ask —
+  it makes a live firing *verifiable when it happens*, rather than being that observation.
+
 ## ship-flow 0.4.0
 
 `to-prd` and `to-issues` now produce a project per body of work, instead of accumulating every PRD and
