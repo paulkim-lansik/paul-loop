@@ -21,6 +21,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadDotenv } from '../lib/load-dotenv.mjs';
 
 const env = process.env;
 const DAY = 86_400_000;
@@ -33,6 +34,9 @@ for (const [pluginOpt, plain] of [
   ['CLAUDE_PLUGIN_OPTION_OPENAI_API_KEY', 'OPENAI_API_KEY'],
   ['CLAUDE_PLUGIN_OPTION_GEMINI_API_KEY', 'GEMINI_API_KEY'],
   ['CLAUDE_PLUGIN_OPTION_LOOP_DATABASE_URL', 'LOOP_DATABASE_URL'],
+  // Without this one the dotenv load below silently falls back to the default `.loop/.env`, so a repo
+  // that points loop-memory at its own path still reports "no embedding key" on every session.
+  ['CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH', 'LOOP_DOTENV_PATH'],
 ]) {
   if (!env[plain] && env[pluginOpt]) env[plain] = env[pluginOpt];
 }
@@ -40,6 +44,15 @@ for (const [pluginOpt, plain] of [
 try {
   if (env.LOOP_DOCTOR_HEARTBEAT_OFF === '1') process.exit(0);
   const root = env.CLAUDE_PROJECT_DIR || process.cwd();
+
+  // Load the same dotenv file loop-memory's own hooks load, *before* check (3) reads the key names
+  // below. Without this the heartbeat asks a different question than the hooks do: a repo that keeps
+  // its embedding key in a gitignored, un-exported `.env` has working recall while this hook reports
+  // "no embedding key" on every single session — a false CRIT that trains the reader to ignore the
+  // nudge, which is worse than staying quiet. Same precedence as everywhere else: an already-set
+  // value wins, and any failure leaves env untouched.
+  loadDotenv(root, env.LOOP_DOTENV_PATH, env);
+
   const nudges = [];
 
   // (1) Uncommitted lessons — the cheapest git signal. Silently skipped on non-git / a git failure

@@ -5,9 +5,18 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.4.1 · loop-memory 0.4.1
+
+- Dependency range only: both declared `loop-engine ^0.9.0`, which `0.10.0` (below) falls outside of.
+  Bumped to `^0.10.0`, following the convention of every prior loop-engine minor (`^0.7.0`→`^0.8.0`
+  with 0.8.0, `^0.8.0`→`^0.9.0` with 0.9.0). Neither plugin's behaviour changed and neither needs a
+  0.10.0 feature — the patch bump exists because this is an explicit-version channel, so changed
+  manifest content must not ship under an already-published version number.
+
 ## loop-engine 0.10.0
 
-Genericity repair + coverage for four previously untested `bin/` entries.
+Genericity repair, a false-alarm fix in the heartbeat, and coverage for four previously untested
+`bin/` entries.
 
 - **The lessons recall miss hint no longer names one specific consuming repo.** `bin/lessons.mjs`
   routed a signature-recall miss to semantic recall by printing a literal
@@ -28,6 +37,24 @@ Genericity repair + coverage for four previously untested `bin/` entries.
   **extends**, never replaces, the built-in rules — over-exclusion remains the safe direction for a
   metrics filter — and a missing/unreadable config or an invalid regex degrades to the built-ins
   rather than throwing (this module is imported by a hook).
+- **`hooks/loop-doctor-heartbeat.mjs` stopped crying wolf about the embedding key.** It read
+  `OPENAI_API_KEY`/`GEMINI_API_KEY` straight off the session env, but the loop-memory hooks it is
+  reporting *on* first load a dotenv file (that is what `loop-memory 0.3.1`'s `load-dotenv.mjs` exists
+  for — a key in a gitignored, un-exported `.env` is the normal way to hold that secret). So the two
+  asked different questions, and a repo with working recall was told `semantic recall is fully off —
+  no embedding key` on **every session**. A diagnostic that is wrong every time trains its reader to
+  ignore it, which costs more than the nudge is worth. The heartbeat now loads the same file before
+  the check, and bridges `CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH` — without that second half it would
+  still miss any repo whose dotenv is not at the default `.loop/.env`, which is the only case that
+  matters here. Verified in both directions: a repo whose key lives only in a non-default dotenv path
+  no longer nudges, and a repo with no key anywhere still does.
+
+  This is the fourth instance of one failure class — a component checking for the key without the
+  loader — and the first pointing the *other* way (false alarm rather than silence). Because plugins
+  install into separate cache directories, loop-memory cannot import from loop-engine's tree at
+  runtime, so `lib/load-dotenv.mjs` had to be vendored rather than shared. `dotenv-loader-no-drift.test.sh`
+  makes that duplication a checked one: it fails on any byte difference between the two copies, on the
+  heartbeat dropping the import or the call, and on either direction of the behaviour above.
 - **Coverage for tools that would fail *quietly*.** Four new hermetic test files (no network, no real
   `gh`, sandbox `HOME`/`CLAUDE_PROJECT_DIR`), taking the suite from 48 to 52:
   - `deps-audit-unknown-not-clean.test.sh` — locks `bin/deps-audit.mjs`'s own stated invariant that
