@@ -5,6 +5,12 @@ description: This plugin's autonomous-by-default feature delivery sequence and s
 
 # ship-feature — this plugin's single entrypoint (autonomous, human only where the gate calls for it)
 
+> **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
+> `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
+> questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
+> identifiers, file paths, branch names, and quoted tool output stay verbatim; never translate them.** Key
+> absent or unreadable → fall back to the language the user is writing in; never error on this.
+
 The procedure for taking one unit of work (a feature, a bug, a tracked issue) from **plan to an open
 PR, and from a merged PR to a harness-improvement PR** with the agent running autonomously the whole
 way. Each step's *content* is owned by the skill/agent it delegates to — this skill only fixes the
@@ -25,6 +31,29 @@ skill — see `hotfix`'s SKILL.md for the field list). If it doesn't exist yet, 
 file, since that's what this skill was originally built against — substitute this repo's actual tracker
 and its equivalent mechanics: create/update issue, assignee, blocking-issue links, status transitions).
 
+### `pluginBinPrefix` — how the commands below become runnable
+
+Every loop-engine bin command below is **one substitutable literal** starting with
+`{{pluginBinPrefix}}`. Before running one, read `pluginBinPrefix` from the config and **replace the
+token with its value, concatenated onto the script name with no separator** (a value needing a trailing
+space or slash carries its own), then run the result verbatim. Never type a `{{…}}` token into a shell,
+and never substitute a description of a command for the command.
+
+| `pluginBinPrefix` | Resulting command | When |
+|---|---|---|
+| `""` (absent → default) | `classify-risk.sh --from-git …` | Live session: a plugin's `bin/` is on PATH |
+| `node tools/plugin-path.mjs exec bin/` | `node tools/plugin-path.mjs exec bin/classify-risk.sh --from-git …` | This repo has its own resolver wrapper |
+| `node "$LOOP_ENGINE_PATH/bin/plugin-path.mjs" exec bin/` | …same shape, loop-engine's bundled resolver | CI / headless, nothing on PATH (BAC-753) |
+
+**Argument form is not re-derivable — use exactly what's written.** Only `verdict-run.sh` takes a `--`
+separator (it needs one, to fence off the command it wraps). `classify-risk.sh`, `ac-verify.sh`, and
+`lessons.sh` take **no `--`**; passing one is an unknown-arg usage error, not a harmless no-op.
+`classify-risk.sh --path` is repeated once per path, not given a space-separated list.
+
+If a substituted command fails to resolve, **stop and say so.** Falling back to this repo's raw verify
+command is the exact failure this section exists to prevent — it silently drops the verdict contract,
+the risk gate, and the AC gate at once.
+
 ## Execution mode — autonomous by default
 
 The agent runs step 0 → PR **without stopping**. There are exactly **three** places it calls a human:
@@ -42,6 +71,19 @@ The agent runs step 0 → PR **without stopping**. There are exactly **three** p
 
 Every other verification failure (red) is something the agent **loops back on itself** — it doesn't ask
 a human.
+
+**Qualify every question before asking it.** Those three are the *only* sanctioned stops, and this skill
+drifts into asking far past them — design questions the agent could already answer, put to a human who
+answers "go with your recommendation". Before interrupting, apply this test:
+
+> **Can I state a clear recommendation, and is the decision reversible?** If both are yes, **take the
+> decision, don't ask** — and record it, one line per decision (what was chosen, the alternative, why),
+> in a **`Decisions taken`** section of the PR body, where the human reviews it at the merge boundary
+> that already exists.
+
+Ask only when one of those is genuinely no: no defensible recommendation (a real product/priority call
+the agent has no basis for), or an irreversible consequence — already covered by point 2 and point 1
+above. "This feels like it deserves a check-in" is not a qualifying reason; a `Decisions taken` line is.
 
 > "Autonomous" means *the agent*, not *no human in the loop*: nobody is watching every step, but an
 > intelligent agent is making judgment calls throughout the loop, which is what makes the runtime-verify
@@ -98,7 +140,7 @@ agent input is folded in as `final = max(rule, agent)` — **only allowed to rai
 never lower it:
 
 ```bash
-<however this repo invokes its installed loop-engine plugin's bin scripts> classify-risk.sh --from-git --stage <plan|implement|pr|improve> \
+{{pluginBinPrefix}}classify-risk.sh --from-git --stage <plan|implement|pr|improve> \
   --action "<what is about to happen>" \
   [--agent-blast-radius low|medium|high --agent-reversibility full|partial|none --agent-cost low|medium|high]
 # exit 0  = AUTO         → proceed autonomously
@@ -108,11 +150,8 @@ never lower it:
 #                          the command instead — the two channels intentionally mean different things
 ```
 
-(`<however this repo invokes its installed loop-engine plugin's bin scripts>` — usually just the bare
-script name in a live session, since a plugin's `bin/` is already on PATH once it's loaded; for CI or
-resolving a *different* installed plugin's path, loop-engine bundles its own resolver at
-`bin/plugin-path.mjs` (`exec <relative-bin> [args...]`, BAC-753), or this repo may provide its own
-equivalent wrapper. If this repo layers its own `risk-rules.json` on top of loop-engine's defaults,
+(Substitute `{{pluginBinPrefix}}` per the [Config](#pluginbinprefix--how-the-commands-below-become-runnable)
+table above. If this repo layers its own `risk-rules.json` on top of loop-engine's defaults,
 `classify-risk.sh` picks it up automatically.)
 
 - **Surface the rules typically cover**: schema migrations (`reversibility=none`) · row-level-security or
@@ -154,9 +193,16 @@ Plan what to build and how to slice it. **If there's a new design decision invol
 `grill-with-docs` to sharpen it against the domain model and record it (ADR + `CONTEXT.md`) — no
 implementation yet. Plain CRUD doesn't need that; a `Plan` agent pass is enough.
 
+**Scope guard.** Grilling routinely surfaces adjacent work that *should* happen. That is not licence to
+grow this run: anything that widens scope beyond the issue you started on gets **filed as a separate
+tracked issue** (blocked-by links where they apply), and **this run continues on the original issue at
+its original scope**. A run that grills its way into a bigger problem and never implements the issue it
+was given has failed, however good the new plan is.
+
 Once the plan is set, **derive the track from the paths it touches** — there's no diff yet, so pass the
-planned paths directly: `<loop-engine classify-risk.sh> --no-gate --path <planned paths>...` → the
-resulting `TRACK:`/`DEEP_GATES:` scope the remaining steps.
+planned paths directly: `{{pluginBinPrefix}}classify-risk.sh --no-gate --path <path> [--path <path>]...`
+(one `--path` per path, no `--` separator) → the resulting `TRACK:`/`DEEP_GATES:` scope the remaining
+steps.
 → **Gate:** success criteria (what "done" verifiably means) has to be written down before moving on.
 
 **Express acceptance criteria as one-line AC contracts** — this is what makes step 3's gate below
@@ -180,6 +226,14 @@ step 3 is already skipped for it per the TRACK table above), **the plan as a who
 least one AC with a machine-checkable contract** (a `verify:` and/or `artifacts:`/`expect:` field) —
 not every AC needs one, but zero across the whole plan means step 3 (Runtime verify) will fail closed.
 
+**Validate the finished plan before any code exists** — hand it to this plugin's `ship-flow:planner`
+agent (namespaced name, same reason as step 4). It fail-closed-checks the three things that go wrong
+before TDD rather than during it: acceptance criteria that are vibes rather than checks, criteria with
+no test seam to attach to, and — the one that matters most here — **zero AC contracts on a
+`standard`/`risky` plan**, which is exactly what makes step 3's `ac-verify.sh` gate vacuous. A BLOCK
+loops back into this step; it does not call a human. Skip it only when `grill-with-docs` already ran
+(that pass applies the same scrutiny), and say so in the PR body.
+
 **If the plan itself exceeds one session's budget** (the scope is too large to pin down a single
 verifiable "done"), don't jump straight to implementation — split the issue into a map of decision
 tickets first: one separate tracked issue per still-open question (blocked-by links pointing at
@@ -192,11 +246,14 @@ gate).
 > Explore-type agent instead of doing it in the main context — keep raw file dumps and grep output out
 > of the main conversation.
 
-### 2. Implementation — `tdd` (red → green)
-Implement the plan red→green. Security/invariant paths (RLS, authorization, or whatever this repo's
-equivalent is) need **behavior-proof tests**, not just coverage. This repo's verify command is this
-loop's convergence criterion — run it wrapped, always, never raw: `<however this repo invokes its
-installed loop-engine plugin's bin scripts> verdict-run.sh -- <verifyCommand>` (BAC-745). This holds
+### 2. Implementation — invoke the `ship-flow:tdd` skill (red → green)
+Implement the plan red→green by **invoking this plugin's `ship-flow:tdd` skill by that exact
+namespaced name** — not by writing tests in this session's own style and calling it TDD. Security/
+invariant paths (RLS, authorization, or whatever this repo's equivalent is) need **behavior-proof
+tests**, not just coverage. This repo's verify command is this
+loop's convergence criterion — run it wrapped, always, never raw:
+`{{pluginBinPrefix}}verdict-run.sh -- <verifyCommand>` (BAC-745 — `--` is required here, and only
+here). This holds
 even if `verifyCommand` is itself already a verdict-contract script (e.g. a repo's own `verdict` wrapper)
 — `verdict-run.sh` detects an already-emitted `=== VERDICT ===` block and passes it through unchanged
 rather than double-wrapping, so wrapping unconditionally is always safe. Read the gate off the printed
@@ -212,8 +269,8 @@ diff with `--from-git`). `VERDICT: FAIL` loops back autonomously.
 ### 3. Runtime verify
 Build and run the app, drive the changed surface (CLI/API/GUI — whatever applies) through it, and
 confirm **what was intended actually works**. This produces runtime evidence, not a re-run of the test
-suite. When step 1's plan has any AC contracts, this is now formalized via `<however this repo invokes
-its installed loop-engine plugin's bin scripts> ac-verify.sh <plan-file>` (ADR-0104) — deterministic
+suite. When step 1's plan has any AC contracts, this is now formalized via
+`{{pluginBinPrefix}}ac-verify.sh <plan-file>` (ADR-0104 — positional plan file, no `--`) — deterministic
 subprocess judgment (verify exit code, artifact existence, output substring) per contracted AC,
 composing with — not replacing — the observe-the-running-app check above.
 → **Gate:** PASS. FAIL → **loop back to step 2**. SKIP (no runtime surface exists) passes with a
@@ -233,23 +290,36 @@ one-line reason.
 > page under test would then reach the user's real accounts, not a sandboxed session.
 
 ### 4. Review and fix
-Run this plugin's review agents (`code-reviewer`, `test-hunter`, `verifier-integrity-hunter`) against
-the diff. If this repo also runs a separate general-purpose PR-review tool, run both — during any
-period where both are in use, treat this plugin's agents as complementary, not a replacement. Fix what
-they flag autonomously.
-→ **Gate:** Critical/Important findings resolved. Re-run the step-2 gate after fixing, then re-review.
+Run this plugin's review agents — **by their namespaced names, `ship-flow:code-reviewer`,
+`ship-flow:test-hunter`, `ship-flow:verifier-integrity-hunter`** — against the diff. The namespace is
+load-bearing: a bare `code-reviewer` collides with `pr-review-toolkit:code-reviewer`, a different agent
+with a different checklist that many repos also have installed, and the wrong one resolving looks
+identical from the outside. If this repo also runs a separate general-purpose PR-review tool, run
+both — treat this plugin's agents as complementary, not a replacement. Fix what they flag autonomously.
+
+**A review agent that ends in a watchdog timeout, a stall, or any other non-completion is a BLOCK, not
+"no findings".** A subagent that never produced a verdict has reviewed nothing; treating its silence as
+a clean pass is how a run reports itself as reviewed when it wasn't. Re-summon it (one at a time if a
+shared local resource caused it) and get a real verdict before step 5.
+→ **Gate:** every summoned review agent returned a completed verdict, and Critical/Important findings
+resolved. Re-run the step-2 gate after fixing, then re-review.
 
 > **Token efficiency**: review agents run in their own context — don't pull their raw internal
 > deliberation into the main context, just the findings summary.
 
 ### 5. Open the PR → `integrationBranch` (or `releaseBranch` if trunk-based) and **stop** — hand off to a human
-Right before opening the PR, get the final verdict against the real diff: `<loop-engine
-classify-risk.sh> --from-git --stage pr --action "PR→<base>" --render-md` — paste the output markdown
+Right before opening the PR, get the final verdict against the real diff:
+`{{pluginBinPrefix}}classify-risk.sh --from-git --stage pr --action "PR→<base>" --render-md` — paste the output markdown
 block (verdict table + its audit marker, if the classifier emits one) **verbatim into the PR body**
 rather than transcribing it by hand. If it's REQUIRE, put the reason at the very top of the PR body —
 what a human needs to see is exactly why the gate called for them. This session still composes that PR
-body (summary, verification evidence, gate verdict, any SKIP reasons) and the tracked-issue comment text
-— composing text isn't an external state change.
+body (summary, verification evidence, gate verdict, any SKIP reasons, and the `Decisions taken` section
+from [Execution mode](#execution-mode--autonomous-by-default)) and the tracked-issue comment text.
+**Write both in `outputLanguage`** (the banner at the top of this file) — this step is the measured
+drift point: by now the context is dominated by this English skill body, and a run that worked in the
+user's language all the way through step 4 reports its PR in English here. Pasted evidence (the verdict
+block, gate output, command names, the branch name) stays verbatim — only your own prose is translated.
+Composing text is not an external state change, which is why this session may still do it.
 
 **This session does not run the `git push`, PR-open, or tracked-issue comment itself** (ADR-0003, issue
 #15 — this session has been reading untrusted issue/web content and holding full worktree access since
@@ -271,6 +341,18 @@ read repository files on its own initiative, fetch content, or write its own PR/
 back the PR URL and each command's exit code. **Stop here** — a human reviews and merges. If this PR
 doesn't trigger CI, the PR body is the only verification record a human will see, so make sure step 2's
 gate results are actually in it.
+
+**Hard termination — the run ends when the PR URL exists.** "Stop here" is not "pause and find more work".
+Once the PR is open, this session does **not**, absent a fresh human instruction naming the new work:
+create another worktree · create another branch · create or claim another tracked issue · open another
+PR · start implementing anything else. The one exception is step 6, this issue's own lessons pass.
+Report the PR URL — in `outputLanguage`, URL and branch name verbatim — and stop talking.
+
+**Merge approval is per-PR and never inferred.** "Merge it" authorizes **one** merge of **this** PR —
+not standing approval, not a PR opened later in the same session, and not a retry. A failed
+`gh pr merge` is a result to report, not a loop to go around again: that's one irreversible action
+attempted twice on one approval.
+
 → **After a human merges:** clean up the worktree/branch (remove any dedicated deep-gate resources first
 if this repo uses per-worktree isolated containers for them, confirm no stash leftovers) + update the
 tracked issue (status, merge SHA) → **step 6**. Release (`integrationBranch → releaseBranch`) is a
@@ -284,7 +366,7 @@ accepts it, that's a rubber stamp. A separate skeptical pass tries to *refute* e
 uncertain, the default is reject.
 
 ```bash
-L() { <loop-engine bin resolver> lessons.sh "$@"; }; D='.loop/lessons'
+L() { {{pluginBinPrefix}}lessons.sh "$@"; }; D='.loop/lessons'
 L promote --min-count 3 --lessons $D                                   # candidates + id (verified+recurring floor)
 L challenge --id <id> --verdict accept|reject --reason "…" --lessons $D # ← the separate skeptical pass records this
 L promote --codify --lessons $D                                        # only accepted ones come out
@@ -292,7 +374,7 @@ L retire --id <id> --ref "<where it landed>" --lessons $D              # retire 
 ```
 
 Landing an accepted lesson in CLAUDE.md/a skill happens **as a PR, not a direct edit**: new worktree off
-the integration branch → edit → `<loop-engine classify-risk.sh> --from-git --stage improve` (harness
+the integration branch → edit → `{{pluginBinPrefix}}classify-risk.sh --from-git --stage improve` (harness
 files rule-match to `blast=high` → always REQUIRE) → open the PR and **stop**. Anything irreversible is a
 merge, not an edit — autonomy covers getting to the PR; that door is the human boundary.
 → **Gate:** zero codifications without an accept verdict · zero direct commits to this repo's

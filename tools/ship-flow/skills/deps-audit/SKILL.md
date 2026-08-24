@@ -6,23 +6,32 @@ context: fork
 
 # deps-audit — extension maintenance dashboard
 
+> **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
+> `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
+> questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
+> identifiers, file paths, branch names, and quoted tool output stay verbatim; never translate them.** Key
+> absent or unreadable → fall back to the language the user is writing in; never error on this.
+
 Answers whether each installed extension **(1) is maintained upstream, (2) is your install current, and (3) what's unused**. Sweeps all four install channels — marketplace plugins, skills.sh, gstack, and repo-embedded skills — in one pass.
 
 ## Run
 
-Run this repo's installed loop-engine plugin's `deps-audit` script — invoked however this repo
-resolves plugin bin scripts (BAC-753). In a live session this is usually just the bare script name —
-a plugin's `bin/` is already on PATH once it's loaded. The example below uses loop-engine's own
-bundled resolver, `bin/plugin-path.mjs` (`exec <relative-bin> [args...]`, env-var overrides
-`LOOP_ENGINE_PATH`/`SHIP_FLOW_PATH`/`LOOP_MEMORY_PATH`), for contexts bare-PATH doesn't cover — CI (no
-live plugin load) or resolving a *different* installed plugin's path; a repo that installs loop-engine
-a different way may invoke it differently:
+Run this repo's installed loop-engine plugin's `deps-audit` script. The commands below are
+**substitutable literals** beginning with `{{pluginBinPrefix}}` (BAC-753): read `pluginBinPrefix` from
+`.claude/ship-flow.config.json`, replace the token with its value **concatenated onto the script name
+with no separator**, and run the result verbatim — never type a `{{…}}` token into a shell. The default
+(key absent) is `""`, since in a live session a plugin's `bin/` is already on PATH. If this repo's CI or
+its own wrapper needs an explicit resolver, the value is something like
+`node "$LOOP_ENGINE_PATH/bin/plugin-path.mjs" exec bin/` — loop-engine's own bundled resolver
+(`exec <relative-bin> [args...]`, env-var overrides `LOOP_ENGINE_PATH`/`SHIP_FLOW_PATH`/`LOOP_MEMORY_PATH`),
+which covers what bare-PATH doesn't: CI (no live plugin load) or resolving a *different* installed
+plugin's path. `deps-audit.mjs` takes **no `--` separator** — its flags go directly after the script name:
 
 ```bash
-<however this repo invokes its installed loop-engine plugin's bin scripts> deps-audit.mjs                      # fast — local manifests + usage + gh freshness (no clone)
-<however this repo invokes its installed loop-engine plugin's bin scripts> deps-audit.mjs --deep                # + skills.sh merge-base divergence (your edits vs staleness)
-<however this repo invokes its installed loop-engine plugin's bin scripts> deps-audit.mjs --json                # machine-readable
-<however this repo invokes its installed loop-engine plugin's bin scripts> deps-audit.mjs --refresh-provenance  # regenerate the sidecar (run after `npx skills update`)
+{{pluginBinPrefix}}deps-audit.mjs                      # fast — local manifests + usage + gh freshness (no clone)
+{{pluginBinPrefix}}deps-audit.mjs --deep                # + skills.sh merge-base divergence (your edits vs staleness)
+{{pluginBinPrefix}}deps-audit.mjs --json                # machine-readable
+{{pluginBinPrefix}}deps-audit.mjs --refresh-provenance  # regenerate the sidecar (run after `npx skills update`)
 ```
 
 If `CLAUDE_PROJECT_DIR` isn't set, it treats CWD as the project (run from the repo root). Each run (including `--json`) stamps `.loop/deps-audit.last` with a timestamp so a weekly heartbeat, if this repo has one, can throttle re-runs.
