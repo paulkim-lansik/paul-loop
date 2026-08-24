@@ -5,6 +5,34 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-memory 0.3.0
+
+- **Fixes a silent no-op**: both hooks read the embedding key from the process env only, but Claude
+  Code hands a hook the *session process env* — it never loads `.env` files. A repo keeping its key
+  in a gitignored `.env` (the normal way to hold a secret that must not be committed) and not
+  `export`ing it therefore tripped each hook's own no-key gate: recall and graduation were both dead,
+  with no error anywhere. The plugin now loads a dotenv-shaped file itself, before that gate
+  (`hooks/lib/load-dotenv.mjs`, dependency-free), so no consuming repo needs to carry a local loader
+  hook — which is how the capability got lost in the first place, when a repo dropped its local hook
+  copies in favour of this plugin.
+- New `loop_dotenv_path` userConfig option (env `LOOP_DOTENV_PATH`), default `.loop/.env` — the file's
+  location is a per-repo layout question, so it's configurable rather than assumed. Precedence is
+  session env > userConfig > file; a key already set is never overwritten. Every key in the file is
+  loaded, not only the ones with a matching userConfig option (so `LOOP_EMBED_PROVIDER` and friends
+  reach the CLI from the file too).
+- Worktree fallback: a gitignored `.env` does not exist in a freshly-created feature worktree, which
+  is exactly where an isolated agent loop runs. If the configured path is missing there, the *main*
+  worktree's copy is read instead (`git rev-parse --git-common-dir`). Nothing is copied — the key
+  stays untracked and in one place. Without this the plugin fails closed in every worktree, which is
+  how this same failure class stayed invisible for six weeks in the plugin's origin repo.
+- Loading stays best-effort: a missing/unreadable file, or a non-git directory, leaves the env
+  untouched and the hooks return to their normal fail-open no-op.
+- New `test/hooks-dotenv.test.ts` (11 tests) exercising the **real hook processes**, not the loader in
+  isolation: key-from-file reaches the gate (both hooks), session env and userConfig each beat the
+  file, custom path honoured, quoting/`export`/inline-comment parsing, missing file → clean no-op,
+  directory-instead-of-file → no throw, worktree fallback resolves, a worktree's own `.env` preferred
+  over the main one's, non-git directory → clean no-op.
+
 ## loop-engine 0.8.0
 
 - New `templates/risk-rules.example.json` (BAC-757) — a shape-only starter for `classify-risk.mjs`'s

@@ -187,8 +187,30 @@ interactively via `/plugin configure loop-memory@paul-loop`:
 | `openai_api_key` / `gemini_api_key` | no (but you need at least one) | `sensitive: true` — stored in the OS keychain / `~/.claude/.credentials.json`, never in `settings.json`. Without either key both hooks no-op. |
 | `loop_database_url` | no | Defaults to `postgresql://postgres:postgres@localhost:5434/loop_memory` — this plugin's `docker-compose.yml` matches that default (`docker compose up -d --wait` from `tools/loop-memory/`). |
 | `loop_memory_signing_key` | no | HMAC-SHA256 secret. Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing) — see "Threat model" below. `sensitive: true`. |
+| `loop_dotenv_path` | no | Repo-relative (or absolute) dotenv-shaped file the hooks read **before** their key gate. Default `.loop/.env`. See "Keys that live in a `.env`" below. |
 | `loop_adr_dir` / `loop_context_file` / `loop_research_dir` / `loop_design_dir` | no | Optional *knowledge* corpus sources (separate from lessons) — a directory of `# ADR-NNNN: Title`-headed decision docs, a single `**Term**:`-chunked glossary file, and two `##`-section-chunked doc directories, respectively. Unset = that source is skipped entirely; nothing is assumed about your repo's docs unless you point at them. |
 | `loop_recall_max_distance` / `loop_knowledge_max_distance` | no | Cosine-distance cutoffs (0=identical..2=opposite) for the lessons and knowledge corpora respectively — a hit farther than this is dropped instead of injected. **Embedder-dependent**, calibrate for your provider/corpus; the code default (0.65) is a loose safety net if left unset. |
+
+### Keys that live in a `.env`
+
+Claude Code hands a hook the **session process env** — it does not load `.env` files. A repo that
+keeps its embedding key in a gitignored `.env` and never `export`s it to the shell would therefore
+trip both hooks' own no-key gate and no-op *silently*: no recall, no graduation, no error. So the
+hooks load a dotenv-shaped file themselves, before that gate:
+
+- **Path**: `loop_dotenv_path` (default `.loop/.env`, repo-relative; absolute paths work too). If
+  your key is at, say, `packages/loop-memory/.env`, set the option — the default is a guess, not a
+  discovery mechanism.
+- **Precedence**: session env > `userConfig` > file. A key already set is never overwritten.
+- **Worktree fallback**: a gitignored `.env` doesn't exist in a freshly-created feature worktree —
+  which is exactly where an isolated agent loop runs. If the path is missing there, the *main*
+  worktree's copy is read instead (resolved via `git rev-parse --git-common-dir`). Nothing is
+  copied; the key stays untracked and in one place.
+- **Best-effort**: a missing/unreadable file, or a non-git directory, leaves the env untouched and
+  the hooks fall back to their normal fail-open no-op.
+
+Every key in the file is loaded, not just the ones with a matching `userConfig` option — so
+`LOOP_EMBED_PROVIDER` and friends reach the CLI from the file too.
 
 ### Threat model — write-path provenance
 
@@ -257,6 +279,7 @@ tools/ship-flow/                  # delivery-loop skills — see the plugin's ow
 tools/loop-memory/
   .claude-plugin/plugin.json      # this plugin's manifest — defaultEnabled:false, userConfig schema
   hooks/                          # SessionStart (graduate) + UserPromptSubmit (recall), plus hooks.json
+  hooks/lib/                      # helpers the hooks import (dotenv loader) — plain JS, no deps
   src/                            # TypeScript source (drizzle schema, CLI, embedder seam)
   dist/cli.js                     # committed, dependency-free esbuild bundle — what hooks actually run
   drizzle/                        # pgvector schema migrations

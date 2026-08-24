@@ -1,6 +1,6 @@
 {
   "name": "loop-memory",
-  "version": "0.2.6",
+  "version": "0.3.0",
   "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in: installs disabled by default — this is a database dependency, not core loop mechanics.",
   "author": {
     "name": "paulkim-lansik"
@@ -37,6 +37,12 @@
       "title": "Write-path signing key",
       "description": "HMAC-SHA256 secret that signs graduated lesson notes (defends against memory poisoning of untrusted write paths — see README \"Threat model\"). Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing); the knowledge corpus is unaffected.",
       "sensitive": true,
+      "required": false
+    },
+    "loop_dotenv_path": {
+      "type": "string",
+      "title": "Dotenv file the hooks load keys from",
+      "description": "Repo-relative (or absolute) path to a dotenv-shaped file the hooks read before their embedding-key gate — Claude Code hands hooks the session process env only and never loads .env files, so a key that lives solely in an (unexported, gitignored) .env would otherwise make both hooks no-op silently. Values already set in the session env or via the options above always win. Default (if unset): .loop/.env. If the path is missing in a feature worktree, the main worktree's copy is used (a gitignored .env is never copied into a new worktree).",
       "required": false
     },
     "loop_adr_dir": {
