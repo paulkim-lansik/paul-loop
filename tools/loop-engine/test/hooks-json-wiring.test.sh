@@ -97,6 +97,7 @@ run_allow() {
 run_allow "gate-before-merge.mjs" '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
 run_allow "gate-risky-commands.mjs" '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
 run_allow "gate-worktree-create.mjs" '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
+run_allow "gate-verify-pipe.mjs" '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
 run_allow "warn-partial-checkout.mjs" '{"tool_name":"Bash","tool_input":{"command":"ls -la"}}'
 run_allow "protect-during-loop.mjs" '{"tool_name":"Write","tool_input":{"file_path":"/tmp/not-protected.txt"}}'
 run_allow "gate-stop-verdict.mjs" '{"session_id":"hooks-json-wiring-test"}'

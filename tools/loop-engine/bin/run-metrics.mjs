@@ -16,6 +16,9 @@
 //        "post-compaction"으로 표시한다(압축이 여러 번 연달아 와도 "최근 압축됨" 불리언 상태로
 //        취급 — 압축마다 같은 다음 verdict를 중복 카운트하지 않는다). 이 표본들 중 verdict.failed
 //        비율이 post_compaction_red — 체크포인트(별도 조건부 이슈) 착수 여부의 실측 근거.
+//   서브에이전트(BAC-778) = started / stopped_paired / stopped_unattributed 3분할. 플랫폼이
+//        SubagentStart가 안 뜨는 종류에도 SubagentStop을 쏘고 그 이벤트엔 agent_type이 없다(실측) —
+//        stopped 총계는 "서브에이전트 수"를 뒷받침하지 못하므로 짝이 맞은 것만 따로 센다.
 // 결손 축은 INSUFFICIENT_DATA를 1급 결과로(frugality proof — 측정 축이 빠지면 조작된 PASS 대신
 // 증명 불가를 정직하게): run.started 없는 런(계측 생존 마커 부재)의 H1, verdict 0 런의 Q2,
 // 해당 런이 0인 전체 축. 'unknown' 런(귀속 불가 verdict 버킷)은 별도 행+카운터로만 보고하고
@@ -94,7 +97,14 @@ for (const f of files) {
   const excluded = {}
   const verdicts = []
   const compactions = []
+  const startedAgentIds = new Set()
+  const stoppedAgentIds = []
   for (const e of events) {
+    if (e.type === 'subagent.started') {
+      if (e.payload?.agent_id) startedAgentIds.add(e.payload.agent_id)
+    } else if (e.type === 'subagent.stopped') {
+      stoppedAgentIds.push(e.payload?.agent_id ?? null)
+    }
     if (e.type === 'permission.requested') {
       const s = e.payload?.surface
       if (typeof s === 'string' && s) {
@@ -127,6 +137,13 @@ for (const f of files) {
     }
   }
 
+  // 서브에이전트 짝 맞추기(BAC-778) — stopped를 통째로 세면 안 되는 이유는 record-run-event.mjs
+  // 헤더의 실측 그대로다: 플랫폼이 SubagentStart가 안 뜨는 에이전트 종류에도 SubagentStop을 쏘고,
+  // 그런 이벤트엔 agent_type이 아예 없다(실측 7일: stopped 2,307 중 1,896이 무-타입, 그 1,901개
+  // 고유 id 중 started가 있는 건 0개 / 타입 있는 405개는 405개 전부 started가 있다). 그래서
+  // "stopped 수 = 서브에이전트 수"는 뒷받침되지 않는 숫자다 — 짝이 맞은 것과 귀속 불가를 분리해
+  // 보고하고, 지속시간/성공률 같은 파생은 짝 맞은 모집단에서만 도출하게 한다.
+  const stoppedPaired = stoppedAgentIds.filter((id) => id && startedAgentIds.has(id)).length
   runs.push({
     run_id: runId,
     instrumented,
@@ -136,6 +153,11 @@ for (const f of files) {
     excluded,
     compactions: compactions.length,
     post_compaction_red: postCompactionRed,
+    subagents: {
+      started: startedAgentIds.size,
+      stopped_paired: stoppedPaired,
+      stopped_unattributed: stoppedAgentIds.length - stoppedPaired,
+    },
   })
 }
 
@@ -172,6 +194,11 @@ const overall = {
       }
     : INSUFFICIENT,
   q2_mean: verdictRuns.length ? mean(verdictRuns.map((r) => r.q2)) : INSUFFICIENT,
+  subagents: {
+    started: attributed.reduce((s, r) => s + r.subagents.started, 0),
+    stopped_paired: attributed.reduce((s, r) => s + r.subagents.stopped_paired, 0),
+    stopped_unattributed: attributed.reduce((s, r) => s + r.subagents.stopped_unattributed, 0),
+  },
   excluded_by_surface: excludedTotal,
   unknown_verdict_events: unknownVerdictEvents,
   skipped_lines: skippedLines,
@@ -210,6 +237,12 @@ if (asJson) {
     .join(' ')
   lines.push(`excluded_by_surface: ${surf}`)
   lines.push(`unknown_verdict_events: ${unknownVerdictEvents} (귀속 불가 — overall 집계 제외)`)
+  lines.push(
+    `subagents: started=${overall.subagents.started} stopped_paired=${overall.subagents.stopped_paired} ` +
+      `stopped_unattributed=${overall.subagents.stopped_unattributed} ` +
+      '(unattributed = SubagentStart가 안 뜬 종류의 SubagentStop — agent_type 부재, 짝 맞추기 불가. ' +
+      '에이전트별 지속시간/성공률은 stopped_paired에서만 도출할 것)',
+  )
   lines.push(`skipped_lines: ${skippedLines}`)
   lines.push(`skipped_files: ${skippedFiles}`)
   lines.push(`compactions_total: ${overall.compactions_total}`)

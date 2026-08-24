@@ -83,7 +83,8 @@
         "hooks": [
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gate-before-merge.mjs\"", "timeout": 30 },
           { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gate-risky-commands.mjs\"", "timeout": 30 },
-          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gate-worktree-create.mjs\"", "timeout": 15 }
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gate-worktree-create.mjs\"", "timeout": 15 },
+          { "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/gate-verify-pipe.mjs\"", "timeout": 15 }
         ]
       }
     ],

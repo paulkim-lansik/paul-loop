@@ -49,6 +49,25 @@ const PRE_SANITIZE_CAP = 2048;
 const capStr = (v) =>
   typeof v === 'string' && v.length > PRE_SANITIZE_CAP ? v.slice(0, PRE_SANITIZE_CAP) : v;
 
+// The key names (never the values) of a tool_input object, capped — a diagnostic fingerprint for
+// tools that carry neither `command` nor `file_path`.
+function inputKeys(toolInput) {
+  if (!toolInput || typeof toolInput !== 'object') return [];
+  return Object.keys(toolInput).slice(0, 20);
+}
+
+// Everything the platform sent that isn't a documented common field — used both for
+// instructions.loaded (whose event-specific fields aren't documented) and for an unattributable
+// subagent.stopped (see below: keeping the raw extras is the only way a later audit can discover an
+// identity field the platform supplies under a name we don't know yet).
+function restFields(input) {
+  const rest = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (!COMMON_FIELDS.has(k)) rest[k] = capStr(v);
+  }
+  return rest;
+}
+
 function pickPayload(type, input, surfaceOf) {
   if (type === 'permission.requested' || type === 'permission.denied') {
     return {
@@ -63,10 +82,37 @@ function pickPayload(type, input, surfaceOf) {
       // classification impossible for very long commands. Aggregation should only count
       // surface==null interventions.
       surface: surfaceOf(input.tool_name, input.tool_input?.command),
+      // Bash carries `command` and Edit/Write carry `file_path`, but every other tool (measured in a
+      // real ledger: SendMessage, ScheduleWakeup) lands with tool_name and nothing else — a denial
+      // that can't be told apart from any other denial of the same tool afterwards. The key *names*
+      // of tool_input are enough to identify which shape it was, and unlike the values they can't
+      // carry a secret or blow up the ledger. Values stay excluded on purpose.
+      tool_input_keys: inputKeys(input.tool_input),
     };
   }
   if (type === 'subagent.started' || type === 'subagent.stopped') {
-    return { agent_id: input.agent_id, agent_type: input.agent_type };
+    // agent_type is recorded as null (absent), never '' — an empty string reads like "we captured a
+    // type and it happened to be blank", which is the opposite of what actually happened.
+    //
+    // Measured (glucofit-partners ledger, 7 days, 146 run files): of 2,307 subagent.stopped events,
+    // 1,896 carried agent_type '' and 411 carried a real type. Cross-checking agent_id against every
+    // subagent.started in the whole ledger is unambiguous — 405/405 distinct *typed* stop ids have a
+    // matching started; 1,901/1,901 distinct *untyped* stop ids have none. So the absence isn't
+    // truncation or a payload-shape mistake on our side: the platform fires SubagentStop for agent
+    // kinds whose SubagentStart never fires, and its stdin for those carries no agent_type. A hook
+    // cannot invent it. What a hook CAN do is stop pretending the two counts are comparable — hence
+    // attributable:false here, and a separate stopped_unattributed axis in bin/run-metrics.mjs so
+    // nothing downstream derives per-agent duration/success from a population it can't pair.
+    const agentType =
+      typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : null;
+    const payload = { agent_id: input.agent_id, agent_type: agentType };
+    if (type === 'subagent.stopped' && agentType === null) {
+      payload.attributable = false;
+      // Carry whatever else the platform did send. If a future runtime starts supplying identity
+      // under a different key, it lands in the ledger and the next audit sees it instead of guessing.
+      payload.extra = restFields(input);
+    }
+    return payload;
   }
   if (type === 'run.started' || type === 'run.ended') {
     return { cwd: input.cwd, reason: input.reason, permission_mode: input.permission_mode };
@@ -79,11 +125,7 @@ function pickPayload(type, input, surfaceOf) {
   // instructions.loaded — the event-specific fields aren't documented: carry everything except the
   // common fields, still pre-truncating unknown long strings (sanitize's blocklist/cap defends the
   // content).
-  const rest = {};
-  for (const [k, v] of Object.entries(input)) {
-    if (!COMMON_FIELDS.has(k)) rest[k] = capStr(v);
-  }
-  return rest;
+  return restFields(input);
 }
 
 async function main() {
