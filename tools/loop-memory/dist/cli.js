@@ -5312,7 +5312,8 @@ var require_lib2 = __commonJS({
 });
 
 // src/cli.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // node_modules/drizzle-orm/entity.js
 var entityKind = Symbol.for("drizzle:entityKind");
@@ -6345,7 +6346,7 @@ function sql(strings, ...params) {
     return new SQL([new StringChunk(str)]);
   }
   sql2.raw = raw;
-  function join3(chunks, separator) {
+  function join5(chunks, separator) {
     const result = [];
     for (const [i, chunk] of chunks.entries()) {
       if (i > 0 && separator !== void 0) {
@@ -6355,7 +6356,7 @@ function sql(strings, ...params) {
     }
     return new SQL(result);
   }
-  sql2.join = join3;
+  sql2.join = join5;
   function identifier(value) {
     return new Name(value);
   }
@@ -10061,7 +10062,7 @@ var PgSelectQueryBuilderBase = class extends TypedQueryBuilder {
       const baseTableName = this.tableName;
       const tableName = getTableLikeName(table);
       for (const item of extractUsedTable(table)) this.usedTables.add(item);
-      if (typeof tableName === "string" && this.config.joins?.some((join3) => join3.alias === tableName)) {
+      if (typeof tableName === "string" && this.config.joins?.some((join5) => join5.alias === tableName)) {
         throw new Error(`Alias "${tableName}" is already used in this query`);
       }
       if (!this.isPartialSelect) {
@@ -11282,7 +11283,7 @@ var PgUpdateBase = class extends QueryPromise {
   createJoin(joinType) {
     return (table, on) => {
       const tableName = getTableLikeName(table);
-      if (typeof tableName === "string" && this.config.joins.some((join3) => join3.alias === tableName)) {
+      if (typeof tableName === "string" && this.config.joins.some((join5) => join5.alias === tableName)) {
         throw new Error(`Alias "${tableName}" is already used in this query`);
       }
       if (typeof on === "function") {
@@ -11378,10 +11379,10 @@ var PgUpdateBase = class extends QueryPromise {
           const fromFields = this.getTableLikeFields(this.config.from);
           fields[tableName] = fromFields;
         }
-        for (const join3 of this.config.joins) {
-          const tableName2 = getTableLikeName(join3.table);
-          if (typeof tableName2 === "string" && !is(join3.table, SQL)) {
-            const fromFields = this.getTableLikeFields(join3.table);
+        for (const join5 of this.config.joins) {
+          const tableName2 = getTableLikeName(join5.table);
+          if (typeof tableName2 === "string" && !is(join5.table, SQL)) {
+            const fromFields = this.getTableLikeFields(join5.table);
             fields[tableName2] = fromFields;
           }
         }
@@ -13261,6 +13262,102 @@ async function recallLessonsDecayed(db, embedder, query, signingKey, dir, k = 5,
   }).sort((a, b) => a.score - b.score).slice(0, k);
 }
 
+// src/liveness.ts
+import { readFileSync as readFileSync3, readdirSync as readdirSync3, statSync } from "node:fs";
+import { join as join3 } from "node:path";
+var RECALL_TYPE = "memory.recall";
+var GRADUATE_TYPE = "memory.graduate";
+function emptyCounts() {
+  return { total: 0, injected: 0, no_match: 0, skipped: 0, error: 0, reasons: {}, lastAt: null };
+}
+var OUTCOMES = ["injected", "no_match", "skipped", "error"];
+function tally(counts, e) {
+  counts.total++;
+  const outcome = e.payload?.outcome;
+  if (typeof outcome === "string" && OUTCOMES.includes(outcome)) {
+    counts[outcome]++;
+  }
+  const reason = e.payload?.reason;
+  if (typeof reason === "string") counts.reasons[reason] = (counts.reasons[reason] ?? 0) + 1;
+  const ts = e.ts;
+  if (typeof ts === "string" && (counts.lastAt === null || ts > counts.lastAt)) counts.lastAt = ts;
+}
+function summarizeLiveness(root, opts = {}) {
+  const limit = opts.runs && opts.runs > 0 ? opts.runs : 20;
+  const dir = join3(root, ".loop", "runs");
+  const summary = {
+    root,
+    runsScanned: 0,
+    runsWithRecall: 0,
+    recall: emptyCounts(),
+    graduate: emptyCounts(),
+    lastInjectedAt: null,
+    skippedLines: 0
+  };
+  let files;
+  try {
+    files = readdirSync3(dir).filter((f) => f.endsWith(".jsonl"));
+  } catch {
+    return summary;
+  }
+  const byRecency = files.map((f) => {
+    let mtime = 0;
+    try {
+      mtime = statSync(join3(dir, f)).mtimeMs;
+    } catch {
+    }
+    return { f, mtime };
+  }).sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+  for (const { f } of byRecency) {
+    let raw;
+    try {
+      raw = readFileSync3(join3(dir, f), "utf8");
+    } catch {
+      continue;
+    }
+    summary.runsScanned++;
+    let sawRecall = false;
+    for (const line2 of raw.split("\n")) {
+      if (!line2.trim()) continue;
+      let e;
+      try {
+        e = JSON.parse(line2);
+      } catch {
+        summary.skippedLines++;
+        continue;
+      }
+      if (e?.type === RECALL_TYPE) {
+        sawRecall = true;
+        tally(summary.recall, e);
+        if (e.payload?.outcome === "injected" && typeof e.ts === "string") {
+          if (summary.lastInjectedAt === null || e.ts > summary.lastInjectedAt) {
+            summary.lastInjectedAt = e.ts;
+          }
+        }
+      } else if (e?.type === GRADUATE_TYPE) {
+        tally(summary.graduate, e);
+      }
+    }
+    if (sawRecall) summary.runsWithRecall++;
+  }
+  return summary;
+}
+function formatLiveness(s) {
+  const fmtReasons = (r) => {
+    const parts = Object.entries(r).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`);
+    return parts.length ? parts.join(" \xB7 ") : "(none)";
+  };
+  const line2 = (label, c) => `  ${label}: ${c.total} firing(s) \u2014 injected ${c.injected} \xB7 no_match ${c.no_match} \xB7 skipped ${c.skipped} \xB7 error ${c.error}
+    reasons: ${fmtReasons(c.reasons)}
+    last: ${c.lastAt ?? "(never)"}
+`;
+  return `loop-memory liveness:
+  ledger: ${join3(s.root, ".loop", "runs")} \u2014 ${s.runsScanned} run file(s) scanned${s.skippedLines ? `, ${s.skippedLines} unparseable line(s) skipped` : ""}
+  recall fired in ${s.runsWithRecall}/${s.runsScanned} run(s)
+` + line2("recall", s.recall) + line2("graduate", s.graduate) + `  last injected: ${s.lastInjectedAt ?? "(never)"}
+`;
+}
+
 // src/cli.ts
 function pickEmbedder(allowStub) {
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
@@ -13329,8 +13426,14 @@ var opt = {
   allowStub: false,
   decay: false,
   // recall --decay: lessons 코퍼스를 decay 랭킹(BAC/paul-loop #12)으로 재정렬
-  hits: ""
+  hits: "",
   // record-recall: [{id, distance?, corpus?}, ...] JSON 문자열 (BAC-586)
+  root: "",
+  // liveness: 원장을 찾을 레포 루트. 비면 cwd.
+  runs: 20,
+  // liveness: 최근 몇 개의 런 파일까지 볼지(mtime 최신순)
+  assert: false
+  // liveness: 스캔 창에 recall 발동이 0건이면 exit 1
 };
 var source = process.env.LOOP_MEMORY_SOURCE || void 0;
 for (let i = 0; i < argv.length; i++) {
@@ -13382,6 +13485,17 @@ for (let i = 0; i < argv.length; i++) {
       break;
     case "--hits":
       opt.hits = val();
+      break;
+    case "--root":
+      opt.root = val();
+      break;
+    case "--runs": {
+      const n = Number(val());
+      opt.runs = Number.isInteger(n) && n > 0 ? n : 20;
+      break;
+    }
+    case "--assert":
+      opt.assert = true;
       break;
     case "--":
       break;
@@ -13512,6 +13626,19 @@ async function main() {
     await runRecordRecall(opt.hits, source);
     return;
   }
+  if (cmd === "liveness") {
+    const summary = summarizeLiveness(opt.root || process.cwd(), { runs: opt.runs });
+    process.stdout.write(opt.json ? `${JSON.stringify(summary)}
+` : formatLiveness(summary));
+    if (opt.assert && summary.recall.total === 0) {
+      process.stderr.write(
+        `loop-memory: liveness assertion failed \u2014 no ${RECALL_TYPE} events in the last ${opt.runs} run file(s) under ${join4(summary.root, ".loop", "runs")} (the UserPromptSubmit hook has not fired)
+`
+      );
+      process.exit(1);
+    }
+    return;
+  }
   if (cmd === "consolidate") {
     const signingKey2 = signingKeyFromEnv();
     if (!signingKey2) {
@@ -13524,7 +13651,7 @@ async function main() {
   }
   if (cmd !== "graduate" && cmd !== "recall") {
     process.stderr.write(
-      "Usage: loop-memory <graduate|recall|consolidate|stats|record-recall> [options]\n"
+      "Usage: loop-memory <graduate|recall|consolidate|stats|record-recall|liveness> [options]\n"
     );
     process.exit(2);
   }
@@ -13592,7 +13719,7 @@ async function main() {
       return;
     }
     let q = opt.query;
-    if (!q && opt.queryFile) q = readFileSync3(opt.queryFile, "utf8");
+    if (!q && opt.queryFile) q = readFileSync4(opt.queryFile, "utf8");
     q = q.trim();
     if (!q) {
       process.stderr.write("loop-memory: recall needs --query or --query-file\n");

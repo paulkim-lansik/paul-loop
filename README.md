@@ -212,6 +212,47 @@ hooks load a dotenv-shaped file themselves, before that gate:
 Every key in the file is loaded, not just the ones with a matching `userConfig` option — so
 `LOOP_EMBED_PROVIDER` and friends reach the CLI from the file too.
 
+### Liveness — proving the hooks actually fired
+
+Fail-open is what keeps a broken memory store from breaking your session, and it is also what makes a
+broken hook invisible: *never fired*, *fired and self-gated*, *fired and found nothing close enough*,
+and *fired and broke* all look the same from outside (exit 0, empty stdout, nothing on disk). These
+hooks once stayed a silent no-op for days for exactly that reason, and it was caught only because
+someone noticed recall felt absent.
+
+So every firing appends one small JSONL line — always on, nothing to enable — to `loop-engine`'s
+session run ledger at `<repo>/.loop/runs/<run-id>.jsonl`, in its schema v1 shape, as
+`memory.recall` / `memory.graduate`:
+
+```json
+{"id":"…","type":"memory.recall","ts":"2026-08-24T15:13:05.700Z","aggregate_id":"<session-id>","version":1,
+ "payload":{"outcome":"no_match","reason":"above_cutoff","key":true,"dotenv":true,"prompt_chars":47,
+            "lessons":{"candidates":3,"near":0,"nearest":0.71},"knowledge":{"candidates":0,"near":0,"nearest":null},
+            "cutoffs":{"lessons":0.65,"knowledge":0.65},"injected_chars":0,"ms":812}}
+```
+
+`outcome` is `injected` | `no_match` | `skipped` | `error`, and `reason` says which gate or failure
+(`no_embedding_key`, `recall_off`, `prompt_too_short`, `stdin_parse_fail`, `no_hits`, `above_cutoff`,
+`cli_failed`, `exception`). "Never fired" is the absence of all of them. Only counts, booleans,
+distances and fixed slugs are ever written — never your prompt, note content, an env value, a
+resolved dotenv path, or an error message.
+
+Read it back with a command that needs neither the database nor a key:
+
+```bash
+loop-memory liveness              # human-readable
+loop-memory liveness --json       # for a health check
+loop-memory liveness --assert     # exit 1 only if recall has NOT fired in the last 20 runs
+```
+
+`--assert` deliberately treats self-gating and honest misses as evidence of life — a check that
+alarms on a legitimately empty corpus is a check nobody keeps. Tuning: `LOOP_LIVENESS_OFF=1` disables
+the record entirely, `LOOP_LIVENESS_MAX_BYTES` (default 8 MiB) caps how large a run file it will keep
+appending to.
+
+⚠️ Like the rest of that ledger, these files are gitignored, unprotected local telemetry and are
+**forgeable** by anyone with shell access. Treat them as observability, never as a gate input.
+
 ### Threat model — write-path provenance
 
 A persistent, semantically-searched memory store is a stored-prompt-injection target: anything that

@@ -25,6 +25,14 @@
  *                             훅 경로가 아니라 사람/주기 실행 전용 — 아무것도 쓰지 않는다(자동 병합·삭제
  *                             ·승격 없음, 후보만 표시).
  *   loop-memory stats         [--json]   — 읽기 전용 스토어 요약(임베더/키 불필요). loop-doctor가 호출.
+ *   loop-memory liveness      [--json] [--runs N] [--root DIR] [--assert]
+ *                             — 훅이 *실제로 발동했는지*를 loop-engine 런 원장(.loop/runs/*.jsonl)의
+ *                             `memory.recall`/`memory.graduate` 이벤트로 사후 확인한다(paul-loop 이슈
+ *                             #35). DB·임베더·키 전부 불필요(순수 파일시스템) — 스토어가 죽어 있어도
+ *                             답이 나온다. `--assert`는 스캔 창 안에 recall 발동이 **한 건도 없으면**
+ *                             exit 1(= "한 번도 안 켜졌다" 상태만 실패로 본다 — 자기게이팅/무매치는
+ *                             정상 발동이다). ⚠️ 원장은 gitignore된 위조 가능한 로컬 텔레메트리다
+ *                             (loop-engine run-ledger와 같은 신뢰 경계) — 관측용이지 게이트 입력 아님.
  *   loop-memory record-recall --hits <json>  — 훅이 실제 주입 확정한 노트를 memory_op에 RECALL 행으로
  *                             남긴다(계측, BAC-586). --hits는 [{id, distance?, corpus?}, ...] JSON
  *                             배열. 임베더 불필요(키 없이도 동작) — 이미 확정된 값을 그대로 적을 뿐.
@@ -46,10 +54,13 @@
  * `LOOP_MEMORY_SOURCE=hook`을 export해두고 잊었든) `node dist/cli.js graduate ...`를 직접 돌려 이
  * env를 손으로 심으면 실제 훅 발동과 바이트 단위로 구분 불가능한 행이 남는다 — DB를 직접 질의하는 것과
  * 같은 신뢰 수준이다. 이 값이 있고 없고가 증명하는 건 "훅 코드 경로에서 왔다고 명시적으로 표시됨" 대
- * "표시 안 됨" 뿐이다. "실제 라이브 세션에서 훅이 발동했다"는 더 강한 주장은 이걸로 증명되지 않는다
- * (paul-loop 이슈 #35는 이 커밋으로 완전히 닫히지 않는다 — 그 증거는 여전히 없다).
+ * "표시 안 됨" 뿐이다. "실제 라이브 세션에서 훅이 발동했다"는 더 강한 주장은 이걸로 증명되지 않는다.
+ * 그 축은 이제 `liveness`(위)가 맡는다 — 훅 발동마다 항상 남는 원장 기록이라 사후에 독립 확인이
+ * 가능하다. 다만 그 원장도 같은 신뢰 경계(gitignore·위조 가능)이므로, 강화되는 건 *증거의 존재*이지
+ * *증거의 위조 불가능성*이 아니다.
  */
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { createLoopDb } from './client';
 import { type Embedder, stubEmbedder } from './embedding';
@@ -71,6 +82,7 @@ import {
   recallLessons,
   recallLessonsDecayed,
 } from './lessons';
+import { formatLiveness, RECALL_TYPE, summarizeLiveness } from './liveness';
 import { recordRecall } from './ops';
 import { signingKeyFromEnv } from './provenance';
 
@@ -155,6 +167,9 @@ const opt = {
   allowStub: false,
   decay: false, // recall --decay: lessons 코퍼스를 decay 랭킹(BAC/paul-loop #12)으로 재정렬
   hits: '', // record-recall: [{id, distance?, corpus?}, ...] JSON 문자열 (BAC-586)
+  root: '', // liveness: 원장을 찾을 레포 루트. 비면 cwd.
+  runs: 20, // liveness: 최근 몇 개의 런 파일까지 볼지(mtime 최신순)
+  assert: false, // liveness: 스캔 창에 recall 발동이 0건이면 exit 1
 };
 // source 태그(paul-loop 이슈 #35). hooks/graduate-lessons.mjs와 hooks/recall-lessons.mjs가
 // "node dist/cli.js ..." 하위프로세스를 spawn할 때만 이 env를 심는다(env `LOOP_MEMORY_SOURCE=hook`) —
@@ -214,6 +229,17 @@ for (let i = 0; i < argv.length; i++) {
       break;
     case '--hits':
       opt.hits = val();
+      break;
+    case '--root':
+      opt.root = val();
+      break;
+    case '--runs': {
+      const n = Number(val());
+      opt.runs = Number.isInteger(n) && n > 0 ? n : 20;
+      break;
+    }
+    case '--assert':
+      opt.assert = true;
       break;
     case '--':
       break; // bare separator(예: `pnpm run recall -- ...`)는 무시
@@ -353,6 +379,22 @@ async function main(): Promise<void> {
     await runRecordRecall(opt.hits, source);
     return;
   }
+  if (cmd === 'liveness') {
+    // 순수 파일시스템 — createLoopDb/pickEmbedder를 전혀 거치지 않는다. 스토어가 죽어 있고 키가 없어도
+    // "훅이 발동은 했는가"에는 답이 나와야 하기 때문(그게 이 명령의 존재 이유다).
+    const summary = summarizeLiveness(opt.root || process.cwd(), { runs: opt.runs });
+    process.stdout.write(opt.json ? `${JSON.stringify(summary)}\n` : formatLiveness(summary));
+    // 실패로 보는 건 "한 번도 안 발동" 단 하나다. skipped(자기게이팅)·no_match(정상적으로 못 찾음)는
+    // 훅이 살아 있다는 증거이므로 통과 — 그 둘을 실패로 보면 정직한 무매치가 알람이 되고, 결국
+    // 아무도 안 보는 체크가 된다.
+    if (opt.assert && summary.recall.total === 0) {
+      process.stderr.write(
+        `loop-memory: liveness assertion failed — no ${RECALL_TYPE} events in the last ${opt.runs} run file(s) under ${join(summary.root, '.loop', 'runs')} (the UserPromptSubmit hook has not fired)\n`,
+      );
+      process.exit(1);
+    }
+    return;
+  }
   if (cmd === 'consolidate') {
     // write-path provenance(BAC-619) — graduate/recall과 같은 경고: 없으면 lesson 코퍼스 읽기가
     // fail-closed로 항상 빈 결과다(runConsolidate 참고). knowledge 코퍼스 개념은 consolidate에 없다.
@@ -367,7 +409,7 @@ async function main(): Promise<void> {
   }
   if (cmd !== 'graduate' && cmd !== 'recall') {
     process.stderr.write(
-      'Usage: loop-memory <graduate|recall|consolidate|stats|record-recall> [options]\n',
+      'Usage: loop-memory <graduate|recall|consolidate|stats|record-recall|liveness> [options]\n',
     );
     process.exit(2);
   }

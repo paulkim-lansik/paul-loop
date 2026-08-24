@@ -53,14 +53,19 @@ jobs:
       # unchecked by `claude plugin validate` (manifest schema only, not hook script content) — a
       # syntax error here would otherwise merge green.
       - name: syntax-check hooks
-        run: node --check hooks/graduate-lessons.mjs && node --check hooks/recall-lessons.mjs
+        run: |
+          node --check hooks/graduate-lessons.mjs
+          node --check hooks/recall-lessons.mjs
+          node --check hooks/lib/load-dotenv.mjs
+          node --check hooks/lib/liveness.mjs
+          node --check hooks/lib/hook-stdin.mjs
       # Both hooks' fail-open no-op path (no embedding key configured) needs no docker/API key and
       # is the one path every install exercises by default — assert it directly against the real
       # hook processes rather than only trusting their internal logic by inspection.
       - name: smoke-test hook fail-open no-op path
         run: |
           set -e
-          out_g=$(env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/graduate-lessons.mjs; echo "exit=$?")
+          out_g=$(env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/graduate-lessons.mjs --event SessionStart; echo "exit=$?")
           echo "$out_g" | grep -q "^exit=0$"
           out_r=$(echo '{"user_input":"anything at least eight chars"}' | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/recall-lessons.mjs; echo "|exit=$?")
           echo "$out_r" | grep -q "|exit=0$"
@@ -68,6 +73,20 @@ jobs:
           # when there's no key configured.
           stdout_only=$(echo '{"user_input":"anything at least eight chars"}' | env -i PATH="$PATH" CLAUDE_PROJECT_DIR="$PWD" CLAUDE_PLUGIN_ROOT="$PWD" node hooks/recall-lessons.mjs)
           test -z "$stdout_only"
+      # ...and the same no-op run must now leave a liveness record, so "exit 0 + empty stdout" can be
+      # told apart from "the hook never ran" (issue #35). Asserted here, not only in vitest, because
+      # `env -i` strips everything: a liveness write that quietly depended on some ambient env var
+      # would pass the unit suite and fail exactly where it matters — a real, minimal hook environment.
+      - name: assert the no-op run left a liveness record
+        run: |
+          set -e
+          node dist/cli.js liveness --root "$PWD" --json | tee /tmp/liveness.json
+          node -e '
+            const s = JSON.parse(require("node:fs").readFileSync("/tmp/liveness.json", "utf8"));
+            if (s.recall.total < 1 || s.graduate.total < 1) throw new Error("hooks left no liveness record");
+            if (s.recall.reasons.no_embedding_key !== s.recall.total) throw new Error("wrong self-gate reason recorded");
+          '
+          node dist/cli.js liveness --root "$PWD" --assert
       - name: validate plugin + marketplace manifests
         working-directory: .
         run: |
