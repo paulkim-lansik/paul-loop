@@ -26,6 +26,20 @@ const GRADUATE = join(__dirname, '..', 'hooks', 'graduate-lessons.mjs');
 const RECALL = join(__dirname, '..', 'hooks', 'recall-lessons.mjs');
 const SESSION = 'sess-abc123';
 
+// The two "never blocks on stdin" tests need a pipe that never reaches EOF, which needs `mkfifo`.
+// Probed once here and wired through `it.runIf` so a host without it reports the test as **skipped**
+// rather than passed: a guard clause that silently `return`s inside the test body would turn a
+// missing capability into a green tick, which is the failure mode these tests exist to prevent.
+const HAS_MKFIFO = spawnSync('sh', ['-c', 'command -v mkfifo']).status === 0;
+
+/** Creates a FIFO at `path` and returns it. Held open O_RDWR by the caller, it always has a writer,
+ *  so a reader never sees EOF — exactly the fd 0 that wedged a hook during development. */
+function mkfifo(path: string): string {
+  const r = spawnSync('mkfifo', [path]);
+  if (r.status !== 0) throw new Error(`mkfifo failed: ${r.stderr?.toString() ?? r.status}`);
+  return path;
+}
+
 let base: string;
 let pluginRoot: string;
 let dataDir: string;
@@ -163,26 +177,30 @@ describe('recall liveness — the four states fail-open otherwise flattens into 
   // The two gates that fire before stdin is read must not depend on fd 0 reaching EOF — an
   // unconfigured install runs them on *every* prompt, and a read-to-EOF wedges forever on a pipe
   // nobody closes. A FIFO held open O_RDWR is that pipe, deterministically.
-  it('the pre-stdin gates never block on a stdin that never reaches EOF, and still record', () => {
-    const fifo = join(base, 'recall-never-eof');
-    if (spawnSync('mkfifo', [fifo]).status !== 0) return; // non-POSIX host — nothing to reproduce with
-    const fd = openSync(fifo, constants.O_RDWR);
-    try {
-      const res = spawnSync('node', [RECALL], {
-        cwd: projectDir,
-        env: baseEnv({ CLAUDE_CODE_SESSION_ID: SESSION }), // no key → gated before the stdin read
-        stdio: [fd, 'pipe', 'pipe'],
-        timeout: 5_000,
-      });
-      expect(res.signal, 'the hook was killed by the timeout — it blocked reading stdin').toBeNull();
-      expect(res.status).toBe(0);
-    } finally {
-      closeSync(fd);
-    }
-    const e = only('memory.recall');
-    expect(e.payload.reason).toBe('no_embedding_key');
-    expect(e.aggregate_id).toBe(SESSION); // attributed via the env fallback, not stdin
-  });
+  it.runIf(HAS_MKFIFO)(
+    'the pre-stdin gates never block on a stdin that never reaches EOF, and still record',
+    () => {
+      const fd = openSync(mkfifo(join(base, 'recall-never-eof')), constants.O_RDWR);
+      try {
+        const res = spawnSync('node', [RECALL], {
+          cwd: projectDir,
+          env: baseEnv({ CLAUDE_CODE_SESSION_ID: SESSION }), // no key → gated before the stdin read
+          stdio: [fd, 'pipe', 'pipe'],
+          timeout: 5_000,
+        });
+        expect(
+          res.signal,
+          'the hook was killed by the timeout — it blocked reading stdin',
+        ).toBeNull();
+        expect(res.status).toBe(0);
+      } finally {
+        closeSync(fd);
+      }
+      const e = only('memory.recall');
+      expect(e.payload.reason).toBe('no_embedding_key');
+      expect(e.aggregate_id).toBe(SESSION); // attributed via the env fallback, not stdin
+    },
+  );
 
   it('SELF-GATED (prompt too short) records the length, never the prompt', () => {
     runRecall({ GEMINI_API_KEY: 'k' }, { session_id: SESSION, user_input: 'hi' });
@@ -289,24 +307,28 @@ describe('graduate liveness', () => {
   // inside `$(...)`). A hanging SessionStart hook stalls session startup — much worse than the label
   // it was buying. A FIFO held open O_RDWR is that fd 0, deterministically: there is always a writer,
   // so a reader never sees EOF.
-  it('never blocks on stdin, even when fd 0 is a pipe that never reaches EOF', () => {
-    const fifo = join(base, 'never-eof');
-    const mk = spawnSync('mkfifo', [fifo]);
-    if (mk.status !== 0) return; // no mkfifo (non-POSIX host) — nothing to reproduce with
-    const fd = openSync(fifo, constants.O_RDWR); // O_RDWR: doesn't block on open, keeps a writer alive
-    try {
-      const res = spawnSync('node', [GRADUATE, '--event', 'SessionStart'], {
-        cwd: projectDir,
-        env: baseEnv(),
-        stdio: [fd, 'pipe', 'pipe'],
-        timeout: 5_000,
-      });
-      expect(res.signal, 'the hook was killed by the timeout — it blocked reading stdin').toBeNull();
-      expect(res.status).toBe(0);
-    } finally {
-      closeSync(fd);
-    }
-  });
+  it.runIf(HAS_MKFIFO)(
+    'never blocks on stdin, even when fd 0 is a pipe that never reaches EOF',
+    () => {
+      // O_RDWR: doesn't block on open, and keeps a writer alive so the reader never sees EOF.
+      const fd = openSync(mkfifo(join(base, 'never-eof')), constants.O_RDWR);
+      try {
+        const res = spawnSync('node', [GRADUATE, '--event', 'SessionStart'], {
+          cwd: projectDir,
+          env: baseEnv(),
+          stdio: [fd, 'pipe', 'pipe'],
+          timeout: 5_000,
+        });
+        expect(
+          res.signal,
+          'the hook was killed by the timeout — it blocked reading stdin',
+        ).toBeNull();
+        expect(res.status).toBe(0);
+      } finally {
+        closeSync(fd);
+      }
+    },
+  );
 
   it('falls back to the unattributed run bucket when no session id is available', () => {
     const res = spawnSync('node', [GRADUATE, '--event', 'SessionStart'], {
