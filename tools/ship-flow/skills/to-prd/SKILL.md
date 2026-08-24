@@ -5,6 +5,12 @@ description: Turn the current conversation context into a PRD and publish it as 
 
 # to-prd — publish a PRD from conversation context
 
+> **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
+> `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
+> questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
+> identifiers, file paths, branch names, and quoted tool output stay verbatim; never translate them.** Key
+> absent or unreadable → fall back to the language the user is writing in; never error on this.
+
 This skill takes the current conversation context and codebase understanding and produces a PRD. Do NOT interview the user — just synthesize what you already know.
 
 ## Process

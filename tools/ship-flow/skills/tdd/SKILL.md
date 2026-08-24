@@ -5,6 +5,12 @@ description: Test-driven development with red-green-refactor loop. Use when user
 
 # Test-Driven Development
 
+> **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
+> `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
+> questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
+> identifiers, file paths, branch names, and quoted tool output stay verbatim; never translate them.** Key
+> absent or unreadable → fall back to the language the user is writing in; never error on this.
+
 ## Philosophy
 
 **Core principle**: Tests should verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't.

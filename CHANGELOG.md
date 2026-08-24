@@ -5,6 +5,71 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.3.0
+
+Forensic audit of 12 real `ship-feature` runs (2026-08-24) found the skill's own mandated deterministic
+tools executed **0 out of 12 times** — `ship-flow:tdd` 0/12, `ac-verify.sh` 0/5, `verdict-run.sh` 0/2,
+AC-contract authoring 1/5. This release fixes the cause and five adjacent findings from the same sample.
+
+- **Commands are substitutable literals, not prose (the root cause).** Every loop-engine bin invocation
+  in `ship-feature`/`hotfix`/`retrospect`/`deps-audit` was written as a *description* —
+  `<however this repo invokes its installed loop-engine plugin's bin scripts> verdict-run.sh -- …`.
+  An agent cannot execute a description, so every run fell back to the raw verify command it already
+  knew, silently dropping the verdict contract, the risk gate and the AC gate at once. These are now
+  one literal each, `{{pluginBinPrefix}}<script> …`, substituted from a new `pluginBinPrefix` config key
+  (concatenated onto the script name with no separator; default `""`, since a plugin's `bin/` is on PATH
+  in a live session). `setup` interviews for and records it.
+- **Argument form is now stated, not re-derived.** The same prose placeholder also caused mis-parsing:
+  4 runs pasted a spurious `--` into `classify-risk.sh` and got a usage error before retrying.
+  `ship-feature` now states that `verdict-run.sh` is the only script here that takes a `--`, that
+  `classify-risk.sh`/`ac-verify.sh`/`lessons.sh` reject one, and that `--path` repeats per path.
+- **Review agents are named `ship-flow:`-namespaced** in `ship-feature` step 4. A bare `code-reviewer`
+  collides with `pr-review-toolkit:code-reviewer` — a different agent with a different checklist that
+  many consuming repos also install. No mis-resolution was actually observed in the sample (outputs
+  carried ship-flow's own checklist markers), so this closes a structural risk rather than a live bug.
+- **`agents/planner.md` is wired in rather than deleted.** It shipped but no skill invoked it. It earns
+  its place because its criterion 5 is the only thing that checks a plan declares an AC contract *before*
+  TDD — and AC-contract authoring was the 1/5 finding above, which is exactly what makes step 3's
+  `ac-verify.sh` gate vacuous when it's missing. `ship-feature` step 1 now hands the finished plan to
+  `ship-flow:planner`; a BLOCK loops back into step 1 without calling a human.
+- **Review subagents must not run docker-based deep gates themselves.** In one run two review subagents
+  collided 3 ways on the same worktree's shared deep-gate container, both hit watchdog timeouts, and
+  their failures were silently skipped — the run continued as if reviewed. `code-reviewer`/`test-hunter`/
+  `verifier-integrity-hunter` now consume the calling session's already-produced result logs instead, and
+  `ship-feature` step 4 states that a watchdog/stall non-completion is a **BLOCK** to be re-summoned,
+  never "no findings".
+- **Hard termination at the PR, and a scope guard on the grill step.** Step 5's bare "Stop here" never
+  said what was forbidden: one run opened its PR then created a new worktree + issue + PR in the same
+  session; another read a single "머지해줘" as blanket approval and ran `gh pr merge` three times; a third
+  let scope grow until the original issue was never implemented. Step 5 now names what must not happen
+  after the PR opens and that merge approval is per-PR and never inferred; step 1 requires scope growth
+  found while grilling to be split into a separate issue with **this** run continuing at its original scope.
+- **Question qualification.** The skill claimed "autonomous by default, humans called at exactly 3
+  points", but the sample showed 17 design round-trips of which **17/17** were answered "just go with
+  your recommendation". If the skill can state a clear recommendation and the decision is reversible, it
+  now proceeds and records the choice in a `Decisions taken` PR-body section instead of blocking. Human
+  calls stay reserved for risk-gate REQUIRE verdicts and the merge boundary.
+- **Output language is config-driven (`outputLanguage`, BCP-47).** Across 78 sampled interactive sessions,
+  21 had the user ask for Korean 30 times; the drift points were almost entirely `ship-feature` step 5's
+  PR report and the session-closing summary — where the English skill body has come to dominate context —
+  and one session reported its PR in Japanese. No language anchor existed anywhere in the consuming repo.
+  Every ship-flow skill and agent now opens with an anchor reading `outputLanguage`, restated at the
+  measured drift points (step 5's PR/comment composition, the final message, each review agent's Output
+  section). The prose/verbatim boundary is explicit — **prose, reports, PR bodies in that language; code,
+  commands, flags, identifiers, paths, branch names and quoted tool output verbatim, never translated.**
+  Fail-open: key absent → the language the user is writing in, never an error. `publisher` gets a
+  deliberately narrower rule (it reads no repo files and re-encodes nothing it was handed).
+- New `tools/loop-engine/test/ship-flow-executable-contract.test.sh` locks all of the above — 13
+  assertions, each negative-controlled (the property was broken and the test observed to fail). It lives
+  in `tools/loop-engine/test/` because that directory *is* the whole-repo self-test suite despite its
+  path, and it adds no loop-engine runtime behaviour, so **loop-engine is deliberately not bumped for
+  it**. Like `verdict-wrap-required.test.sh` and `skill-guard-prose-wiring.test.sh`, it is a text-level
+  regression guard on skill prose — it cannot prove an agent obeyed an instruction, only that the
+  instruction hasn't reverted to the shape that provably wasn't obeyable. Runtime enforcement of the
+  output language (measuring a target-language ratio in an agent's actual prose) was considered and
+  rejected: this plugin never sees agent output — `verdict-run.sh`'s LOG captures the *verifier's*
+  output, not the agent's — so there is nothing here to measure it against.
+
 ## loop-memory 0.3.0
 
 - **Fixes a silent no-op**: both hooks read the embedding key from the process env only, but Claude
@@ -32,6 +97,7 @@ and refer to `loop-engine` only (see the un-prefixed version numbers).
   file, custom path honoured, quoting/`export`/inline-comment parsing, missing file → clean no-op,
   directory-instead-of-file → no throw, worktree fallback resolves, a worktree's own `.env` preferred
   over the main one's, non-git directory → clean no-op.
+
 
 ## loop-engine 0.8.0
 

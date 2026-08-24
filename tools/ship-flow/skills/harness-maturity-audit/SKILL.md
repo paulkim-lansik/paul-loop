@@ -5,6 +5,12 @@ description: Audits the maturity of a repo's self-improvement loop harness (veri
 
 # harness-maturity-audit — six-lane parallel harness maturity audit
 
+> **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
+> `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
+> questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
+> identifiers, file paths, branch names, and quoted tool output stay verbatim; never translate them.** Key
+> absent or unreadable → fall back to the language the user is writing in; never error on this.
+
 Measures whether this repo's self-improvement harness (an installed loop-engine plugin, any
 vector-backed loop-memory package, `.claude/{skills,hooks}`, and wherever this repo keeps its
 decision records and research) **actually works the way it claims to, not just how it reads on

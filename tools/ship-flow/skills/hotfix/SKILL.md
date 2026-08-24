@@ -5,6 +5,12 @@ description: Land an already-implemented, already-verified small fix through thi
 
 # hotfix — land an already-finished fix safely
 
+> **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
+> `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
+> questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
+> identifiers, file paths, branch names, and quoted tool output stay verbatim; never translate them.** Key
+> absent or unreadable → fall back to the language the user is writing in; never error on this.
+
 **Precondition: the code is already written and verified.** Planning, TDD, and runtime verification
 aren't this skill's job (that's `ship-feature`). This skill's only job: move the change through this
 repo's real gates — worktree isolation → verify → merge → release → deploy — without skipping any
@@ -65,8 +71,10 @@ No pending changes: just `git fetch origin && git worktree add -b <branch> <path
 ### 1. Verify
 A fresh worktree has no installed dependencies — install them first. Then the project's verify
 command is the **ceiling** — don't move on until it's green (self-judgement never substitutes for
-it). Run it wrapped, always, never raw: `<however this repo invokes its installed loop-engine plugin's
-bin scripts> verdict-run.sh -- <verifyCommand>` (BAC-745) — safe even if `verifyCommand` already emits
+it). Run it wrapped, always, never raw: `{{pluginBinPrefix}}verdict-run.sh -- <verifyCommand>`
+(BAC-745; substitute `pluginBinPrefix` from `.claude/ship-flow.config.json` onto the script name with no
+separator — default `""`, since a plugin's `bin/` is on PATH in a live session — and never type a `{{…}}`
+token into a shell. `verdict-run.sh` is the one script here that *needs* the `--`) — safe even if `verifyCommand` already emits
 its own verdict-contract block, since `verdict-run.sh` passes an existing `=== VERDICT ===` block
 through unchanged instead of double-wrapping it. Read the gate off the printed `VERDICT:`/`EXIT:` lines
 — that's what feeds this repo's verdict state file and ledger, a bare exit code doesn't.
