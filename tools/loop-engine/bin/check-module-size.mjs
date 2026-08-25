@@ -19,6 +19,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const DEFAULT_BASELINE_REL = 'tools/module-size-baseline.json';
 const SKIP_DIRS = new Set([
@@ -246,6 +247,12 @@ function main() {
   process.exit(ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `import.meta.url`은 percent-encoding된다(공백·비ASCII → %XX). `file://${process.argv[1]}`는 raw
+// OS 경로라, 체크아웃 경로에 공백이나 한글이 하나라도 있으면 두 문자열이 조용히 어긋나 아래 CLI
+// 블록이 통째로 실행되지 않는다 — 출력 0줄에 exit 0이라, 호출자는 "게이트 통과"로 읽는다(실측:
+// 같은 파일을 공백 있는 경로에 두면 출력이 사라진다). pathToFileURL()이 argv[1]을 같은 방식으로
+// 정규화한다. 앞의 `process.argv[1] &&`는 argv[1]이 없는 맥락(`node -e`, 워커)에서 pathToFileURL이
+// 던지지 않게 한다 — 리졸버/게이트는 어떤 맥락에서도 import만으로 죽으면 안 된다. (BAC-699 → BAC-792)
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

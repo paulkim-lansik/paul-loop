@@ -97,8 +97,9 @@ function fail(plugin) {
 // Comparing them as strings silently mismatches on a checkout path containing either — the CLI
 // block below then never runs, and this script exits 0 having done nothing (a caller like
 // `pnpm verdict`/require-tests.sh would read that as success). pathToFileURL() normalizes argv[1]
-// the same way before comparing (BAC-699 review, ported).
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// the same way before comparing (BAC-699 review, ported). 앞의 `process.argv[1] &&`는 argv[1]이
+// 없는 맥락(`node -e`, 워커)에서 pathToFileURL이 던지지 않게 한다 (BAC-792).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'resolve') {
     const plugin = rest[0] || DEFAULT_PLUGIN;
