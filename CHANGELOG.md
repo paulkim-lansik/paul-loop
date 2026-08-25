@@ -5,6 +5,20 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.5.0
+
+Adds a new skill: **`diagnosing-bugs`**, ported from `mattpocock/skills` (upstream renamed it from
+`diagnose` → `diagnosing-bugs`; see its own `CHANGELOG.md`). A discipline for hard bugs and
+performance regressions — build a tight red-capable feedback loop first, then reproduce, minimise,
+hypothesise, instrument, fix with a regression test, and clean up. Ported with the same light-touch
+adaptation as `tdd`/`grill-with-docs`: the shared "Output language" header, and — since upstream
+dropped its own skill-to-skill handoff line (mattpocock/skills commit `1dab982`, "Stop skills from
+calling other user-invoked skills", a generic-library concern that doesn't apply to a single
+curated plugin) — re-adding a Phase 6 handoff into `ship-flow:improve-codebase-architecture`, which
+does exist as a sibling skill here. Ships with the two files upstream bundles:
+`agents/openai.yaml` and `scripts/hitl-loop.template.sh` (the human-in-the-loop repro helper for
+Phase 1's last-resort loop type).
+
 ## ship-flow 0.4.1 · loop-memory 0.4.1
 
 - Dependency range only: both declared `loop-engine ^0.9.0`, which `0.10.0` (below) falls outside of.
