@@ -5,6 +5,40 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.10.2
+
+Release tagging is no longer a manual step.
+
+- **New `.github/workflows/tag-on-publish.yml` publishes `<plugin>--v<semver>` on every push to
+  `main`** for any plugin whose current version has no tag yet. Tagging had been manual, and manual
+  steps stop happening silently: by the time anyone looked, all three plugins were several releases
+  past their newest tag — `loop-engine 0.10.1` vs `loop-engine--v0.8.0`, `ship-flow 0.5.0` vs
+  `ship-flow--v0.2.9`, `loop-memory 0.4.1` vs `loop-memory--v0.2.6`. Nothing looked broken:
+  `plugin.json` carried the new number, the marketplace served it, CI was green. The tag was simply
+  the one artifact no gate examined.
+
+  The cost landed on consumers. This marketplace's documented channel is explicit semver, not SHAs
+  (ADR-0078 addendum #2), but a repo that pins by tag cannot name a version that was never tagged —
+  so glucofit-partners' CI ended up pinning a raw commit for all three plugins, which is precisely
+  the SHA channel that addendum rules out. Tagging on publish restores the option.
+
+  This does not make consumers auto-follow anything; it only makes an already-published version
+  addressable. `workflow_dispatch` is wired so the backlog can be filled by re-running against
+  `main`, and an existing tag is skipped rather than moved — a released version can never be
+  silently repointed.
+- **`tag-on-publish-derives-plugins.test.sh`** (suite 54 → 55) runs the workflow's actual shell body
+  against a sandbox repo of four fake plugins, none named like the real ones. The property under test
+  is not "the workflow mentions three names" but "the workflow finds whatever the manifest lists" — a
+  hardcoded list inside the workflow would be the same failure one level down, where adding a fourth
+  plugin leaves it untagged with everything still green. Also covers: a published tag is skipped and
+  not rewritten, a second run on the same commit is a clean no-op rather than a push error (`main`
+  gets many pushes between releases, and a workflow that errors on "nothing to do" gets switched
+  off), and a manifest entry pointing at a missing directory fails loudly instead of being skipped.
+
+  The version bump is for the test file alone — no runtime behaviour changed. It exists because
+  `tools/loop-engine/` ships as the plugin's source, so its content must not change under a version
+  number that has already been handed out.
+
 ## loop-engine 0.10.1
 
 The reward-hack guard was structurally never armed in the workflow its consuming repo mandates.

@@ -1,0 +1,91 @@
+name: tag on publish
+
+# Publishes `<plugin>--v<semver>` for every plugin whose current version has no tag yet.
+#
+# Why this exists: tagging was a manual step, and manual steps stop happening silently. By the time
+# it was noticed, all three plugins were several releases past their newest tag (loop-engine
+# 0.10.1 vs loop-engine--v0.8.0, ship-flow 0.5.0 vs ship-flow--v0.2.9, loop-memory 0.4.1 vs
+# loop-memory--v0.2.6). Nothing was broken-looking: `plugin.json` said the new version, the
+# marketplace served it, and CI was green — the tag was simply the one artifact nobody's gate looked
+# at. A consuming repo that pins by tag (this marketplace's documented channel — ADR-0078 addendum
+# #2, "explicit semver, not a SHA channel") then cannot express the version it needs, and falls back
+# to pinning a commit, which is exactly the SHA channel that addendum rules out.
+#
+# This does NOT make consumers auto-follow anything. It only makes an already-published version
+# addressable by its own number. Choosing which version to pin stays a deliberate human edit in the
+# consuming repo.
+#
+# The plugin list is DERIVED from `.claude-plugin/marketplace.json`, never hardcoded here — a
+# hardcoded list is the same failure one level down: add a fourth plugin, forget this file, and its
+# releases go untagged just as silently. `tag-on-publish-derives-plugins.test.sh` locks that.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # backfill: re-run against main to tag whatever is currently missing
+
+# Least privilege: this job writes tags and nothing else.
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags are needed to know which ones already exist
+
+      - name: create missing version tags
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # name+version straight from each plugin's own manifest. marketplace.json supplies the
+          # LIST (its `source` paths); plugin.json supplies the VERSION, because that is the one
+          # `calculatePluginVersion` honours at install time — tagging the marketplace entry's copy
+          # would tag a number that may not be what actually installs. `claude plugin validate
+          # --strict` already fails the PR when the two disagree, so this reads the authoritative one.
+          # A plain `while read` rather than `mapfile`: this body is also exercised by
+          # `tag-on-publish-derives-plugins.test.sh`, which runs on developer machines where
+          # /bin/bash is still 3.2 and has no `mapfile`.
+          sources=$(python3 -c '
+          import json
+          for p in json.load(open(".claude-plugin/marketplace.json"))["plugins"]:
+              print(p["source"])
+          ')
+
+          [ -n "$sources" ] || { echo "::error::no plugins found in marketplace.json"; exit 1; }
+
+          created=0
+          while IFS= read -r src; do
+            [ -n "$src" ] || continue
+            manifest="${src#./}/.claude-plugin/plugin.json"
+            if [ ! -f "$manifest" ]; then
+              echo "::error::marketplace.json lists $src but $manifest does not exist"
+              exit 1
+            fi
+            name=$(python3 -c "import json;print(json.load(open('$manifest'))['name'])")
+            version=$(python3 -c "import json;print(json.load(open('$manifest'))['version'])")
+            tag="${name}--v${version}"
+
+            if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "· ${tag} already exists"
+              continue
+            fi
+            echo "+ ${tag} -> ${SHA}"
+            git tag "$tag" "$SHA"
+            created=$((created + 1))
+          # Herestring, not a pipe: a pipe would run the loop in a subshell, where `created` and any
+          # `exit 1` above would be discarded — the loop would look like it ran and found nothing.
+          done <<< "$sources"
+
+          if [ "$created" -eq 0 ]; then
+            echo "nothing to tag — every plugin's current version is already published"
+            exit 0
+          fi
+          # One push for all new tags. Never --force: an existing tag is left exactly as it was
+          # (the `rev-parse` skip above), so a released version can't be silently repointed.
+          git push origin --tags
+          echo "created ${created} tag(s)"
