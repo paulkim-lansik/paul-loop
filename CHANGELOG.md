@@ -5,6 +5,34 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.10.3
+
+A "run as main" guard that silently stopped guarding.
+
+- **Two `bin/` gates did nothing at all when the checkout path contained a space.**
+  `check-module-size.mjs` and `check-pr-hygiene.mjs` detected direct execution with
+  ``import.meta.url === `file://${process.argv[1]}` ``. `import.meta.url` is percent-encoded
+  (spaces and non-ASCII become `%XX`); `process.argv[1]` is a raw OS path. On any checkout whose path
+  contains either, the two never match, the CLI block below never runs, and the script **exits 0
+  having printed nothing** — which `verdict` / `require-tests.sh` / CI read as the gate passing.
+  Measured: the same `check-module-size.mjs` file prints `PASS: module-size ratchet — 위반 없음` from
+  a normal path and produces **zero output, exit 0** from `a dir with spaces`. The module-size ratchet
+  simply ceases to exist there.
+
+  `plugin-path.mjs` had already fixed this (its comment says "BAC-699 review, ported") and
+  `lib/sanitize.mjs` carried the guard too — the port just never reached these two. All four now use
+  the single idiom.
+- **The idiom now also guards `process.argv[1]` being absent.** `pathToFileURL(undefined)` throws, so
+  under `node -e`, a worker, or an ESM loader hook, merely *importing* one of these modules killed the
+  caller. A resolver and a gate must be loadable from any context; `lib/sanitize.mjs` already did this,
+  the other three did not.
+- **`main-detection-guard.test.sh`** (suite 55 → 56) locks it from both sides. Text: every
+  `import.meta.url ===` site in the plugin must use `pathToFileURL` *and* the `process.argv[1] &&`
+  guard, and finding zero sites is a failure rather than a pass — otherwise the check goes vacuous the
+  moment files move. Behaviour: copy a bin into a directory whose name contains spaces, run it, and
+  require non-empty output, with a no-spaces control so "both silent" cannot masquerade as success;
+  plus an import-under-`node -e` probe for all four modules.
+
 ## loop-engine 0.10.2
 
 Release tagging is no longer a manual step.
