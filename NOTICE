@@ -1,0 +1,68 @@
+# NOTICE
+
+This project includes work derived from other open-source projects. Each derived file's origin is
+recorded per-file in [`skills-lock.json`](skills-lock.json) (`source` and `skillPath`), which is the
+authoritative provenance record and is kept in sync by `vendor-lock-consistency.test.sh`.
+
+---
+
+## mattpocock/skills
+
+<https://github.com/mattpocock/skills>
+
+24 skills under `tools/ship-flow/skills/` are derived from this project. Some are close to
+verbatim; others have been substantially rewritten or deliberately diverge — entries carrying a `fork`
+field in `skills-lock.json` mark the deliberate divergences. In all cases the original is the origin of
+the work.
+
+- `ask-matt`
+- `code-review`
+- `codebase-design`
+- `diagnosing-bugs`
+- `domain-modeling`
+- `grill-me`
+- `grill-with-docs`
+- `grilling`
+- `handoff`
+- `improve-codebase-architecture`
+- `prototype`
+- `research`
+- `resolving-merge-conflicts`
+- `setup`
+- `tdd`
+- `teach`
+- `to-issues`
+- `to-prd`
+- `to-questionnaire`
+- `triage`
+- `wait-what`
+- `wayfinder`
+- `wizard`
+- `write-a-skill`
+
+The original project is distributed under the MIT License, reproduced in full below as required by
+that license. It applies to the portions of this project derived from it.
+
+```
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
