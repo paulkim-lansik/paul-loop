@@ -113,11 +113,18 @@ A new gate for the failure mode this plugin's own design choice creates.
   mode: a handoff to something that isn't there reads as a normal instruction and simply does
   nothing at runtime.
 
-  Not hypothetical. Measured in a consuming repo on 2026-08-26: four personal-layer skills delegated
-  to `/grilling`, `/domain-modeling`, `/codebase-design` — none installed anywhere on the machine.
-  `grill-me` and `grill-with-docs` were one-line stubs whose *entire body* was the dead call, and
-  both shadowed working copies, so `/grill-with-docs` had been loading a no-op for as long as the
-  stub existed. Nothing reported it.
+  Not hypothetical, and measured inside this PR: porting upstream's `ask-matt` verbatim would have
+  referenced roughly fifteen skills this plugin does not ship (`/implement`, `/to-spec`,
+  `/to-tickets`, `/prototype`, `/research`, …). The gate rejected it, so it was rewritten over this
+  plugin's actual skill set instead of ported — the jump from 24 to 47 resolved references *is* that
+  rewrite. That is this gate's range: **a plugin's own documents calling a sibling it doesn't ship.**
+
+  What this gate deliberately does **not** cover: *which provider* a name resolves to. A handoff that
+  resolves to some other installed plugin's same-named skill passes here and can still be wrong — on
+  the machine this was developed on, a `/grilling` handoff resolved to upstream's version, whose
+  specified behaviour ("ask the whole frontier in one round") is the opposite of this plugin's
+  ("one question at a time"), with no error anywhere. That is a real defect and a separate one; it is
+  named here so the gate's green is not read as covering it.
 
   `dangling-doc-refs.test.sh` does not cover this — it checks *file paths* that claim to be
   plugin-shipped, not skill/agent handoffs.
