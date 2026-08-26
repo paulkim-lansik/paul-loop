@@ -5,6 +5,60 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.7.0
+
+Vendored skills are skills this plugin took from an upstream project and edited. They drift, in both
+directions, and nothing notices on its own — a skill moves or gets renamed, the tracking record isn't
+updated, and it simply stops being compared. No error; the next round just has one fewer entry to walk.
+
+- **`skills-lock.json`** at the repo root now records every vendored skill: where it came from, its
+  path **in the upstream repo** (so an upstream rename keeps it tracked), where the local copy lives,
+  and the local content as last reconciled. **17 entries** — the by-hand comparison run on 2026-08-26
+  against upstream `6654f6b`, turned into data so the next round doesn't redo it by reading.
+
+- **`fork`** marks a divergence that is *deliberate and permanent* — receiving upstream's version would
+  be a regression, not merely a change. A `fork` entry is reported and **never re-proposed**. Without
+  it, every round rediscovers the same divergence and re-argues it, and that noise is how a round
+  stops getting run. Five: `grilling` (upstream asks the whole frontier in one round; this plugin asks
+  one question at a time, which is the point), `ask-matt` (rewritten over this plugin's skills — taking
+  upstream's body would fill it with handoffs to nothing), `to-prd` / `to-issues` (renamed and extended
+  with a tracker layer), `setup` (configures the plugin, not a tracker).
+
+- **`computedHash` is enforced, not merely recorded.** `vendor-lock-consistency.test.sh` checks it, so
+  a mismatch is RED: **the local copy was edited since the last reconciliation** — which is exactly the
+  "has local modifications, do not bulk-apply upstream over it" signal, as a fact rather than an
+  inference from commit counts. Recorded-and-unread is how a field like this rots: in the consuming
+  repo that pioneered this lock, **9 of 12 hashes were stale and nothing noticed, because nothing read
+  them.** The gate also checks both directions of registration — a lock entry pointing at a file that
+  isn't there, and a vendored skill with no entry — and fails closed on a missing or empty lock, since
+  "zero entries" is a check that verified nothing rather than a clean bill.
+
+  It found three on its first run: `ask-matt`, `to-questionnaire` and `wait-what` shipped in 0.6.0
+  derived from upstream and registered nowhere.
+
+- **`vendor-sync`** is the round itself, generalised from the consuming repo's own copy. Everything
+  repo-specific became a lookup: the base branch comes from `ship-flow.config.json`, the local path
+  from the lock, the bin prefix from `pluginBinPrefix`, and the "is this useful here" judgment reads
+  the repo's own `CLAUDE.md` / `CONTEXT.md`. Named for what it does rather than for one vendor — the
+  vendor is a field in the lock, not a fact about the plugin.
+
+  One rule was **rewritten** rather than ported. The original said structural refactors are never
+  applied. That was right when this plugin didn't own the delegation targets and wrong afterwards —
+  0.6.0 adopted upstream's decomposition deliberately. It now reads: a refactor into a delegating stub
+  is safe **only if this repo ships the target and that target behaves the way this repo wants.**
+  Taking the stub without owning the target is how a skill becomes a handoff to nothing, or worse, a
+  handoff to behaviour the repo explicitly rejected.
+
+- **`handoff` and `grill-me` moved in** from the consuming repo, both `disable-model-invocation: true`
+  — model self-invocation off, the user's `/handoff` unchanged. `handoff` takes one upstream backport
+  ("naming which skills the next agent should **call the Skill tool for**" — more precise, and the form
+  `check-skill-refs` actually scans). `grill-me` becomes upstream's shape: a stub calling `grilling`.
+
+  That last one was tracked as a permanent fork, and it isn't one any more. The fork existed because
+  the only `grilling` was upstream's, whose behaviour is the opposite of what this plugin wants. 0.6.0
+  built ours — a strict superset of `grill-me`'s body (one question at a time, design tree,
+  recommendation with every question, facts are the agent's job). Delegating now costs nothing,
+  because the target is ours.
 ## ship-flow 0.6.1 · loop-memory 0.4.2
 
 Both dependents declared `loop-engine: ^0.10.0`. On a `0.x` line the caret pins the minor, so that
