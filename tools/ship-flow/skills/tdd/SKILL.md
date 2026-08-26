@@ -23,6 +23,14 @@ description: Test-driven development with red-green-refactor loop. Use when user
 
 See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking guidelines.
 
+## Seams: where tests go
+
+A **seam** is the public boundary you test at — the interface where you observe behavior without reaching inside. Tests live at seams, never against internals.
+
+**Test only at pre-agreed seams.** Before writing any test, write the seams under test down and confirm them with the user. No test is written at an unconfirmed seam. You can't test everything, so agreeing the seams up front is how testing effort lands on critical paths and complex logic instead of every edge case.
+
+When the shape of that boundary is itself in question — how deep the module should be, where the seam belongs, what the interface should expose — call the Skill tool with "codebase-design" for the vocabulary. It owns the module/interface/depth/**seam**/adapter/leverage/locality terms, and it is a reference to consult, not a session to run. For the narrower question of shaping an interface so it can be tested at all (inject dependencies, return results instead of mutating, keep the surface small), see [interface-design.md](interface-design.md).
+
 ## Reward-Hack Guard
 
 If this repo has a reward-hack guard armed on working branches (a hook that blocks Edit/Write/Bash
@@ -77,8 +85,7 @@ Before writing any code:
 
 - [ ] Confirm with user what interface changes are needed
 - [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Confirm the exact **seams** under test (the public boundary you'll observe behavior at) — no test gets written at an unconfirmed seam
-- [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation)
+- [ ] Confirm the exact **seams** under test (see [Seams](#seams-where-tests-go)) — no test gets written at an unconfirmed seam
 - [ ] Design interfaces for [testability](interface-design.md)
 - [ ] List the behaviors to test (not implementation steps)
 - [ ] Get user approval on the plan
@@ -114,17 +121,11 @@ Rules:
 - Don't anticipate future tests
 - Keep tests focused on observable behavior
 
-### 4. Refactor
+## Rules of the loop
 
-After all tests pass, look for [refactor candidates](refactoring.md):
-
-- [ ] Extract duplication
-- [ ] Deepen modules (move complexity behind simple interfaces)
-- [ ] Apply SOLID principles where natural
-- [ ] Consider what new code reveals about existing code
-- [ ] Run tests after each refactor step
-
-**Never refactor while RED.** Get to GREEN first.
+- **Red before green.** Write the failing test first, then only enough code to pass it. Don't anticipate future tests or add speculative features.
+- **One slice at a time.** One seam, one test, one minimal implementation per cycle.
+- **Refactoring is not part of the loop.** It belongs to the review stage, not the red → green cycle: `ship-feature` step 4 runs `ship-flow:code-reviewer` and `ship-flow:test-hunter` against the finished diff, and structural work beyond that is what the `improve-codebase-architecture` skill is for. Restructuring while you still owe the next test is how a cycle turns into a rewrite.
 
 ## Checklist Per Cycle
 

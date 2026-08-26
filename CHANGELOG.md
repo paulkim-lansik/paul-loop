@@ -5,6 +5,150 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.6.0
+
+Adopts upstream's **decomposition** — three skills that were inlined are now standalone and called by
+name — while keeping this plugin's content where the two disagree.
+
+- **New: `grilling`.** The interview loop, extracted so it has one home. Upstream's version asks *"the
+  whole frontier in one round: number each question"*; this one asks **one question at a time**, which
+  is the opposite and is deliberate. The frontier still decides *which* question comes next — it just
+  never decides *how many*. Stated in the skill, because the batched form looks more efficient and
+  isn't: the user answers the first two carefully and the rest thinly, and any question whose framing
+  depended on an earlier answer was framed wrong.
+
+  Taken from upstream unchanged: **finding facts is the agent's job, never the user's** — dispatch a
+  sub-agent for anything past a glance, and don't block on it, since a running exploration is just an
+  unsettled prerequisite. The previous inline wording ("if a question can be answered by exploring the
+  codebase, explore the codebase instead") was a weaker version of the same idea.
+
+- **New: `domain-modeling`**, extracted from `grill-with-docs` along with `CONTEXT-FORMAT.md` and
+  `ADR-FORMAT.md`. Includes this plugin's own **"Reopening a settled ADR"** section, which upstream has
+  no equivalent of — the grounded-reopen bar (cite the ADR by id, bring evidence that didn't exist when
+  it was written) that `retrospect` already applies to lessons.
+
+- **New: `codebase-design`**, extracted from `improve-codebase-architecture` along with `LANGUAGE.md`,
+  `DEEPENING.md`, and `INTERFACE-DESIGN.md`. The deep-module vocabulary now has one home instead of
+  living inside the one skill that happened to need it first.
+
+- **`grill-with-docs` is now the composition** of `grilling` + `domain-modeling` (upstream's shape),
+  with one addition: the two run *together*, not in sequence. A term sharpened mid-question goes into
+  `CONTEXT.md` right there. Batching documentation to the end of a session is what loses it — by then
+  the reasoning that justified the wording is gone.
+
+- **`improve-codebase-architecture` keeps its process** and calls out to the three (upstream's shape
+  too). It retains `HTML-REPORT.md`.
+
+### Also new: four skills upstream has and this plugin didn't
+
+- **`wizard`** — generates an interactive bash script that walks a human through steps only they can
+  take (provisioning, credentials, CI secrets, an unfamiliar dashboard, a one-off cutover). Ships
+  upstream's `template.sh` unchanged — the library above the `STAGES` marker is identical in every
+  wizard and is never hand-edited. Adds one section upstream doesn't have: **where a value is written
+  is a list, not a destination.** The recurring failure is partial propagation — the env schema and the
+  secret store get updated, the infrastructure that injects the secret into the container does not, and
+  nothing errors until a deploy that often auto-rolls-back, so there isn't even downtime to notice.
+- **`to-questionnaire`** — for when what blocks you is in someone else's head. Ported near-verbatim;
+  the header adds that the questionnaire is written in the *recipient's* language, which is usually but
+  not always `outputLanguage`.
+- **`wait-what`** — re-pitch a message that didn't land. Adds one line: re-pitching is not repeating
+  more slowly; find the step that was skipped.
+- **`ask-matt`** — a router over the skills. **Rewritten, not ported.** Upstream's version routes over
+  upstream's set (`/implement`, `/to-spec`, `/to-tickets`, `/handoff`, `/prototype`, `/research`, …);
+  porting it verbatim would have produced roughly fifteen references to skills this plugin doesn't
+  ship, which the new `check-skill-refs` gate would correctly have rejected. This one routes over what
+  is actually here, and says so: `ship-feature` is the single entrypoint, and most of the map is what
+  *it* calls rather than what you call. It states its own scope — a consuming repo's own skills are
+  that repo's to document.
+
+  This is the clearest evidence the gate earns its keep: `ask-matt` alone took handoff references from
+  24 to 47, and every one is verified to resolve.
+
+### `tdd` follows the same decomposition
+
+Upstream shrank `tdd` from 138 lines to 38 by delegating instead of duplicating. This plugin takes the
+two structural moves and keeps what upstream dropped that we still use.
+
+- **Seams get their own section**, promoted out of a planning checkbox. A seam is the public boundary
+  you observe behavior at, and "no test is written at an unconfirmed seam" is the rule that decides
+  where testing effort lands. When the *shape* of that boundary is the open question, it now calls
+  `codebase-design` rather than restating the vocabulary.
+- **Refactoring leaves the red → green loop.** Upstream's rule — refactoring belongs to the review
+  stage, not the implementation cycle — is adopted, pointing at what this plugin actually has:
+  `ship-feature` step 4 (`ship-flow:code-reviewer`, `ship-flow:test-hunter`) for the finished diff, and
+  `improve-codebase-architecture` for structural work. Restructuring while the next test is still owed
+  is how a cycle turns into a rewrite.
+- **`deep-modules.md` deleted** — pure duplication of `codebase-design/LANGUAGE.md` once that skill
+  exists. **`refactoring.md` deleted** — `improve-codebase-architecture`'s Explore step already covers
+  shallow modules, locality, seam leakage and untestable interfaces, in a richer form, and the list was
+  *not* moved into `code-reviewer`: that agent is a fail-any-criterion **blocker** bar, and refactor
+  candidates are advisory. Turning suggestions into blockers would have been the wrong home.
+- **`interface-design.md` kept.** It is about shaping an interface so it can be tested at all (inject
+  dependencies, return results instead of mutating, small surface) — distinct from
+  `codebase-design/INTERFACE-DESIGN.md`, which is a *process* for generating and comparing candidate
+  designs. Upstream dropped both; only one of them was redundant here.
+
+**Why decompose at all.** 1:1 file correspondence with upstream is what makes drift *machine*-checkable
+rather than a per-round manual read. While ours was inlined and upstream's was split, "what changed
+upstream" could only be answered by a human reading both — and that is exactly the comparison that
+silently stops happening.
+
+**What this costs, and what pays for it.** Decomposition multiplies skill-to-skill handoffs, and a
+handoff to a target that doesn't exist is silent. `loop-engine 0.11.0`'s `check-skill-refs` gate lands
+in the same change for that reason: references went 17 → 24 here, and all 24 are verified to resolve.
+
+Two existing gates caught real breakage from the file moves, which is what they are for:
+`lesson-codification-bac756.test.sh` pinned `grill-with-docs/ADR-FORMAT.md` by path, and the
+output-language anchor gate rejected the rewritten `grill-with-docs/SKILL.md` for dropping its header.
+
+## loop-engine 0.11.0
+
+A new gate for the failure mode this plugin's own design choice creates.
+
+- **`check-skill-refs.mjs` — a skill or agent handoff whose target doesn't exist is now RED.**
+  This plugin deliberately keeps skill-to-skill handoffs; upstream `mattpocock/skills` dropped them
+  repo-wide (commit `1dab982`, "Stop skills from calling other user-invoked skills") because a
+  generic library can't know which siblings a consumer installed, while a curated plugin ships its
+  own (see `ship-flow 0.5.0` below). That buys real composition and costs exactly one silent failure
+  mode: a handoff to something that isn't there reads as a normal instruction and simply does
+  nothing at runtime.
+
+  Not hypothetical, and measured inside this PR: porting upstream's `ask-matt` verbatim would have
+  referenced roughly fifteen skills this plugin does not ship (`/implement`, `/to-spec`,
+  `/to-tickets`, `/prototype`, `/research`, …). The gate rejected it, so it was rewritten over this
+  plugin's actual skill set instead of ported — the jump from 24 to 47 resolved references *is* that
+  rewrite. That is this gate's range: **a plugin's own documents calling a sibling it doesn't ship.**
+
+  What this gate deliberately does **not** cover: *which provider* a name resolves to. A handoff that
+  resolves to some other installed plugin's same-named skill passes here and can still be wrong — on
+  the machine this was developed on, a `/grilling` handoff resolved to upstream's version, whose
+  specified behaviour ("ask the whole frontier in one round") is the opposite of this plugin's
+  ("one question at a time"), with no error anywhere. That is a real defect and a separate one; it is
+  named here so the gate's green is not read as covering it.
+
+  `dangling-doc-refs.test.sh` does not cover this — it checks *file paths* that claim to be
+  plugin-shipped, not skill/agent handoffs.
+
+- **Checked forms, and the one it can miss — stated rather than implied.** `Call the Skill tool
+  with "X"` and a backticked `` `namespace:name` `` are unambiguous and always checked. A bare
+  `` `/name` `` is also a URL path (`/login`, `/healthz`), so it counts only on a line that says
+  "skill". That heuristic is the gate's known limit; both directions are locked by tests (a URL path
+  on a skill-free line is not flagged; the same form on a line that says "skill" is).
+
+- **Plugin dirs and namespaces are discovered from `.claude-plugin/plugin.json`, never hardcoded** —
+  `genericity-repo-agnostic.test.sh` requires that, and it means the gate also works against a
+  consuming repo's `.claude/skills` + `.claude/agents`.
+
+- **Agents resolve too.** Scanning skills alone would flag every `ship-flow:publisher` /
+  `ship-flow:planner` handoff in `ship-feature` as dangling — 13 false positives on this repo as it
+  stands.
+
+- **`check-skill-refs.test.sh`** (suite 56 → 57), 11 cases. Three are fail-closed (`exit 2`, distinct
+  from a violation's `exit 1`): zero providers, zero documents, and zero references extracted from a
+  non-empty document set — a broken extractor finds nothing, and "nothing" must not read as "clean".
+  The last case is a RED-first proof on the real tree: a dead handoff appended to
+  `ship-feature/SKILL.md` turns this repo RED, and green again once removed.
+
 ## loop-engine 0.10.3
 
 A "run as main" guard that silently stopped guarding.
