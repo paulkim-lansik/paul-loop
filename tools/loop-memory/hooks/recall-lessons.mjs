@@ -150,8 +150,27 @@ try {
   const input = readHookInput();
   sessionId = typeof input?.session_id === 'string' ? input.session_id : '';
   if (input === null) out('', 'stdin parse fail', 'skipped', 'stdin_parse_fail');
-  const prompt = String(input.user_input || '').trim();
+  // Two accepted field names, for two real callers — not an alias and its legacy form:
+  //   `prompt`     — Claude Code's UserPromptSubmit payload. MEASURED 2026-08-27 (issue #35): the
+  //                  payload's keys are session_id, transcript_path, cwd, prompt_id,
+  //                  permission_mode, hook_event_name, prompt. There is no `user_input` on it.
+  //   `user_input` — loop-engine's own bin/context-budget.mjs (O1b) spawns this hook with that shape.
+  //
+  // This hook read ONLY `user_input` until now, so every live firing saw '' and self-gated as "prompt
+  // too short" — 176 firings in the consuming repo's ledger, 176 × prompt_too_short, all with
+  // prompt_chars: 0 and key: true. Semantic recall had never once run. Fail-open turned a wrong field
+  // name into silence, and the tests agreed with it because they all fed `user_input` themselves.
+  //
+  // Hence the two reasons below rather than one. "The field wasn't there" and "the user typed
+  // something short" are different facts about different problems, and collapsing them is what let
+  // this hide: a rename upstream now reads as `prompt_field_missing` in the ledger instead of looking
+  // like a user who types two characters, hundreds of times in a row.
+  const hasPromptField =
+    typeof input.prompt === 'string' || typeof input.user_input === 'string';
+  const prompt = String(input.prompt ?? input.user_input ?? '').trim();
   live.prompt_chars = prompt.length; // length only — the prompt itself is never recorded
+  if (!hasPromptField)
+    out('', 'no recognised prompt field on the payload', 'skipped', 'prompt_field_missing');
   if (prompt.length < 8)
     out('', `prompt too short (${prompt.length})`, 'skipped', 'prompt_too_short');
 

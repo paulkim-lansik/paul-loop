@@ -5,6 +5,72 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-memory 0.5.0
+
+**Semantic recall had never once run.** Not "rarely", not "since some regression" — never, in any
+session, since the hook existed.
+
+`recall-lessons.mjs` read the prompt from `input.user_input`. Claude Code's UserPromptSubmit payload
+does not have that field. Measured 2026-08-27 with a capture hook on a live session — the payload's
+keys are:
+
+```
+session_id, transcript_path, cwd, prompt_id, permission_mode, hook_event_name, prompt
+```
+
+So every firing read `undefined` → `''` → length 0 → `prompt too short` → exit 0. Fail-open turned a
+wrong field name into perfect silence.
+
+**The liveness ledger (added for issue #35) is what made this visible**, and it is worth stating what
+it took: 205 `memory.*` events in the consuming repo's `.loop/runs/`, of which
+
+```
+memory.recall     skipped    prompt_too_short       x176
+memory.graduate   synced     ok                     x29
+```
+
+176 firings, one reason, every one with `prompt_chars: 0` and `key: true`. A hook that fires and
+does nothing looks exactly like a hook that is working and finding nothing — until the ledger records
+*why* it did nothing, at which point 176 identical self-gates stop looking like user behaviour.
+Issue #35 asked "do these hooks ever fire?"; the answer is yes for both, and the instrumentation
+added to answer it immediately surfaced a worse question the issue had not asked.
+
+**Why no test caught it**: every recall test in this repo fed `user_input` itself. They agreed with
+the code's premise instead of checking it — the same false-green shape as loop-engine 0.12.1's
+`payload.cwd` (tests that build the payload can never prove the payload's shape). New cases now drive
+the hook with the real `prompt` field.
+
+### The fix
+
+- Read `input.prompt ?? input.user_input`. Both are kept because there really are two callers with
+  two shapes: Claude Code sends `prompt`; loop-engine's own `bin/context-budget.mjs` (O1b) spawns
+  this hook with `user_input`. They are separate plugins that version independently, so a skew is a
+  real state, not a hypothetical.
+- **New liveness reason `prompt_field_missing`**, distinct from `prompt_too_short`. This is the part
+  that matters more than the field name: "the field wasn't there" and "the user typed something
+  short" are different facts, and collapsing them is what let this hide for 176 firings. A rename
+  upstream now reads as `prompt_field_missing` in the ledger instead of as hundreds of two-character
+  prompts in a row.
+
+### A/B on one identical real payload
+
+```
+before (origin/main):  outcome=skipped  reason=prompt_too_short  prompt_chars=0
+after:                 outcome=error    reason=cli_failed        prompt_chars=38  cli_status=1
+```
+
+The `cli_failed` after the fix is a probe key against a stopped pgvector — i.e. the **next** gate.
+Before the fix, the key and the database were irrelevant, because execution never reached them.
+
+### Still owed
+
+An end-to-end recall — a real prompt matching a real graduated lesson and injecting it — needs an
+embedding key and a running pgvector, neither of which is currently configured in the consuming repo
+(`.env` has no `OPENAI_API_KEY`/`GEMINI_API_KEY`; `loop-memory-pg` has been `Exited` for four days).
+That observation was **unreachable** before this fix, so it stays owed rather than closed. Issue #35's
+"do the hooks fire" half is answered by the 205 ledger events; the "does it help a real session
+recall a real lesson" half needs that configuration to exist first.
+
 ## loop-engine 0.12.1
 
 Comments only — but they close issue #63, which was open on a load-bearing *assumption*.
