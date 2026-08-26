@@ -14,8 +14,9 @@ AC: <description> | verify: <command> | artifacts: <path1>,<path2> | expect: <su
 ```
 
 - Only `AC: <description>` is required.
-- `verify:`, `artifacts:`, and `expect:` are each **optional**, may appear in **any combination**,
-  and in **any order**.
+- `verify:`, `artifacts:`, and `expect:` are each **optional** and may appear in **any order**.
+- One combination is rejected: **`expect:` alone**, with neither `verify:` nor `artifacts:`. It has
+  nothing to search, so `ac-verify.sh` reports it as a contract error (exit 2), not as a failing AC.
 - Fields are separated by ` | ` (space-pipe-space).
 - `artifacts:` paths are **comma-separated**, not space-separated — a path may itself contain
   spaces, so spaces cannot be the separator.
@@ -26,10 +27,28 @@ AC: <description> | verify: <command> | artifacts: <path1>,<path2> | expect: <su
 |---|---|
 | `verify:` | Runs the command as a subprocess; a zero exit code passes |
 | `artifacts:` | Checks each listed path exists after the run |
-| `expect:` | Checks the `verify:` command's output contains this substring |
+| `expect:` | Checks that this literal substring appears in the AC's corpus — see below |
 
 Each is a deterministic subprocess judgment, which is the point: the gate's result doesn't depend on
 the agent's own account of whether the feature works.
+
+**Which corpus `expect:` searches** depends on what else the AC declares:
+
+| The AC declares | `expect:` searches |
+|---|---|
+| `verify:` (with or without `artifacts:`) | the `verify:` command's output |
+| `artifacts:`, no `verify:` | the contents of those files (a directory is searched recursively; a match in **any** listed artifact satisfies it) |
+| neither | nothing — contract error, exit 2 |
+
+When both `verify:` and `artifacts:` are present, `expect:` searches the **output only**. That is
+deliberate: a contract you wrote against a command's output keeps meaning exactly that, and never
+starts passing because the substring happened to appear in a file.
+
+A documentation contract therefore reads naturally — no `verify:` needed:
+
+```
+AC: the skill states that forked entries are excluded from bulk backports | artifacts: skills/vendor-sync/SKILL.md | expect: fork
+```
 
 ## Examples
 

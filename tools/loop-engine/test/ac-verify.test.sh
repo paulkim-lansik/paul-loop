@@ -270,6 +270,60 @@ STATE_CONTENT_R3="$(cat "$STATE_FILE_R")"
 printf '%s' "$STATE_CONTENT_R3" | grep -q '"verdict":"PASS"' && fail "(r3): the seeded PASS must NOT survive an extra-positional-argument usage error (the EXIT trap must already be armed during argument parsing), got: $STATE_CONTENT_R3"
 printf '%s' "$STATE_CONTENT_R3" | grep -q '"verdict":"FAIL"' || fail "(r3): expected verdict-state.json to be corrected to FAIL by the trap, got: $STATE_CONTENT_R3"
 
+# ==== (t) issue #74: `expect:` had exactly one corpus — the verify: log — so an `artifacts:` +
+# `expect:` contract with no verify: was STRUCTURALLY unpassable: it grepped an empty log and
+# reported "expect substring not found", which reads as an implementation defect rather than a
+# contract that cannot hold. The pressure that creates is the dangerous direction: drop the
+# `expect:` to make the AC pass, and the contract quietly checks nothing.
+#
+# Fixed semantics, in precedence order:
+#   verify: present            -> expect greps the verify log (UNCHANGED — nothing that passed before changes)
+#   no verify:, artifacts:     -> expect greps the artifact files' contents (the natural reading)
+#   neither                    -> usage error, exit 2 (there is no corpus to search; not a violation)
+SUB="$DIR/t"; mkdir -p "$SUB"; cd "$SUB" || fail "cd t"
+
+# ---- (t1) artifacts: + expect:, no verify: — substring present in the artifact -> PASS ----
+printf 'alpha\nfork appears here\nomega\n' > doc.md
+printf -- '- AC: the doc states the fork rule | artifacts: doc.md | expect: fork\n' > plan-t1.md
+OUT_T1="$(run_ac_verify plan-t1.md .loop-t1 2>&1)"; CODE_T1=$?
+[ "$CODE_T1" -eq 0 ] || fail "(t1): artifacts+expect with no verify: must search the ARTIFACT, not an empty log — expected exit 0, got $CODE_T1: $OUT_T1"
+printf '%s' "$OUT_T1" | grep -qE '^SUMMARY: passed=1 failed=0 skipped=0 ' || fail "(t1): expected passed=1: $OUT_T1"
+
+# ---- (t2) same shape, substring genuinely absent from the artifact -> FAIL (still fails closed) ----
+printf -- '- AC: the doc states the fork rule | artifacts: doc.md | expect: nowhere-in-this-file\n' > plan-t2.md
+OUT_T2="$(run_ac_verify plan-t2.md .loop-t2 2>&1)"; CODE_T2=$?
+[ "$CODE_T2" -eq 1 ] || fail "(t2): a substring genuinely absent from the artifact must still FAIL, got $CODE_T2: $OUT_T2"
+printf '%s' "$OUT_T2" | grep -q '^FAIL: AC "the doc states the fork rule":.*expect substring not found' || fail "(t2): expected the expect reason to name the missing substring: $OUT_T2"
+
+# ---- (t3) expect: with NEITHER verify: nor artifacts: -> usage error (exit 2), not a violation ----
+printf -- '- AC: nothing to search | expect: something\n' > plan-t3.md
+OUT_T3="$(run_ac_verify plan-t3.md .loop-t3 2>&1)"; CODE_T3=$?
+[ "$CODE_T3" -eq 2 ] || fail "(t3): expect: with no verify: and no artifacts: has no corpus to search — that is a contract error (exit 2), not an AC violation (exit 1); got $CODE_T3: $OUT_T3"
+printf '%s' "$OUT_T3" | grep -q 'expect:' || fail "(t3): the error must name the offending field: $OUT_T3"
+printf '%s' "$OUT_T3" | grep -q '^FAIL: ' && fail "(t3): a usage error must NOT be reported as an AC violation line: $OUT_T3"
+
+# ---- (t4) verify: present -> the verify log stays the corpus. A substring that appears in the
+# artifact but NOT in the verify output must still FAIL: this fix widens where expect can look
+# only when there was no corpus at all, it never quietly makes an existing contract easier. ----
+printf -- '- AC: verify log is still the corpus | verify: echo unrelated-output | artifacts: doc.md | expect: fork\n' > plan-t4.md
+OUT_T4="$(run_ac_verify plan-t4.md .loop-t4 2>&1)"; CODE_T4=$?
+[ "$CODE_T4" -eq 1 ] || fail "(t4): with verify: present, expect must still grep the verify log only (the artifact contains 'fork', the log does not) — expected exit 1, got $CODE_T4: $OUT_T4"
+printf '%s' "$OUT_T4" | grep -q 'expect substring not found' || fail "(t4): expected the expect reason: $OUT_T4"
+
+# ---- (t5) several artifacts: a match in any one of them satisfies expect ----
+printf 'nothing here\n' > first.md
+printf 'the needle is in the second file\n' > second.md
+printf -- '- AC: any artifact may carry it | artifacts: first.md, second.md | expect: needle\n' > plan-t5.md
+OUT_T5="$(run_ac_verify plan-t5.md .loop-t5 2>&1)"; CODE_T5=$?
+[ "$CODE_T5" -eq 0 ] || fail "(t5): a match in any listed artifact must satisfy expect, got $CODE_T5: $OUT_T5"
+
+# ---- (t6) a missing artifact still fails on its own terms, and expect is reported honestly
+# alongside it rather than being silently skipped ----
+printf -- '- AC: artifact gone | artifacts: absent.md | expect: anything\n' > plan-t6.md
+OUT_T6="$(run_ac_verify plan-t6.md .loop-t6 2>&1)"; CODE_T6=$?
+[ "$CODE_T6" -eq 1 ] || fail "(t6): expected exit 1, got $CODE_T6: $OUT_T6"
+printf '%s' "$OUT_T6" | grep -q 'missing artifact(s): absent.md' || fail "(t6): expected the missing-artifact reason: $OUT_T6"
+
 cd "$ORIG_PWD" || true
 
 # ==== (s) FIX round-5 regression: --log-dir's LOG_DIR/LOOP_DIR coupling must be applied INLINE the
