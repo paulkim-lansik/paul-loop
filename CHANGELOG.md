@@ -64,6 +64,30 @@ name — while keeping this plugin's content where the two disagree.
   This is the clearest evidence the gate earns its keep: `ask-matt` alone took handoff references from
   24 to 47, and every one is verified to resolve.
 
+### `tdd` follows the same decomposition
+
+Upstream shrank `tdd` from 138 lines to 38 by delegating instead of duplicating. This plugin takes the
+two structural moves and keeps what upstream dropped that we still use.
+
+- **Seams get their own section**, promoted out of a planning checkbox. A seam is the public boundary
+  you observe behavior at, and "no test is written at an unconfirmed seam" is the rule that decides
+  where testing effort lands. When the *shape* of that boundary is the open question, it now calls
+  `codebase-design` rather than restating the vocabulary.
+- **Refactoring leaves the red → green loop.** Upstream's rule — refactoring belongs to the review
+  stage, not the implementation cycle — is adopted, pointing at what this plugin actually has:
+  `ship-feature` step 4 (`ship-flow:code-reviewer`, `ship-flow:test-hunter`) for the finished diff, and
+  `improve-codebase-architecture` for structural work. Restructuring while the next test is still owed
+  is how a cycle turns into a rewrite.
+- **`deep-modules.md` deleted** — pure duplication of `codebase-design/LANGUAGE.md` once that skill
+  exists. **`refactoring.md` deleted** — `improve-codebase-architecture`'s Explore step already covers
+  shallow modules, locality, seam leakage and untestable interfaces, in a richer form, and the list was
+  *not* moved into `code-reviewer`: that agent is a fail-any-criterion **blocker** bar, and refactor
+  candidates are advisory. Turning suggestions into blockers would have been the wrong home.
+- **`interface-design.md` kept.** It is about shaping an interface so it can be tested at all (inject
+  dependencies, return results instead of mutating, small surface) — distinct from
+  `codebase-design/INTERFACE-DESIGN.md`, which is a *process* for generating and comparing candidate
+  designs. Upstream dropped both; only one of them was redundant here.
+
 **Why decompose at all.** 1:1 file correspondence with upstream is what makes drift *machine*-checkable
 rather than a per-round manual read. While ours was inlined and upstream's was split, "what changed
 upstream" could only be answered by a human reading both — and that is exactly the comparison that
