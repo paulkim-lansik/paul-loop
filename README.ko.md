@@ -228,3 +228,7 @@ tools/loop-engine/
 ## 라이선스
 
 MIT — [LICENSE](LICENSE) 참고.
+
+`ship-flow`의 일부는 [mattpocock/skills](https://github.com/mattpocock/skills)에서 파생됐다(그쪽도 MIT).
+저작권·허가 고지는 [NOTICE](NOTICE)에 그대로 실려 있고, 파일별 출처는 [`skills-lock.json`](skills-lock.json)에
+산다. 둘이 어긋나면 `attribution-completeness.test.sh`가 RED를 낸다.

@@ -374,3 +374,8 @@ path stayed.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Parts of `ship-flow` are derived from [mattpocock/skills](https://github.com/mattpocock/skills), also
+MIT. Its copyright and permission notice are reproduced in [NOTICE](NOTICE); per-file provenance lives
+in [`skills-lock.json`](skills-lock.json), and `attribution-completeness.test.sh` keeps the two from
+drifting apart.
