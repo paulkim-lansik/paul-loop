@@ -5,6 +5,15 @@ description: Build and sharpen a project's domain model. Use when discussing cod
 
 # Domain Modeling
 
+> **Where the two format files live.** `CONTEXT-FORMAT.md` and `ADR-FORMAT.md` still sit under
+> `grill-with-docs/`, not here, and that is temporary rather than intended. A base-pinned test
+> (`lesson-codification-bac756.test.sh`) resolves `ADR-FORMAT.md` by exact path, and
+> `verifier-pinned-review` replays the **base** copy of that test against this PR's code — so moving
+> the file in the same change that teaches the test to find it would fail a gate whose whole job is to
+> stop a PR from editing the test that watches it. The test is path-agnostic as of this change; the
+> move follows once that version is the base.
+
+
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
 > `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
 > questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
@@ -71,7 +80,7 @@ When the user states how something works, check whether the code agrees. If you 
 
 ### Update CONTEXT.md inline
 
-When a term is resolved, update `CONTEXT.md` right there. Don't batch these up — capture them as they happen. Use the format in [CONTEXT-FORMAT.md](./CONTEXT-FORMAT.md).
+When a term is resolved, update `CONTEXT.md` right there. Don't batch these up — capture them as they happen. Use the format in [CONTEXT-FORMAT.md](../grill-with-docs/CONTEXT-FORMAT.md).
 
 `CONTEXT.md` should be totally devoid of implementation details. Do not treat `CONTEXT.md` as a spec, a scratch pad, or a repository for implementation decisions. It is a glossary and nothing else.
 
@@ -83,7 +92,7 @@ Only offer to create an ADR when all three are true:
 2. **Surprising without context** — a future reader will wonder "why did they do it this way?"
 3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons
 
-If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
+If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](../grill-with-docs/ADR-FORMAT.md).
 
 ### Reopening a settled ADR
 

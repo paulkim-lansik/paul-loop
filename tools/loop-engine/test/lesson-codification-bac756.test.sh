@@ -24,7 +24,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHIP_FEATURE="$HERE/../../ship-flow/skills/ship-feature/SKILL.md"
 HOTFIX="$HERE/../../ship-flow/skills/hotfix/SKILL.md"
 CODE_REVIEWER="$HERE/../../ship-flow/agents/code-reviewer.md"
-ADR_FORMAT="$HERE/../../ship-flow/skills/domain-modeling/ADR-FORMAT.md"
+# ADR-FORMAT.md 는 스킬 분해에 따라 소유 스킬이 바뀔 수 있다. 이 테스트가 요구하는 건 그 문서의
+# *내용*이지 주소가 아니므로, 경로를 고정하지 않고 ship-flow 스킬 아래에서 찾는다. 0건이면 아래
+# 존재 검사가 fail 한다(찾기 실패가 조용한 통과가 되지 않는다).
+ADR_FORMAT="$(ls "$HERE"/../../ship-flow/skills/*/ADR-FORMAT.md 2>/dev/null | head -1)"
+ADR_FORMAT="${ADR_FORMAT:-$HERE/../../ship-flow/skills/grill-with-docs/ADR-FORMAT.md}"
 SETUP="$HERE/../../ship-flow/skills/setup/SKILL.md"
 
 fail() { echo "FAIL: $1"; exit 1; }
