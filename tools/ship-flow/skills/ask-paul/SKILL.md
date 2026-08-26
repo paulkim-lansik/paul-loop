@@ -1,10 +1,10 @@
 ---
-name: ask-matt
+name: ask-paul
 description: Ask which skill or flow fits your situation. A router over the skills this plugin ships.
 disable-model-invocation: true
 ---
 
-# Ask Matt
+# Ask Paul
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
 > `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,

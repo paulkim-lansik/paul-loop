@@ -15,7 +15,7 @@ verbatim; others have been substantially rewritten or deliberately diverge — e
 field in `skills-lock.json` mark the deliberate divergences. In all cases the original is the origin of
 the work.
 
-- `ask-matt`
+- `ask-paul` (renamed from upstream's `ask-matt`; body rewritten, see the `fork` entry in `skills-lock.json`)
 - `code-review`
 - `codebase-design`
 - `diagnosing-bugs`

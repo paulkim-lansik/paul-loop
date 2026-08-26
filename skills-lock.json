@@ -1,14 +1,14 @@
 {
   "version": 1,
   "skills": {
-    "ask-matt": {
+    "ask-paul": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/ask-matt/SKILL.md",
-      "localPath": "tools/ship-flow/skills/ask-matt/SKILL.md",
-      "computedHash": "e9b1ceab2cc30a4916f492a821d5c8c4dc84965797778e66f7a7e1f398d5367c",
+      "localPath": "tools/ship-flow/skills/ask-paul/SKILL.md",
+      "computedHash": "aed70b7d9c7259898e4e8d36a9cb76dcddda8d14fb937e76226e9d54da7fd000",
       "fork": {
-        "reason": "Rewritten, not ported: upstream routes over ~15 skills this plugin does not ship. Receiving upstream's body would fill it with handoffs to nothing.",
+        "reason": "Rewritten, not ported: upstream routes over ~15 skills this plugin does not ship. Receiving upstream's body would fill it with handoffs to nothing. Renamed ask-matt -> ask-paul in ship-flow 0.9.0 because the body shares no text with upstream and the old name misdescribed what it routes over; the entry stays here to keep tracking upstream's version as a source of ideas, not of text.",
         "since": "2026-08-26"
       }
     },
