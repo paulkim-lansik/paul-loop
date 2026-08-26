@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHIP_FEATURE="$HERE/../../ship-flow/skills/ship-feature/SKILL.md"
 HOTFIX="$HERE/../../ship-flow/skills/hotfix/SKILL.md"
 CODE_REVIEWER="$HERE/../../ship-flow/agents/code-reviewer.md"
-ADR_FORMAT="$HERE/../../ship-flow/skills/grill-with-docs/ADR-FORMAT.md"
+ADR_FORMAT="$HERE/../../ship-flow/skills/domain-modeling/ADR-FORMAT.md"
 SETUP="$HERE/../../ship-flow/skills/setup/SKILL.md"
 
 fail() { echo "FAIL: $1"; exit 1; }

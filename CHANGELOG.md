@@ -5,6 +5,53 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.6.0
+
+Adopts upstream's **decomposition** — three skills that were inlined are now standalone and called by
+name — while keeping this plugin's content where the two disagree.
+
+- **New: `grilling`.** The interview loop, extracted so it has one home. Upstream's version asks *"the
+  whole frontier in one round: number each question"*; this one asks **one question at a time**, which
+  is the opposite and is deliberate. The frontier still decides *which* question comes next — it just
+  never decides *how many*. Stated in the skill, because the batched form looks more efficient and
+  isn't: the user answers the first two carefully and the rest thinly, and any question whose framing
+  depended on an earlier answer was framed wrong.
+
+  Taken from upstream unchanged: **finding facts is the agent's job, never the user's** — dispatch a
+  sub-agent for anything past a glance, and don't block on it, since a running exploration is just an
+  unsettled prerequisite. The previous inline wording ("if a question can be answered by exploring the
+  codebase, explore the codebase instead") was a weaker version of the same idea.
+
+- **New: `domain-modeling`**, extracted from `grill-with-docs` along with `CONTEXT-FORMAT.md` and
+  `ADR-FORMAT.md`. Includes this plugin's own **"Reopening a settled ADR"** section, which upstream has
+  no equivalent of — the grounded-reopen bar (cite the ADR by id, bring evidence that didn't exist when
+  it was written) that `retrospect` already applies to lessons.
+
+- **New: `codebase-design`**, extracted from `improve-codebase-architecture` along with `LANGUAGE.md`,
+  `DEEPENING.md`, and `INTERFACE-DESIGN.md`. The deep-module vocabulary now has one home instead of
+  living inside the one skill that happened to need it first.
+
+- **`grill-with-docs` is now the composition** of `grilling` + `domain-modeling` (upstream's shape),
+  with one addition: the two run *together*, not in sequence. A term sharpened mid-question goes into
+  `CONTEXT.md` right there. Batching documentation to the end of a session is what loses it — by then
+  the reasoning that justified the wording is gone.
+
+- **`improve-codebase-architecture` keeps its process** and calls out to the three (upstream's shape
+  too). It retains `HTML-REPORT.md`.
+
+**Why decompose at all.** 1:1 file correspondence with upstream is what makes drift *machine*-checkable
+rather than a per-round manual read. While ours was inlined and upstream's was split, "what changed
+upstream" could only be answered by a human reading both — and that is exactly the comparison that
+silently stops happening.
+
+**What this costs, and what pays for it.** Decomposition multiplies skill-to-skill handoffs, and a
+handoff to a target that doesn't exist is silent. `loop-engine 0.11.0`'s `check-skill-refs` gate lands
+in the same change for that reason: references went 17 → 24 here, and all 24 are verified to resolve.
+
+Two existing gates caught real breakage from the file moves, which is what they are for:
+`lesson-codification-bac756.test.sh` pinned `grill-with-docs/ADR-FORMAT.md` by path, and the
+output-language anchor gate rejected the rewritten `grill-with-docs/SKILL.md` for dropping its header.
+
 ## loop-engine 0.11.0
 
 A new gate for the failure mode this plugin's own design choice creates.
