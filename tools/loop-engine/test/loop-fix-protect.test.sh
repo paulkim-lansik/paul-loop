@@ -548,7 +548,15 @@ if [ ! -f armed.marker ]; then
 fi
 EOF
 
-"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-delay.sh' --protect 'guard-file.txt' --idle-timeout-sec 1 --max-iter 5 >/dev/null 2>&1
+# LOOP_PROTECT_GRACE_SEC is pinned here rather than left at its 1.5s default (issue #71). The
+# behaviour under test is the ORDERING — watchdog timeout (1s) shorter than the grace period, and a
+# mutation delayed (2s) past the watchdog — not the specific numbers. At the default the recheck
+# window closed ~0.5s after the mutation was due to land, so on a loaded machine the case flipped
+# red for reasons unrelated to the guard. That misattribution already happened once (PR #70 blamed
+# an unrelated new test), and the pressure it creates points at weakening this case — which is the
+# exact behaviour this file exists to prevent. Pinning grace to 5s keeps every ordering the case
+# proves (1 < 2 < 1+5) and buys ~5s of margin instead of ~0.5s.
+LOOP_PROTECT_GRACE_SEC=5 "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-delay.sh' --protect 'guard-file.txt' --idle-timeout-sec 1 --max-iter 5 >/dev/null 2>&1
 code=$?
 [ "$code" -eq 3 ] || fail "case16: expected exit 3 (PROTECTED-VIOLATION) — a watchdog timeout shorter than the grace period must not let the mutation escape detection, got $code"
 grep -q "PROTECTED FILE MODIFIED" .loop/history.log || fail "case16: expected the PROTECTED FILE MODIFIED marker"

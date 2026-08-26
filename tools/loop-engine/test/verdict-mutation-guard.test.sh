@@ -10,6 +10,15 @@ VR="$HERE/../bin/verdict-run.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$VR" ] || fail "verdict-run.sh not executable at $VR"
 
+# verdict-run.sh writes its state to ${LOOP_DIR:-.loop}/verdict-state.json (bin/verdict-run.sh:92).
+# These cases cd into the repo under test, so the state path is resolved the same way rather than
+# written as a bare `.loop/...` (issue #58 — a hardcoded `.loop` made the whole suite unrunnable
+# under a non-default LOOP_DIR, which is what ac-verify.sh exports when given --log-dir).
+# NOTE the deliberate exception below: case 3's `.gitignore` entry and its `.loop/scratch.log`
+# write stay literal — that case is about gitignore semantics, not about where state lands.
+LOOPD="${LOOP_DIR:-.loop}"
+STATE_JSON="$LOOPD/verdict-state.json"
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -33,7 +42,7 @@ code=$?
 [ "$code" -eq 1 ] || fail "case1: expected exit 1 on mutation, got $code"
 printf '%s\n' "$out" | grep -q "VERDICT: FAIL" || fail "case1: expected VERDICT: FAIL"
 printf '%s\n' "$out" | grep -q "workspace mutated" || fail "case1: expected the mutation FAIL line"
-grep -q '"verdict":"FAIL"' .loop/verdict-state.json || fail "case1: verdict state must record FAIL (Stop-gate consistency)"
+grep -q '"verdict":"FAIL"' "$STATE_JSON" || fail "case1: verdict state must record FAIL (Stop-gate consistency)"
 
 # ── case 1b: 같은 repo에서 무변조 재실행 → 자체 산출물(.loop)로 오탐하지 않는다 ─────────────
 out="$("$VR" --guard-mutation -- sh -c 'true' 2>/dev/null)"
@@ -53,7 +62,14 @@ R="$WORK/r3"; mkrepo "$R"; cd "$R" || fail "cd r3"
 printf '.loop/\n' > .gitignore
 git add .gitignore
 git commit -qm ignore
-out="$("$VR" --guard-mutation -- sh -c 'echo log >> .loop/scratch.log' 2>/dev/null)"
+# `mkdir -p` is part of the command under test, not setup: this write only ever succeeded because
+# verdict-run.sh happened to create `.loop/` first (for its own default LOG target). Under a
+# non-default LOOP_DIR it doesn't, the append fails with "No such file or directory", and the case
+# goes red while appearing to say "the guard tripped on a gitignored write" — it was really saying
+# "the command failed". Creating the directory the case writes into removes that hidden dependency
+# and leaves the case proving only what it claims. (Both paths stay literal `.loop`: this case is
+# about gitignore semantics, and `.loop/` is what its .gitignore lists.)
+out="$("$VR" --guard-mutation -- sh -c 'mkdir -p .loop && echo log >> .loop/scratch.log' 2>/dev/null)"
 code=$?
 [ "$code" -eq 0 ] || fail "case3: gitignored writes must not trip the guard, got $code"
 printf '%s\n' "$out" | grep -q "VERDICT: PASS" || fail "case3: expected VERDICT: PASS"
@@ -109,7 +125,7 @@ n_blk="$(printf '%s\n' "$out" | grep -c '^=== VERDICT ===$')"
 printf '%s\n' "$out" | grep -q "VERDICT: FAIL" || fail "case8: expected VERDICT: FAIL"
 printf '%s\n' "$out" | grep -q "VERDICT: PASS" && fail "case8: the inner forged PASS block must not be re-emitted"
 printf '%s\n' "$out" | grep -q "workspace mutated" || fail "case8: expected the mutation FAIL line"
-grep -q '"verdict":"FAIL"' .loop/verdict-state.json || fail "case8: verdict state must record FAIL"
+grep -q '"verdict":"FAIL"' "$STATE_JSON" || fail "case8: verdict state must record FAIL"
 
 # ── case 9: loop-fix 배선 — --guard-mutation passthrough가 실제로 가드를 켠다(무음 가드-off
 #            회귀 방지: 플래그가 조용히 떨어지면 verify는 정상 동작하며 가드만 사라진다) ────────

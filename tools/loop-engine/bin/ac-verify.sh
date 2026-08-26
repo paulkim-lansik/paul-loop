@@ -26,8 +26,9 @@
 #   AC: <description> | verify: <command> | artifacts: <paths> | expect: <substring>
 #   - AC: <description> | verify: <command>
 #
-# Only `AC: <description>` is required. `verify:`, `artifacts:`, and `expect:` are each optional,
-# may appear in any combination, and in any order after the description — each field is
+# Only `AC: <description>` is required. `verify:`, `artifacts:`, and `expect:` are each optional
+# and may appear in any order after the description. One combination is rejected: `expect:` alone,
+# with neither `verify:` nor `artifacts:`, has nothing to search (see expect: below). Each field is
 # separated from its neighbours by ` | ` (space-pipe-space). An AC line with none of the three
 # optional fields is a legitimate, human-readable-only acceptance criterion: it counts as
 # `skipped` in the aggregate, not as a failure in itself.
@@ -47,9 +48,19 @@
 #                ac-verify.sh itself runs from (NOT the plan file's directory — verify commands
 #                and artifacts are expected relative to the repo/worktree root, same as verify
 #                commands already are).
-#   - expect:    the per-AC log (verdict-run.sh's untruncated LOG output for that AC; empty if
-#                the AC has no verify: field) must contain this LITERAL substring (`grep -F`, not
-#                a regex).
+#   - expect:    a LITERAL substring (`grep -F`, not a regex) that must be found in the AC's
+#                corpus. Which corpus depends on what else the AC declares (issue #74):
+#                  verify: present         -> the per-AC log (verdict-run.sh's untruncated LOG
+#                                             output for that AC). Unchanged, and NOT widened to
+#                                             also cover artifacts when both are declared — an
+#                                             existing contract must keep meaning what it meant.
+#                  no verify:, artifacts:  -> the contents of those artifact files (`grep -rF`, so
+#                                             a directory artifact is searched recursively). A
+#                                             match in ANY listed artifact satisfies it.
+#                  neither                 -> a contract error: exit 2, not an AC failure. There is
+#                                             no corpus, so the check could never hold; reporting
+#                                             that as a violation invites weakening the AC instead
+#                                             of fixing the contract.
 # An AC is fully PASSED only if every field it declares independently passes. A field that isn't
 # present on that AC line is simply not checked (neither pass nor fail).
 #
@@ -332,6 +343,18 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
     contracted=$((contracted + 1))
 
+    # ---- issue #74: `expect:` needs a corpus to search. With `verify:` it is that command's log;
+    # without it, the `artifacts:` files themselves (below). With NEITHER, there is nothing to grep
+    # — pre-fix this greped an empty log and reported "expect substring not found", i.e. a contract
+    # that cannot hold reported as though the implementation were at fault. That is a contract
+    # error, not an AC violation, so it gets exit 2 like every other usage error here rather than
+    # exit 1 — the distinction matters because a "violation" invites weakening the AC until it
+    # passes, which is how a contract ends up checking nothing.
+    if [ -n "$expect_field" ] && [ -z "$verify_cmd" ] && [ -z "$artifacts_field" ]; then
+      echo "ac-verify.sh: AC #$idx (\"$desc\") declares expect: with neither verify: nor artifacts: — there is nothing for expect: to search. Give the AC a verify: command (expect: greps its output) or an artifacts: list (expect: greps those files)." >&2
+      exit 2
+    fi
+
     ac_log="$LOGSUBDIR/ac-$idx.log"
     reasons=()
 
@@ -387,9 +410,29 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
 
     if [ -n "$expect_field" ]; then
-      if ! grep -qF -- "$expect_field" "$ac_log" 2>/dev/null; then
-        reasons+=("expect substring not found: \"$expect_field\"")
+      expect_found=0
+      if [ -n "$verify_cmd" ]; then
+        # verify: present — its log is the corpus, unchanged. Deliberately NOT widened to also
+        # search the artifacts when both are declared: that would quietly make an existing
+        # contract easier to satisfy, and every contract that passes today must keep meaning
+        # exactly what it meant. Widening only happens where the corpus was previously empty.
+        grep -qF -- "$expect_field" "$ac_log" 2>/dev/null && expect_found=1
+      else
+        # No verify: — the declared artifacts are the corpus (issue #74). A match in ANY of them
+        # satisfies expect:. Paths that don't exist are skipped here rather than erroring: the
+        # artifacts check above already produced a "missing artifact(s)" reason for them, and an
+        # AC carrying both reasons reports both.
+        IFS=',' read -ra epaths <<< "$artifacts_field"
+        if [ "${#epaths[@]}" -gt 0 ]; then
+          for ep in "${epaths[@]}"; do
+            ept="$(trim "$ep")"
+            [ -z "$ept" ] && continue
+            [ -e "$ept" ] || continue
+            if grep -rqF -- "$expect_field" "$ept" 2>/dev/null; then expect_found=1; break; fi
+          done
+        fi
       fi
+      [ "$expect_found" -eq 0 ] && reasons+=("expect substring not found: \"$expect_field\"")
     fi
 
     ac_ok=1
