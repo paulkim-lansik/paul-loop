@@ -203,6 +203,13 @@ check "(control) the other repository's own guard is armed and protecting" deny 
   "$OTHER" "$OTHER" Edit "$OTHER/b.test.sh"
 
 # ── 17/18) the process.cwd() fallback, for payloads carrying no cwd field ─────────────────────────
+# Kept as defence in depth, not as the primary path. Issue #63 measured the real thing on
+# 2026-08-27: a capture hook on `matcher: "Edit|Write"`, in a session started inside a git worktree,
+# recorded `cwd` on BOTH tools, valued at the worktree path (`process.cwd()` measured identical).
+# So the premise these two cases hedge against holds today — they exist so a future change to it
+# degrades instead of silently re-opening the hole. Note what these cases CANNOT prove: every payload
+# in this file is built locally, so `cwd`'s presence is injected here either way. That is why the
+# measurement had to be an external capture and is recorded in prose rather than as a case.
 verdict "a payload with no cwd falls back to the hook's own cwd and denies the plugin path" deny \
   "$(run_from "$WT" "$REPO" Edit "$PLUGIN_FILE")"
 verdict "a payload with no cwd stays allowed when the hook runs in the unprotected session root" allow \

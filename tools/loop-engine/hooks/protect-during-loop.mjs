@@ -67,9 +67,17 @@ const tool = payload?.tool_name;
 const input = payload?.tool_input ?? {};
 
 const str = (v) => (typeof v === 'string' && v ? v : '');
-// `cwd` is documented as a field on every hook event; process.cwd() backs it up so behaviour doesn't
-// hinge on a premise no captured PreToolUse payload in this repo confirms. Both candidates still have
-// to pass the same-repository check below, so neither can re-root anywhere wrong.
+// `cwd` is present on PreToolUse payloads for Edit and Write — MEASURED, not assumed (issue #63,
+// 2026-08-27). A capture hook on `matcher: "Edit|Write"` in a session started inside a git worktree
+// recorded `cwd` on both tools, and its value was the WORKTREE path, not the main checkout's — which
+// is the exact property the re-rooting below depends on. `process.cwd()` stays as a fallback (it
+// measured identical in the same capture) so behaviour degrades rather than breaks if that ever
+// changes. Both candidates still have to pass the same-repository check below, so neither can
+// re-root anywhere wrong.
+//
+// Why the measurement had to be external: the hermetic tests build the payload themselves and inject
+// `cwd`, so they are green whether or not Claude Code actually sends it. That is an AC-level
+// false-green — the test proves this file's handling, never the premise it handles.
 const sessionDir = str(payload?.cwd) || process.cwd();
 const target = tool === 'Bash' ? sessionDir : str(input?.file_path);
 

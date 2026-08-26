@@ -5,6 +5,34 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.12.1
+
+Comments only — but they close issue #63, which was open on a load-bearing *assumption*.
+
+`protect-during-loop.mjs` re-roots the reward-hack guard at the worktree derived from `payload.cwd`.
+Whether Claude Code actually sends `cwd` on an `Edit`/`Write` PreToolUse payload had never been
+observed — the hermetic tests build the payload themselves and inject it, so they were green either
+way. An AC-level false-green: the cases prove this file's *handling*, never the *premise*. If the
+premise were wrong the failure mode was the bad one — no crash, a quiet ALLOW, i.e. the exact
+pathology BAC-785 was written to remove.
+
+Measured externally on 2026-08-27, in the condition that actually matters: a capture hook on
+`matcher: "Edit|Write"`, in a session started **inside a git worktree**.
+
+```
+tool=Edit    has_cwd=True
+  payload.cwd       = …/tmp.DYIsdLztcV/wt
+  hook process cwd  = …/tmp.DYIsdLztcV/wt
+tool=Write   has_cwd=True
+  payload.cwd       = …/tmp.DYIsdLztcV/wt
+  hook process cwd  = …/tmp.DYIsdLztcV/wt
+```
+
+`cwd` is present on both tools, and its value is the **worktree** path — not the main checkout's,
+which is the property the re-rooting depends on. The `process.cwd()` fallback measured identical, so
+it stays as defence in depth rather than the primary path. The prose at both sites now says measured,
+with the date and the method, instead of "a premise no captured payload confirms".
+
 ## loop-engine 0.12.0
 
 Two ways the AC gate returned a verdict that had nothing to do with the code under test, and one
