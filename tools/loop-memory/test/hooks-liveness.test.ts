@@ -209,6 +209,51 @@ describe('recall liveness — the four states fail-open otherwise flattens into 
     expect(e.payload.prompt_chars).toBe(2);
   });
 
+  // ── issue #35: the prompt field. Claude Code's UserPromptSubmit payload carries the prompt as
+  // `prompt`; this hook read `user_input`, which the payload does not have. Every firing therefore
+  // saw an empty string, self-gated as "prompt too short", and exited 0 — indistinguishable from a
+  // user who typed something short. Measured in the consuming repo's run ledger: 176 firings,
+  // 176 × `prompt_too_short`, every one with `prompt_chars: 0` and `key: true`.
+  //
+  // These tests could not have caught it: every one of them fed `user_input`, i.e. they agreed with
+  // the code's wrong premise instead of checking it. `user_input` is kept as a second accepted field
+  // because loop-engine's own context-budget.mjs (O1b) spawns this hook with that shape — two real
+  // callers, two shapes, not a legacy alias.
+  it('reads the real UserPromptSubmit field (`prompt`), not just `user_input`', () => {
+    runRecall(
+      { GEMINI_API_KEY: 'k' },
+      { session_id: SESSION, hook_event_name: 'UserPromptSubmit', prompt: 'a prompt long enough to pass the length gate' },
+    );
+    const e = only('memory.recall');
+    expect(e.payload.prompt_chars).toBe('a prompt long enough to pass the length gate'.length);
+    expect(e.payload.reason).not.toBe('prompt_too_short');
+    expect(e.payload.reason).not.toBe('prompt_field_missing');
+  });
+
+  it('still reads `user_input` — context-budget.mjs spawns the hook with that shape', () => {
+    runRecall(
+      { GEMINI_API_KEY: 'k' },
+      { session_id: SESSION, user_input: 'a prompt long enough to pass the length gate' },
+    );
+    const e = only('memory.recall');
+    expect(e.payload.prompt_chars).toBe('a prompt long enough to pass the length gate'.length);
+    expect(e.payload.reason).not.toBe('prompt_too_short');
+  });
+
+  it('a payload carrying NO recognised prompt field is its own reason, not "too short"', () => {
+    // The whole point of the fix: if the field is ever renamed again, the ledger says so instead of
+    // looking like 176 short prompts in a row.
+    runRecall({ GEMINI_API_KEY: 'k' }, { session_id: SESSION, hook_event_name: 'UserPromptSubmit' });
+    const e = only('memory.recall');
+    expect(e.payload.reason).toBe('prompt_field_missing');
+    expect(e.payload.prompt_chars).toBe(0);
+  });
+
+  it('an empty-string prompt field is "too short", not "missing" — the field was there', () => {
+    runRecall({ GEMINI_API_KEY: 'k' }, { session_id: SESSION, prompt: '' });
+    expect(only('memory.recall').payload.reason).toBe('prompt_too_short');
+  });
+
   it('SELF-GATED (unparseable stdin) is recorded rather than lost', () => {
     runRecall({ GEMINI_API_KEY: 'k' }, 'not json at all');
     expect(only('memory.recall').payload.reason).toBe('stdin_parse_fail');
