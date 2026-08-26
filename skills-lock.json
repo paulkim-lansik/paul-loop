@@ -12,6 +12,17 @@
         "since": "2026-08-26"
       }
     },
+    "code-review": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/code-review/SKILL.md",
+      "localPath": "tools/ship-flow/skills/code-review/SKILL.md",
+      "computedHash": "8165690e080c18771f7f49ceab5538b60da664d3fd01300c0776f597bb6beeef",
+      "fork": {
+        "reason": "Upstream's only substantive change to this skill deletes the line that makes the two reviews run as parallel sub-agents. Receiving it would collapse the Standards/Spec split this plugin relies on.",
+        "since": "2026-08-26"
+      }
+    },
     "codebase-design": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -72,6 +83,20 @@
       "localPath": "tools/ship-flow/skills/improve-codebase-architecture/SKILL.md",
       "computedHash": "650ad8eef813699ee0755e29977506555e50300810ae2fc0d275fe49d6664dad"
     },
+    "prototype": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/prototype/SKILL.md",
+      "localPath": "tools/ship-flow/skills/prototype/SKILL.md",
+      "computedHash": "64fa22fdec7999ad4f79a5eab34728e9c01b7284220f865619da2f84e838693f"
+    },
+    "research": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/research/SKILL.md",
+      "localPath": "tools/ship-flow/skills/research/SKILL.md",
+      "computedHash": "9457b776bb277766ac90f4555a0c8243eb6936400df167cd1a2153983a0358dd"
+    },
     "resolving-merge-conflicts": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -96,6 +121,13 @@
       "skillPath": "skills/engineering/tdd/SKILL.md",
       "localPath": "tools/ship-flow/skills/tdd/SKILL.md",
       "computedHash": "0109d66ade46a375753e9559645c712dda3fecddd65def22de23737a07e234e1"
+    },
+    "teach": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/teach/SKILL.md",
+      "localPath": "tools/ship-flow/skills/teach/SKILL.md",
+      "computedHash": "ba80af06455a5946251a7f2f7f862f582a88f535490c7326d7d990030219ebad"
     },
     "to-issues": {
       "source": "mattpocock/skills",
@@ -126,6 +158,13 @@
       "localPath": "tools/ship-flow/skills/to-questionnaire/SKILL.md",
       "computedHash": "8aedcfdd46c5922e0894959eb3fd9e5cc49a767f43eb09aedb4f77e1bfe9e88f"
     },
+    "triage": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/triage/SKILL.md",
+      "localPath": "tools/ship-flow/skills/triage/SKILL.md",
+      "computedHash": "dca18bd2780268fea736e5a0bfc667d6c3c272744f34b6ea2aef6d4beeed3ada"
+    },
     "wait-what": {
       "source": "mattpocock/skills",
       "sourceType": "github",
@@ -133,12 +172,30 @@
       "localPath": "tools/ship-flow/skills/wait-what/SKILL.md",
       "computedHash": "d546b80c04d05cc508c6f3728ca505627b9ea1e4e1e7a078f611679115dabf28"
     },
+    "wayfinder": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/wayfinder/SKILL.md",
+      "localPath": "tools/ship-flow/skills/wayfinder/SKILL.md",
+      "computedHash": "5a4ec3b4fbd6eb676f2bfbfc9043a0caa96933dc78d1987fd695cb6f7553eb2f"
+    },
     "wizard": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/wizard/SKILL.md",
       "localPath": "tools/ship-flow/skills/wizard/SKILL.md",
       "computedHash": "80719cee91d7f2be254b42ee9d0efa72cbbef03be1f55c3a646567e6d484594e"
+    },
+    "write-a-skill": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/writing-for-agents/SKILL.md",
+      "localPath": "tools/ship-flow/skills/write-a-skill/SKILL.md",
+      "computedHash": "77ef9f9b1c1ffd6615d1ed12874395b183b3c78b5b69368eaaf29c9f5f307eaa",
+      "fork": {
+        "reason": "Upstream renamed and rewrote this as writing-for-agents: a principles document covering skills, AGENTS.md and CLAUDE.md, where this is a procedure for producing one skill. Its trigger now fires on editing CLAUDE.md, which this plugin's constitution gates behind a PR (ADR-0061). Kept as the narrower procedure deliberately; specific sections may still be backported one at a time.",
+        "since": "2026-08-26"
+      }
     }
   }
 }
