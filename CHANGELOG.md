@@ -5,6 +5,35 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.6.1 · loop-memory 0.4.2
+
+Both dependents declared `loop-engine: ^0.10.0`. On a `0.x` line the caret pins the minor, so that
+range admits `0.10.z` and **excludes `0.11.0`** — the version published one entry below, carrying the
+`check-skill-refs` gate.
+
+Nothing failed. `claude plugin update` reported success and kept the old version:
+
+```
+$ claude plugin update loop-engine@paul-loop
+✔ loop-engine is already at the latest version satisfying ^0.10.0, ^0.10.0
+  (0.10.3, required by ship-flow, loop-memory).
+```
+
+The consuming repo kept resolving `0.10.3-e1cae157b97a` while `0.11.0` sat downloaded in the plugin
+cache, unreachable. This is the defect class this repo keeps meeting — **the thing that was supposed
+to start running quietly does not** — arriving this time through the version graph rather than a
+gate's wiring. Left alone it applies to every future loop-engine release, not just this one.
+
+- **Ranges widened to `^0.11.0`** in both dependents' `plugin.json`, versions bumped, and
+  `marketplace.json` synced.
+- **`plugin-dep-range.test.sh`** (suite 57 → 58) makes it mechanical: every sibling plugin's declared
+  loop-engine range must admit the loop-engine version this repo actually ships. Dependents are
+  **discovered** from `tools/*/.claude-plugin/plugin.json`, so a plugin added later is covered without
+  editing the test. Two fail-closed paths: finding **no** dependent at all is an error (discovery
+  broke — it verified nothing), and a range in a form the checker doesn't understand is an error
+  rather than a pass, since an unrecognised range is exactly how this check would stop checking.
+  Range parsing is inline `node` — a gate must not add a semver dependency to this repo.
+
 ## ship-flow 0.6.0
 
 Adopts upstream's **decomposition** — three skills that were inlined are now standalone and called by
