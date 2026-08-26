@@ -5,6 +5,28 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.9.0
+
+`ask-matt` is renamed **`ask-paul`**. The name was the last thing upstream about it.
+
+Its body was already rewritten rather than ported in 0.6.0 — it routes over *this* plugin's skills
+(the `ship-feature` single entrypoint, the risk gate's REQUIRE stops, the verdict contract, the
+`verifier-integrity-hunter` pass, `retrospect`'s verified-only rule) and names none of upstream's.
+So the name described a provenance the file no longer had, and pointed a reader at the wrong author's
+opinions.
+
+- **The lock entry stays**, keyed `ask-paul` with `skillPath` still pointing at upstream's
+  `skills/engineering/ask-matt/SKILL.md`. That pairing is what keeps `vendor-sync` watching upstream's
+  version — as a source of *ideas* now, not of text. The `fork` reason records the rename and why.
+- **NOTICE follows the lock.** `attribution-completeness.test.sh` derives its list from the lock keys,
+  so the rename would have gone RED had NOTICE not been updated with it — which is the gate doing
+  exactly what it was added for in 0.8.0, one release later.
+- **Breaking for anyone typing the old name.** `/ship-flow:ask-matt` no longer resolves; use
+  `/ship-flow:ask-paul`. No skill body referenced it, so nothing internal broke.
+
+Earlier entries below keep the old name where they describe what shipped at the time — renaming a
+changelog rewrites history rather than recording it.
+
 ## ship-flow 0.8.0
 
 The last seven skills that lived in a consuming repo move into the plugin. Nothing here is new work —
