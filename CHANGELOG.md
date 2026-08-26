@@ -5,6 +5,60 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.12.0
+
+Two ways the AC gate returned a verdict that had nothing to do with the code under test, and one
+timing case that turned load into a false accusation. All three are the same defect: **the gate
+reports something other than what it measured.**
+
+- **`expect:` had exactly one corpus (issue #74).** It grepped the `verify:` command's log — so an
+  `artifacts:` + `expect:` contract with no `verify:` grepped an *empty* log and reported
+  `expect substring not found`. That is the most natural way to write a documentation contract, and
+  it was structurally unpassable while reporting itself as an implementation defect. Measured on a
+  real contract from PR #73: the file contained the substring six times.
+
+  `expect:` now picks its corpus from what the AC declares — `verify:` present → its log
+  (**unchanged**, and deliberately not widened to also cover artifacts when both are given: a
+  contract that passes today must keep meaning exactly what it meant); no `verify:` but
+  `artifacts:` → the contents of those files, a match in any one of them satisfying it; **neither →
+  exit 2**, a contract error rather than an AC failure. That last distinction is the point of the
+  change: reported as a *violation*, the cheapest fix is to delete the `expect:` — and then the
+  contract quietly checks nothing, which is the failure this repo's gates exist to prevent.
+
+- **The suite could not run under a non-default `LOOP_DIR` (issue #58).** `verdict-run.sh` writes
+  its state to `${LOOP_DIR:-.loop}/verdict-state.json`, but two tests asserted a hardcoded `.loop`,
+  so `60/60` became `58/60` the moment `LOOP_DIR` moved. `ac-verify.sh` exports exactly that when
+  given `--log-dir` — so any plan whose AC ran this suite failed permanently, and the reason was
+  four levels down in a log. The two tests now resolve the path the way the contract defines it.
+
+  Fixing that surfaced a third: `verdict-mutation-guard`'s gitignored-write case only ever worked
+  because `verdict-run.sh` happened to create `.loop/` first. Under another `LOOP_DIR` the write
+  failed with *No such file or directory* and the case went red while appearing to say "the guard
+  tripped" — it was really saying "the command failed". The case now creates the directory it
+  writes into, and proves only what it claims.
+
+- **`loop-fix-protect` case16 had ~0.5s of margin (issue #71).** It races a 1s watchdog against a
+  2s-delayed mutation, and at the default 1.5s grace the recheck window closed barely after the
+  mutation was due. On a loaded machine it flipped — and PR #70 misattributed exactly that to an
+  unrelated new test. `LOOP_PROTECT_GRACE_SEC=5` is now pinned in the case: every ordering it proves
+  is unchanged (1 < 2 < 1+5), the margin goes from ~0.5s to ~5s, and the case costs ~4.6s more.
+  Nothing about the behaviour under test was weakened — which is the outcome the misattribution
+  pressure was pushing against.
+
+Version note: this is a minor, not a patch — `expect:` gained a corpus it did not have and a new
+exit-2 path exists. `plugin-dep-range.test.sh` (added in 0.11.0) went red on the bump, naming both
+dependents still pinned to `^0.11.0`, which is what it was written to do.
+
+## ship-flow 0.9.1
+
+`ship-feature`'s `AC-CONTRACTS.md` follows loop-engine 0.12.0: which corpus `expect:` searches, why
+`verify:` + `artifacts:` still searches output only, and the one rejected combination. Adds the
+documentation-contract example — `artifacts:` + `expect:`, no `verify:` — that could not work before.
+
+## loop-memory 0.4.3
+
+Dependency range only: `loop-engine ^0.11.0` → `^0.12.0`.
+
 ## ship-flow 0.9.0
 
 `ask-matt` is renamed **`ask-paul`**. The name was the last thing upstream about it.
