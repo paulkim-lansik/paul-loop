@@ -5,6 +5,47 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.11.0
+
+A new gate for the failure mode this plugin's own design choice creates.
+
+- **`check-skill-refs.mjs` — a skill or agent handoff whose target doesn't exist is now RED.**
+  This plugin deliberately keeps skill-to-skill handoffs; upstream `mattpocock/skills` dropped them
+  repo-wide (commit `1dab982`, "Stop skills from calling other user-invoked skills") because a
+  generic library can't know which siblings a consumer installed, while a curated plugin ships its
+  own (see `ship-flow 0.5.0` below). That buys real composition and costs exactly one silent failure
+  mode: a handoff to something that isn't there reads as a normal instruction and simply does
+  nothing at runtime.
+
+  Not hypothetical. Measured in a consuming repo on 2026-08-26: four personal-layer skills delegated
+  to `/grilling`, `/domain-modeling`, `/codebase-design` — none installed anywhere on the machine.
+  `grill-me` and `grill-with-docs` were one-line stubs whose *entire body* was the dead call, and
+  both shadowed working copies, so `/grill-with-docs` had been loading a no-op for as long as the
+  stub existed. Nothing reported it.
+
+  `dangling-doc-refs.test.sh` does not cover this — it checks *file paths* that claim to be
+  plugin-shipped, not skill/agent handoffs.
+
+- **Checked forms, and the one it can miss — stated rather than implied.** `Call the Skill tool
+  with "X"` and a backticked `` `namespace:name` `` are unambiguous and always checked. A bare
+  `` `/name` `` is also a URL path (`/login`, `/healthz`), so it counts only on a line that says
+  "skill". That heuristic is the gate's known limit; both directions are locked by tests (a URL path
+  on a skill-free line is not flagged; the same form on a line that says "skill" is).
+
+- **Plugin dirs and namespaces are discovered from `.claude-plugin/plugin.json`, never hardcoded** —
+  `genericity-repo-agnostic.test.sh` requires that, and it means the gate also works against a
+  consuming repo's `.claude/skills` + `.claude/agents`.
+
+- **Agents resolve too.** Scanning skills alone would flag every `ship-flow:publisher` /
+  `ship-flow:planner` handoff in `ship-feature` as dangling — 13 false positives on this repo as it
+  stands.
+
+- **`check-skill-refs.test.sh`** (suite 56 → 57), 11 cases. Three are fail-closed (`exit 2`, distinct
+  from a violation's `exit 1`): zero providers, zero documents, and zero references extracted from a
+  non-empty document set — a broken extractor finds nothing, and "nothing" must not read as "clean".
+  The last case is a RED-first proof on the real tree: a dead handoff appended to
+  `ship-feature/SKILL.md` turns this repo RED, and green again once removed.
+
 ## loop-engine 0.10.3
 
 A "run as main" guard that silently stopped guarding.
