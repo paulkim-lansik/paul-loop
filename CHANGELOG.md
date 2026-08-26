@@ -39,6 +39,31 @@ name — while keeping this plugin's content where the two disagree.
 - **`improve-codebase-architecture` keeps its process** and calls out to the three (upstream's shape
   too). It retains `HTML-REPORT.md`.
 
+### Also new: four skills upstream has and this plugin didn't
+
+- **`wizard`** — generates an interactive bash script that walks a human through steps only they can
+  take (provisioning, credentials, CI secrets, an unfamiliar dashboard, a one-off cutover). Ships
+  upstream's `template.sh` unchanged — the library above the `STAGES` marker is identical in every
+  wizard and is never hand-edited. Adds one section upstream doesn't have: **where a value is written
+  is a list, not a destination.** The recurring failure is partial propagation — the env schema and the
+  secret store get updated, the infrastructure that injects the secret into the container does not, and
+  nothing errors until a deploy that often auto-rolls-back, so there isn't even downtime to notice.
+- **`to-questionnaire`** — for when what blocks you is in someone else's head. Ported near-verbatim;
+  the header adds that the questionnaire is written in the *recipient's* language, which is usually but
+  not always `outputLanguage`.
+- **`wait-what`** — re-pitch a message that didn't land. Adds one line: re-pitching is not repeating
+  more slowly; find the step that was skipped.
+- **`ask-matt`** — a router over the skills. **Rewritten, not ported.** Upstream's version routes over
+  upstream's set (`/implement`, `/to-spec`, `/to-tickets`, `/handoff`, `/prototype`, `/research`, …);
+  porting it verbatim would have produced roughly fifteen references to skills this plugin doesn't
+  ship, which the new `check-skill-refs` gate would correctly have rejected. This one routes over what
+  is actually here, and says so: `ship-feature` is the single entrypoint, and most of the map is what
+  *it* calls rather than what you call. It states its own scope — a consuming repo's own skills are
+  that repo's to document.
+
+  This is the clearest evidence the gate earns its keep: `ask-matt` alone took handoff references from
+  24 to 47, and every one is verified to resolve.
+
 **Why decompose at all.** 1:1 file correspondence with upstream is what makes drift *machine*-checkable
 rather than a per-round manual read. While ours was inlined and upstream's was split, "what changed
 upstream" could only be answered by a human reading both — and that is exactly the comparison that

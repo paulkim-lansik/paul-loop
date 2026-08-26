@@ -24,13 +24,19 @@ DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 INJECTED=""
 trap 'rm -rf "$DIR"; [ -n "$INJECTED" ] && git -C "$ROOT" checkout -- "$INJECTED" 2>/dev/null; true' EXIT
 
-# 픽스처 하나: 플러그인 1개(스킬 host + sibling, 에이전트 helper) + host 본문을 인자로 받는다
+# 픽스처 하나를 재사용한다 — 케이스는 순차라 host 본문만 갈아끼우면 되고, 케이스마다 트리를
+# 새로 만들면 그 I/O가 스위트 전체의 타이밍 예산을 갉아먹는다(같은 러너 안의 타이밍 민감 테스트에
+# 실제로 영향이 갔다).
+FX=""
 mkfixture() {
   local d="$1" body="$2"
-  rm -rf "$d"; mkdir -p "$d/plug/.claude-plugin" "$d/plug/skills/host" "$d/plug/skills/sibling" "$d/plug/agents"
-  printf '{"name":"demo"}' > "$d/plug/.claude-plugin/plugin.json"
-  printf 'sibling skill body\n' > "$d/plug/skills/sibling/SKILL.md"
-  printf 'helper agent body\n' > "$d/plug/agents/helper.md"
+  if [ "$d" != "$FX" ]; then
+    rm -rf "$d"; mkdir -p "$d/plug/.claude-plugin" "$d/plug/skills/host" "$d/plug/skills/sibling" "$d/plug/agents"
+    printf '{"name":"demo"}' > "$d/plug/.claude-plugin/plugin.json"
+    printf 'sibling skill body\n' > "$d/plug/skills/sibling/SKILL.md"
+    printf 'helper agent body\n' > "$d/plug/agents/helper.md"
+    FX="$d"
+  fi
   printf '%s\n' "$body" > "$d/plug/skills/host/SKILL.md"
 }
 run() { node "$CHECK" --root "$1" >"$DIR/out" 2>"$DIR/err"; echo $?; }
@@ -46,35 +52,35 @@ node -e '
 echo "PASS: this repo's own skill and agent handoffs all resolve, and the extractor found real references"
 
 # ── 2) 없는 스킬로 위임하면 RED, 그 참조를 이름으로 지목한다 ────────────────────────────────
-mkfixture "$DIR/f2" 'Call the Skill tool with "nope".'
-[ "$(run "$DIR/f2")" = "1" ] || fail "a handoff to a nonexistent skill must exit 1"
+mkfixture "$DIR/fx" 'Call the Skill tool with "nope".'
+[ "$(run "$DIR/fx")" = "1" ] || fail "a handoff to a nonexistent skill must exit 1"
 grep -q "nope" "$DIR/err" || fail "the violation must name the unresolved reference"
 echo "PASS: a handoff to a skill that does not exist is reported by name"
 
 # ── 3) 존재하는 형제 스킬로의 위임은 통과 ──────────────────────────────────────────────────
-mkfixture "$DIR/f3" 'Call the Skill tool with "sibling".'
-[ "$(run "$DIR/f3")" = "0" ] || fail "a handoff to an existing sibling skill must pass: $(cat "$DIR/err")"
+mkfixture "$DIR/fx" 'Call the Skill tool with "sibling".'
+[ "$(run "$DIR/fx")" = "0" ] || fail "a handoff to an existing sibling skill must pass: $(cat "$DIR/err")"
 echo "PASS: a handoff to an existing sibling skill passes"
 
 # ── 4) 에이전트도 해결 대상이다 (스킬만 보면 publisher/planner가 전부 오탐이 된다) ──────────
-mkfixture "$DIR/f4" 'Hand off to the `demo:helper` agent.'
-[ "$(run "$DIR/f4")" = "0" ] || fail "an agent target must resolve, not be flagged: $(cat "$DIR/err")"
+mkfixture "$DIR/fx" 'Hand off to the `demo:helper` agent.'
+[ "$(run "$DIR/fx")" = "0" ] || fail "an agent target must resolve, not be flagged: $(cat "$DIR/err")"
 echo "PASS: an agent is a valid handoff target, not a false positive"
 
 # ── 5) 네임스페이스가 붙어도 대상이 없으면 RED ─────────────────────────────────────────────
-mkfixture "$DIR/f5" 'See `demo:ghost` for details.'
-[ "$(run "$DIR/f5")" = "1" ] || fail "a namespaced reference to a missing target must exit 1"
+mkfixture "$DIR/fx" 'See `demo:ghost` for details.'
+[ "$(run "$DIR/fx")" = "1" ] || fail "a namespaced reference to a missing target must exit 1"
 echo "PASS: a namespaced reference to a missing target is still a violation"
 
 # ── 6) URL 경로는 오탐이 아니다 — "skill"이 없는 줄의 /x 는 세지 않는다 ─────────────────────
-mkfixture "$DIR/f6" 'Call the Skill tool with "sibling".
+mkfixture "$DIR/fx" 'Call the Skill tool with "sibling".
 The app serves `/login` and `/healthz` for probes.'
-[ "$(run "$DIR/f6")" = "0" ] || fail "a bare URL path must not be treated as a skill reference: $(cat "$DIR/err")"
+[ "$(run "$DIR/fx")" = "0" ] || fail "a bare URL path must not be treated as a skill reference: $(cat "$DIR/err")"
 echo "PASS: a URL path on a line that never says skill is not treated as a handoff"
 
 # ── 7) 같은 문법이라도 "skill"이 있는 줄이면 검사 대상이다 (6번의 대칭) ─────────────────────
-mkfixture "$DIR/f7" 'Run the `/ghostly` skill first.'
-[ "$(run "$DIR/f7")" = "1" ] || fail "a /name on a line that says skill must be checked"
+mkfixture "$DIR/fx" 'Run the `/ghostly` skill first.'
+[ "$(run "$DIR/fx")" = "1" ] || fail "a /name on a line that says skill must be checked"
 echo "PASS: …but the same form on a line that says skill is checked"
 
 # ── 8) fail-closed: 제공자가 없으면 통과가 아니라 exit 2 ────────────────────────────────────
@@ -89,8 +95,8 @@ printf '{"name":"demo"}' > "$DIR/f9/plug/.claude-plugin/plugin.json"
 echo "PASS: a provider set with no documents at all is fatal, not a silent pass"
 
 # ── 10) fail-closed: 문서는 있는데 참조가 0건이면 추출기가 깨진 것이다 ──────────────────────
-mkfixture "$DIR/f10" 'This skill explains things and hands off to nobody.'
-[ "$(run "$DIR/f10")" = "2" ] || fail "zero extracted references must be fatal — a broken extractor also finds zero"
+mkfixture "$DIR/fx" 'This skill explains things and hands off to nobody.'
+[ "$(run "$DIR/fx")" = "2" ] || fail "zero extracted references must be fatal — a broken extractor also finds zero"
 echo "PASS: extracting zero references from real documents is fatal, not a pass"
 
 # ── 11) RED-first on the real tree: 실제 스킬 파일에 죽은 위임을 심으면 이 레포가 RED가 된다 ─
