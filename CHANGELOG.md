@@ -5,6 +5,36 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.8.0
+
+The last seven skills that lived in a consuming repo move into the plugin. Nothing here is new work —
+it is the same skills, in the place where every repo can reach them and where one lock tracks their
+upstream. `write-a-skill` · `wayfinder` · `code-review` · `triage` · `research` · `prototype` · `teach`.
+
+They were portable as they stood: none carried a reference to the repo they came from. Frontmatter is
+preserved as-is — `disable-model-invocation` on `wayfinder`/`teach`, `allowed-tools` on `code-review`,
+`context: fork` on `research`. `triage` keeps **no** `disable-model-invocation`: upstream reclassified
+it as user-invoked along with `handoff` and `grill-me`, and that reclassification was accepted for the
+other two only.
+
+- **The `check-skill-refs` gate caught three on the way in.** `code-review`, `triage` and `wayfinder`
+  each told the reader to run `/setup-matt-pocock-skills` — the name in the repo they came from. This
+  plugin ships `setup`. Ported verbatim, all three would have pointed at nothing, and nothing would
+  have said so; that is the exact failure the gate was built for in 0.11.0, meeting its first real
+  migration. They now call the Skill tool with `"setup"`.
+
+- **`skills-lock.json` grows to 24 entries, 7 of them `fork`.** Two forks are new:
+
+  - **`code-review`** — upstream's only substantive change to it *deletes* the line that makes the two
+    reviews run as parallel sub-agents. Receiving that would collapse the Standards/Spec split the
+    skill exists for. A backport here is a regression, which is what `fork` means.
+  - **`write-a-skill`** — upstream renamed and rewrote it as `writing-for-agents`, and the change is
+    not cosmetic: a procedure for producing one skill became a principles document covering skills,
+    `AGENTS.md` and `CLAUDE.md`, and its trigger now fires on **editing CLAUDE.md** — which this
+    plugin's own constitution puts behind a PR boundary (ADR-0061). Kept deliberately as the narrower
+    procedure. `skillPath` still points at `writing-for-agents`, so the rename stays tracked and
+    individual sections remain backportable one at a time.
+
 ## ship-flow 0.7.0
 
 Vendored skills are skills this plugin took from an upstream project and edited. They drift, in both
