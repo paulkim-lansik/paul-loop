@@ -18,6 +18,20 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -x "$VERDICT_RUN" ] || fail "verdict-run.sh not found/executable at $VERDICT_RUN"
 [ -x "$LOOP_FIX" ] || fail "loop-fix.sh not found/executable at $LOOP_FIX"
 
+# verdict-run.sh writes its state to ${LOOP_DIR:-.loop}/verdict-state.json (bin/verdict-run.sh:92),
+# so these assertions resolve the same way instead of hardcoding `.loop` (issue #58). Hardcoding
+# made this suite unrunnable under a non-default LOOP_DIR — which is exactly what ac-verify.sh
+# exports when given --log-dir, so any plan whose AC ran this suite failed permanently for a reason
+# that had nothing to do with the code under test. A relative LOOP_DIR stays relative to the repo
+# under test; an absolute one is used as-is.
+LOOPD="${LOOP_DIR:-.loop}"
+state_file() {  # $1 = repo root
+  case "$LOOPD" in
+    /*) printf '%s/verdict-state.json' "$LOOPD" ;;
+    *)  printf '%s/%s/verdict-state.json' "$1" "$LOOPD" ;;
+  esac
+}
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 cleanup() { chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -34,11 +48,11 @@ state_field() { # $1=field → prints value (validates JSON while at it)
   node -e '
     const st = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     process.stdout.write(String(st[process.argv[2]]));
-  ' "$REPO2/.loop/verdict-state.json" "$1"
+  ' "$(state_file "$REPO2")" "$1"
 }
 (cd "$REPO2" && "$VERDICT_RUN" -- true >/dev/null 2>&1)
 [ "$?" = "0" ] || fail "verdict-run -- true must exit 0"
-[ -f "$REPO2/.loop/verdict-state.json" ] || fail "verdict-run must write .loop/verdict-state.json"
+[ -f "$(state_file "$REPO2")" ] || fail "verdict-run must write \${LOOP_DIR:-.loop}/verdict-state.json (looked at $(state_file "$REPO2"))"
 [ "$(state_field verdict)" = "PASS" ] || fail "state verdict must be PASS after a passing run"
 [ "$(state_field sha)" = "$HEAD2" ] || fail "state sha must be the verified HEAD ($HEAD2), got $(state_field sha)"
 [ "$(state_field dirty)" = "false" ] || fail "state dirty must be false on a clean tree"
@@ -62,7 +76,7 @@ mkdir -p "$NOGIT"
 node -e '
   const st = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   if (st.sha !== "unknown" || st.dirty !== true) { console.error(st); process.exit(1); }
-' "$NOGIT/.loop/verdict-state.json" || fail "non-git verdict state must record sha=unknown dirty=true (fail-closed input)"
+' "$(state_file "$NOGIT")" || fail "non-git verdict state must record sha=unknown dirty=true (fail-closed input)"
 # control chars in cmd must not corrupt the state JSON (review M5).
 rm -f "$REPO2/untracked.txt"
 (cd "$REPO2" && "$VERDICT_RUN" -- sh -c "$(printf 'true #\rCR')" >/dev/null 2>&1)
