@@ -5,6 +5,65 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.13.0 · loop-memory 0.6.0 · ship-flow 0.9.2 — SECURITY
+
+**Update if you use these plugins.** Opening an untrusted repository could run its code, with no user
+action. Fixed in these versions; every earlier version is affected.
+
+### What was wrong
+
+`load-dotenv.mjs` reads `.loop/.env` **out of the repository being worked on**, and what it fills is a
+process environment — `graduate-lessons.mjs` passes it to `spawnSync`, `loop-doctor-heartbeat.mjs`
+merges it into its own `process.env` before running `git`. Both hooks are wired to `SessionStart`.
+
+The loader checked only that a key *looked like* an identifier. It had no allowlist. So a repository
+could set **any** environment variable for a process on your machine, and the standard environment-based
+execution primitives (`NODE_OPTIONS`, `GIT_CONFIG_*`, and their equivalents for other interpreters and
+loaders) all reach one. Both hooks were confirmed to execute a repo-supplied payload on session start,
+before the user typed anything. A repo you merely open — reviewing a PR, trying someone's project,
+cloning to reproduce a bug — is not a repo you trust.
+
+`.loop/` being conventionally gitignored is not a mitigation: a hostile repo simply commits it.
+
+### The fix
+
+An **allowlist**, not a denylist. A denylist has to be complete forever; an allowlist has to be correct
+once. Seven keys are accepted, and the rule that decides membership is stated in the source: *a dotenv
+file supplies credentials and connection settings; it never changes behaviour and never turns a gate
+off.*
+
+- Accepted: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `LOOP_MEMORY_SIGNING_KEY`, `LOOP_DATABASE_URL`,
+  `LOOP_EMBED_PROVIDER`, `LOOP_RECALL_MAX_DISTANCE`, `LOOP_KNOWLEDGE_MAX_DISTANCE`.
+- Deliberately absent: every `LOOP_*_OFF` / `LOOP_*_GATE_OFF` switch and `LOOP_SANITIZE_OFF` — a repo
+  must not be able to disable the stop gate, the worktree gate, or log redaction by shipping a file.
+  This closes a second, quieter hole in the same change. `LOOP_DOTENV_PATH` is absent too: a dotenv
+  file redirecting where dotenv files are read from is both a loop and a lever.
+- A **relative** `LOOP_DOTENV_PATH` now has to stay inside the project. It is ordinary session env,
+  which a repo-committed `.claude/settings.json` can set, so `../../..` used to walk the loader out of
+  the tree. An **absolute** path still works — that is a documented, supported configuration, and the
+  allowlist is what makes it uninteresting to point somewhere hostile.
+
+Behaviour that did not change: the file is still read, precedence is unchanged (an explicit export or
+userConfig value still wins), the worktree fallback still works, and a repo's `.env` may still hold its
+own unrelated application config — those keys are ignored rather than treated as an error.
+
+### The regression test
+
+`dotenv-allowlist.test.sh` (9 cases). Eight test the loader's filtering, which is where the fix lives.
+The ninth deliberately skips the unit level and asks the question the vulnerability actually asked: it
+runs the **real SessionStart hook** against a real hostile repo and checks whether the payload
+executed. A future refactor could keep the filter and still hand the environment to a child by another
+route; that case would still catch it.
+
+It also asserts that the hostile file was *read* before concluding the payload did not run — while
+investigating this, an inherited `LOOP_DOTENV_PATH` from the developer's own session pointed the loader
+elsewhere and produced a green that proved nothing.
+
+### Version note
+
+Minor, not patch, on all three: keys that previously loaded are now ignored. `plugin-dep-range.test.sh`
+required the two dependents' ranges to move to `^0.13.0` in the same change, as designed.
+
 ## loop-memory 0.5.0
 
 **Semantic recall had never once run.** Not "rarely", not "since some regression" — never, in any
