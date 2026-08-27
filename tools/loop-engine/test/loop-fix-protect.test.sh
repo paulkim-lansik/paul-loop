@@ -568,5 +568,35 @@ sleep 2
 cmp -s guard-file.txt original-guard-file.txt \
   || fail "case16: file drifted from the restored content after settling — a residual write landed post-restore"
 
+# ── case 17: a directory-scoped '**' glob must not protect — or DELETE — files outside it ──────────
+# protect_files() reduced a '**' pattern to its basename and ran `find . -name <basename>`, throwing
+# the directory part away: `sub/**/*.test.ts` protected EVERY *.test.ts in the tree. That is not a
+# harmless over-approximation, because cleanup_rogue_protected() `rm -f`s any protect-matching file
+# that was absent at run start — so an unrelated test file created anywhere during a run was deleted.
+#
+# One case, both directions:
+#   (a) `other/b.test.ts` is created by the fixer and is OUTSIDE the glob -> must survive.
+#   (b) `sub/c.test.ts` sits directly under `sub/` and IS inside it (`/**/` matches zero directories)
+#       -> must still be detected and byte-restored. Without (b) the fix could "pass" by narrowing
+#       the glob to require at least one intermediate directory, which would silently unprotect files.
+C="$WORK/c17"; mkdir -p "$C/sub/nested" "$C/other"; cd "$C" || fail "cd c17"
+cp "$WORK/fake-verify-fail.sh" fake-verify-fail.sh
+printf 'PROTECTED-ZERO-DIR\n' > sub/c.test.ts
+printf 'PROTECTED-NESTED\n'   > sub/nested/a.test.ts
+cp sub/c.test.ts original-c.test.ts   # reference copy, outside the glob
+cat > fake-fix-c17.sh <<'EOF'
+#!/bin/sh
+printf 'SABOTAGED\n' > sub/c.test.ts
+printf 'a brand new, unrelated test file\n' > other/b.test.ts
+EOF
+"$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-c17.sh' --protect 'sub/**/*.test.ts' --max-iter 2 >/dev/null 2>&1
+code=$?
+[ "$code" -eq 3 ] || fail "case17: expected exit 3 — 'sub/**/*.test.ts' must still cover sub/c.test.ts (zero intermediate directories), got $code"
+cmp -s sub/c.test.ts original-c.test.ts \
+  || fail "case17(b): sub/c.test.ts was not restored — '/**/' stopped matching zero directories, silently unprotecting files directly under the glob's root"
+[ -f other/b.test.ts ] \
+  || fail "case17(a): other/b.test.ts was DELETED — a glob scoped to sub/ reached outside it, and the rogue-file cleanup turned that over-match into data loss"
+echo "  case17 ok: directory-scoped '**' protects inside (incl. zero-dir) and does not delete outside"
+
 echo "PASS: --protect reverts a tampered/deleted protected file to its exact pre-run bytes, excludes its own backup dir from '**' scans, detects+refuses on backup poisoning OR backup deletion/unreadability via a fail-closed marker, deletes rogue new protect-glob-matching files before aborting, cannot be defeated by forging or deleting the on-disk hash bookkeeping (round-3: ground truth now lives in-process, not on disk), catches a mutation backgrounded to land after the FAIL-path check but before the next verify (round-4: check_protected() runs on the PASS path too), raises the bar with a bounded grace-period recheck on both paths while honestly not claiming to catch delays past that window (round-5), and now (round-6) also covers the VERDICT-RUN-ERROR abort point and survives the watchdog's own descendant-killer trying to defeat the grace-period sleep, plus restores/warns-but-preserves-exit-code on STALLED/BUDGET/watchdog/INFRA/VERDICT-RUN-ERROR aborts that used to leave an earlier iteration's pending corruption unflagged"
 exit 0
