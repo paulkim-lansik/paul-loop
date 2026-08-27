@@ -11,14 +11,21 @@ description: >
   would make one implicitly depend on the other's version, so they're cloned separately. Bump the
   tags below deliberately when you want a newer plugin version — this is an explicit semver pin, not
   a SHA channel that auto-follows (see paul-loop's ADR-0078 addendum for why).
+
+  The clone URL is the CANONICAL repository path, not a GitHub redirect. It used to name the old
+  namespace the repo was transferred away from. That works only for as long as GitHub's redirect
+  holds, and a redirect stops the moment anyone creates a repository at the old path — at which
+  point every consuming repo's CI clones and executes whatever is there. A stale namespace in a
+  clone URL is a supply-chain hand-off waiting to happen, and nothing in a consuming repo's diff
+  would show it changing hands.
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
         git clone --depth 1 --branch loop-engine--{{LOOP_ENGINE_TAG}} \
-          https://github.com/paulkim-lansik/paul-loop.git /tmp/paul-loop-loop-engine
+          https://github.com/reach0908/paul-loop.git /tmp/paul-loop-loop-engine
         echo "LOOP_ENGINE_PATH=/tmp/paul-loop-loop-engine/tools/loop-engine" >> "$GITHUB_ENV"
         git clone --depth 1 --branch ship-flow--{{SHIP_FLOW_TAG}} \
-          https://github.com/paulkim-lansik/paul-loop.git /tmp/paul-loop-ship-flow
+          https://github.com/reach0908/paul-loop.git /tmp/paul-loop-ship-flow
         echo "SHIP_FLOW_PATH=/tmp/paul-loop-ship-flow/tools/ship-flow" >> "$GITHUB_ENV"

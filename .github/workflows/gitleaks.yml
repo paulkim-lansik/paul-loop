@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# 이 워크플로는 GITHUB_TOKEN으로 아무것도 쓰지 않는다(스캔 결과는 잡 종료코드로만 나간다).
+# 명시하지 않으면 레포 기본값을 상속하는데, 그 기본값은 이 파일 밖에서 바뀔 수 있고 바뀌어도 여기서는
+# 보이지 않는다. 서드파티 액션이 도는 잡에서 그건 그냥 미확인 쓰기 권한이다.
+permissions:
+  contents: read
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -14,6 +20,8 @@ jobs:
         with:
           fetch-depth: 0
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        # 유일한 서드파티 액션 — 가변 태그가 아니라 커밋 SHA로 고정한다. `@v2`는 언제든 다른 코드를
+        # 가리키게 재지정될 수 있고, 그 재지정은 이 레포의 어떤 diff에도 나타나지 않는다.
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

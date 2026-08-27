@@ -12,21 +12,21 @@
       "name": "loop-engine",
       "source": "./tools/loop-engine",
       "description": "Core loop mechanics: verdict-run (machine-readable PASS/FAIL contract), loop-fix (closed verify->fix loop), lessons (verified-fix memory), classify-risk, require-tests, plugin-path (resolve sibling plugin install paths), check-docs-hygiene/check-pr-hygiene/check-module-size/check-skill-refs (repo hygiene gates). No framework opinions beyond \"the verifier is the ceiling, never the agent's self-report\".",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "keywords": ["verifier", "tdd", "loop", "verdict", "lessons"]
     },
     {
       "name": "ship-flow",
       "source": "./tools/ship-flow",
       "description": "Delivery-loop skills — ship-feature (plan-to-PR autonomous loop), hotfix, retrospect, grill-with-docs (= grilling + domain-modeling), diagnosing-bugs, deps-audit, to-issues/to-prd, tdd, harness-maturity-audit, improve-codebase-architecture (built on codebase-design), resolving-merge-conflicts, wizard, to-questionnaire, ask-paul (skill router), wait-what, plus review agents and audit/research workflows — parameterized by a consuming repo's own tracker/branch-model config instead of hardcoded to one repo. dependencies: loop-engine.",
-      "version": "0.9.2",
+      "version": "0.9.3",
       "keywords": ["delivery", "git-flow", "hotfix", "ship", "release"]
     },
     {
       "name": "loop-memory",
       "source": "./tools/loop-memory",
       "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in / defaultEnabled:false — a database dependency, not core loop mechanics.",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "defaultEnabled": false,
       "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"]
     }

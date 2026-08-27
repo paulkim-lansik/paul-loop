@@ -5,6 +5,46 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.13.2 · loop-memory 0.6.2 · ship-flow 0.9.3 — SECURITY
+
+The last batch from the audit that produced 0.13.0 and 0.13.1 — six MED findings. Different files,
+different layers, one shape: **a value the code treats as inert is load-bearing, and nothing in the
+suite disagreed.**
+
+- **`--protect` globs lost their directory, and the guard deletes.** `protect_files()` reduced a
+  `**` pattern to its basename before handing it to `find`, so `sub/**/*.test.ts` protected every
+  `*.test.ts` in the repository. That is not a harmless over-approximation:
+  `cleanup_rogue_protected()` `rm -f`s any protect-matching file absent at run start, so an
+  unrelated test file created anywhere during a run was silently deleted. The basename is now a
+  pre-filter only; each candidate is matched against the whole pattern.
+- **`ln` was missing from the mutation verbs.** `ln -sf /dev/null tests/x.test.ts` replaced a
+  protected file's content without using any listed verb.
+- **The database password reached the agent's context.** `tcp-reachable.mjs` returned the raw
+  connection string as `label` on its two failure paths, and `loop-doctor-heartbeat` prints `label`
+  into a SessionStart nudge. Those paths fire precisely when the URL cannot be trusted, so nothing
+  from it is kept now — including the host, since `not-a-url-at-all://<secret>` parses successfully
+  with the secret sitting in the host field. The success path still reports `host:port`.
+- **`--run-id` was an unvalidated filename.** `<root>/.loop/runs/<run-id>.jsonl` made it a path;
+  `--run-id '../../../../pwned'` appended four directories above the repository. Restricted to the
+  shape a run id actually has, rather than filtered for `..`.
+- **A bare credential passed sanitization untouched.** Every existing rule hangs off a key
+  (`token=`, `Bearer `, `scheme://user:pass@`). Value-shape rules now cover credentials that prove
+  themselves without one (OpenAI, AWS, GitHub, Google, Slack, PEM private-key blocks) — including
+  the multi-line PEM case the `[ \t]`-based rules could not match in principle.
+- **This repo's clone URL survived only on a GitHub redirect.** `setup-loop-engine.action.yml.template`
+  — the URL a *consuming* repo's CI clones and then executes — named the namespace this repository
+  was transferred away from. A redirect stops the instant someone creates a repository at the old
+  path, and no consuming repo's diff would change. The plugin manifests and both READMEs had the
+  same stale path. Gated, not just corrected: the expectation is derived from `origin`, so a future
+  transfer updates it by the same act that makes the old path stale.
+
+Also: explicit `permissions: contents: read` on the three workflows that had none (they inherited a
+repository default that can change out of sight of these files), and the one third-party action is
+pinned to a commit SHA.
+
+`ship-flow` bumps because the setup-action template it ships changed. `loop-memory` bumps for its
+manifest's repository URL.
+
 ## loop-engine 0.13.1 · loop-memory 0.6.1 — SECURITY
 
 Two more injection sites from the same audit as 0.13.0. Different files, one shape: **data ends up

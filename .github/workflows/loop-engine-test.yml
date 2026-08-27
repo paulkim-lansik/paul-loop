@@ -11,6 +11,10 @@ on:
     # change — an acceptable cost for closing the base-retarget staleness gap.
     types: [opened, synchronize, reopened, edited]
 
+# 이 워크플로는 GITHUB_TOKEN을 전혀 쓰지 않는다 — 레포 기본값 상속 대신 명시적 최소권한.
+permissions:
+  contents: read
+
 jobs:
   selftest:
     runs-on: ubuntu-latest

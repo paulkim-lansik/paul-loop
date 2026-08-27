@@ -299,12 +299,29 @@ esac
 # Expand the protect globs into a concrete file list.
 #  - a pattern with '**' recurses via find (skipping node_modules/.git, and $LOOP_DIR itself)
 #  - otherwise it is a single-level shell glob or a literal path
+#
+# The recursive branch used to reduce the pattern to its BASENAME (`packages/db/test/**/*.test.ts` ->
+# `*.test.ts`) and hand that to `find . -name`, discarding the directory part entirely. Every
+# `*.test.ts` in the repository then counted as protected — and `cleanup_rogue_protected()` `rm -f`s
+# any protect-matching file that did not exist at run start, so an unrelated test file created
+# anywhere during a run was deleted. Over-protection is not the safe direction when the protection
+# includes a delete.
+#
+# So the basename is now only a fast PRE-FILTER for find; each candidate is then matched against the
+# WHOLE pattern. Shell `case` is the matcher: its `*` crosses `/`, which is exactly `**` semantics, so
+# `**` -> `*` is a faithful translation. `/**/` additionally has to match zero directories
+# (`a/**/x` matches `a/x`), which one `case` pattern cannot express — hence the second pattern with
+# `/**` elided, and a match against either.
+glob_to_case() { printf '%s' "$1" | sed 's/\*\*/*/g'; }
+
 protect_files() {
   printf '%s\n' "$PROTECT_LIST" | while IFS= read -r g; do
     [ -z "$g" ] && continue
     case "$g" in
       *'**'*)
-        base="${g##*/}"   # e.g. '**/*.test.*' -> '*.test.*'
+        base="${g##*/}"                                   # fast pre-filter only, NOT the match
+        pat_deep="$(glob_to_case "$g")"                   # '**' -> '*' (one or more dirs)
+        pat_flat="$(glob_to_case "$(printf '%s' "$g" | sed 's#/\*\*##g')")"   # zero dirs
         find . -type f -name "$base" 2>/dev/null \
           | grep -vE '/(node_modules|\.git)/' \
           | sed 's#^\./##' \
@@ -314,7 +331,9 @@ protect_files() {
                   "$LOOP_DIR_EXCL"/*) continue ;;
                 esac
               fi
-              printf '%s\n' "$p"
+              case "$p" in
+                $pat_deep|$pat_flat) printf '%s\n' "$p" ;;
+              esac
             done ;;
       *)
         for f in $g; do [ -f "$f" ] && printf '%s\n' "$f"; done ;;

@@ -156,7 +156,7 @@ require-tests.sh "*.integration.test.ts" "RLS isolation proof"
 ## 설치
 
 ```bash
-claude plugin marketplace add paulkim-lansik/paul-loop
+claude plugin marketplace add reach0908/paul-loop
 claude plugin install loop-engine@paul-loop
 ```
 
@@ -166,7 +166,7 @@ claude plugin install loop-engine@paul-loop
 먼저 써보거나, 이 저장소 자체를 개발할 때 쓰기 좋다:
 
 ```bash
-git clone https://github.com/paulkim-lansik/paul-loop
+git clone https://github.com/reach0908/paul-loop
 claude --plugin-dir paul-loop/tools/loop-engine
 # 세션 안에서 bin/은 이미 PATH에 등록돼 있다:
 #   verdict-run.sh -- echo hi

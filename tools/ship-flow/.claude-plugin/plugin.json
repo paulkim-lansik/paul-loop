@@ -1,12 +1,12 @@
 {
   "name": "ship-flow",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Delivery-loop skills — land and release already-verified work through a repo's real gates. Tracker- and branch-model-agnostic: reads a consuming repo's own config instead of hardcoding one repo's setup.",
   "author": {
     "name": "paulkim-lansik"
   },
-  "homepage": "https://github.com/paulkim-lansik/paul-loop",
-  "repository": "https://github.com/paulkim-lansik/paul-loop",
+  "homepage": "https://github.com/reach0908/paul-loop",
+  "repository": "https://github.com/reach0908/paul-loop",
   "license": "MIT",
   "keywords": ["delivery", "git-flow", "hotfix", "ship", "release"],
   "dependencies": [
