@@ -66,8 +66,21 @@ jobs:
               echo "::error::marketplace.json lists $src but $manifest does not exist"
               exit 1
             fi
-            name=$(python3 -c "import json;print(json.load(open('$manifest'))['name'])")
-            version=$(python3 -c "import json;print(json.load(open('$manifest'))['version'])")
+            # The path goes in as ARGV, never interpolated into the Python source. `$manifest` is
+            # derived from `plugins[].source` in marketplace.json — a data field any pull request can
+            # edit — and the old form embedded it inside a single-quoted Python string literal, so a
+            # single quote in a directory name broke out and ran arbitrary Python. In THIS job, which
+            # holds `contents: write` on a public plugin marketplace. The `-f` guard above does not
+            # help: an attacker supplies a real plugin.json at that path and it passes.
+            #
+            # It also read as nothing in review — the payload lived in a directory name and a JSON
+            # value, not in a workflow file, and marketplace.json is not in CODEOWNERS' sensitive-path
+            # list, so verifier-pinned-review did not flag it either.
+            read_manifest_field() {  # $1 = manifest path, $2 = field
+              python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
+            }
+            name=$(read_manifest_field "$manifest" name)
+            version=$(read_manifest_field "$manifest" version)
             tag="${name}--v${version}"
 
             if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
