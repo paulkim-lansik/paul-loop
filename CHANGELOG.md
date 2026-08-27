@@ -5,6 +5,55 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.13.1 · loop-memory 0.6.1 — SECURITY
+
+Two more injection sites from the same audit as 0.13.0. Different files, one shape: **data ends up
+where code is read.**
+
+### CI tag job — a marketplace data field became Python
+
+`tag-on-publish.yml` built its Python program text around a shell variable:
+
+```
+name=$(python3 -c "import json;print(json.load(open('$manifest'))['name'])")
+```
+
+`$manifest` derives from `plugins[].source` in `.claude-plugin/marketplace.json`, a data field any
+pull request can edit. A single quote in a directory name ends the string literal and the rest runs as
+Python — in a job holding `contents: write` on a public plugin marketplace. The existing `-f` guard
+does not help; an attacker puts a real `plugin.json` at that path and it passes.
+
+Half the problem was that it did not look like anything in review: the payload lives in a *directory
+name* and a *JSON value*, so the diff reads as "one more plugin registered", and `marketplace.json` is
+not in `CODEOWNERS`' sensitive paths, so `verifier-pinned-review` never flagged it either.
+
+Fixed by passing the path as argv. The new gate, `workflow-code-injection.test.sh`, is written against
+the **class**: any workflow building `python3 -c "…$var…"` / `node -e "…$var…"` fails. Pinning that one
+line would have passed the moment the same mistake appeared in another file or another interpreter.
+
+### recall — the untrusted delimiter was forgeable
+
+`recall-lessons.mjs` stripped control characters and left `<`, `>`, `/` intact, so a stored note could
+emit `</past-lessons>`, continue **outside** the untrusted marking, and re-open a tag to keep the block
+well-formed. Budget: up to 6 hits × 300 chars per turn of attacker-chosen text presented as ordinary
+context.
+
+The fix is an invariant, not a filter list — **the delimiter is unforgeable**: the two characters it is
+built from cannot occur in wrapped content, so no sequence a note contains can end the block early. An
+escape targeting the literal string `</past-lessons>` loses to case changes, whitespace inside the tag,
+and the next delimiter someone adds. Angle brackets become single guillemets rather than being deleted,
+so text stays readable — a lesson mentioning `<Component>` still reads as one, and this is reference
+data already truncated to 300 characters.
+
+`neutralize`/`wrapUntrusted` moved to `hooks/lib/untrusted-block.mjs`. The absence of a test seam is
+how this survived: grepping the suites for `untrusted` or `past-lessons` returned nothing. The 7 new
+tests assert the invariant, not the payload that exposed it.
+
+Worth recording why it went unnoticed for so long: recall never injected anything until the
+prompt-field fix in 0.5.0 — every firing self-gated as "prompt too short". The hole was real the whole
+time and unreachable, so no evidence could accumulate against it. Fixing the dead path is what made it
+live, and this release closes it in the same round.
+
 ## loop-engine 0.13.0 · loop-memory 0.6.0 · ship-flow 0.9.2 — SECURITY
 
 **Update if you use these plugins.** Opening an untrusted repository could run its code, with no user
