@@ -140,4 +140,36 @@ printf 'FAIL: boom token=sigfileleak77\n' > "$DIR/sig.txt"
 node "$LESSONS" record --signature-file "$DIR/sig.txt" --verified --lessons "$DIR/ls2" >/dev/null || fail "T16: record via signature-file failed"
 grep -rq sigfileleak77 "$DIR/ls2" && fail "T16: signature-file secret persisted in the lessons store"
 
+# T17: 값 자체가 시크릿인 모양(키 없이 맨몸으로 착지한 자격증명).
+# T1/T4가 증명하는 규칙은 전부 **키에 매달려 있다** — `token=`·`Bearer `·`scheme://user:pass@`. 로그에
+# 시크릿이 앉는 가장 흔한 모양 하나가 그 셋 어디에도 안 걸린다: 셸이 인자를 되뱉거나 스택트레이스가
+# 쿼리를 흘려서 값만 덩그러니 남는 경우다.
+#
+# 이 파일 머리말의 "실제 포맷 금지" 규칙을 지키려고 모양은 **런타임에 조립**한다 — 소스에는 시크릿
+# 모양 리터럴이 존재하지 않으므로 커밋 시점 gitleaks가 이 테스트 자신을 잡지 않는다. 그러면서도
+# sanitize.mjs가 보는 문자열은 진짜 포맷이라 증명력은 그대로다.
+p_sk='sk-'; p_aws='AK'; p_gh='gh'; p_g='AI'
+BARE_SK="${p_sk}proj0123456789abcdefghijklmnop"
+BARE_AWS="${p_aws}IA0123456789ABCDEF"                     # AKIA + 16 = 20자 (AWS 고정 길이)
+BARE_GH="${p_gh}p_0123456789abcdefghijklmnopqrstuvwxyz"
+BARE_G="${p_g}za0123456789abcdefghijklmnopqrstuvwxy"      # AIza + 35 = 39자 (Google 고정 길이)
+for v in "$BARE_SK" "$BARE_AWS" "$BARE_GH" "$BARE_G"; do
+  OUT="$(printf 'remote rejected: %s\n' "$v" | node "$S" --text)" || fail "T17: text mode exited non-zero"
+  printf '%s' "$OUT" | grep -qF "$v" && fail "T17: a bare credential survived text masking (no key to hang off): $OUT"
+  printf '%s' "$OUT" | grep -q 'REDACTED' || fail "T17: nothing was redacted, so the shape was not recognised at all: $OUT"
+done
+# 레코드 경로도 같은 규칙을 상속해야 한다 — 원장 payload가 텍스트 경로를 안 타면 구멍이 그대로 남는다.
+OUT="$(printf '{"note":"deploy failed for %s"}' "$BARE_AWS" | node "$S" --record)" || fail "T17: --record exited non-zero"
+printf '%s' "$OUT" | grep -qF "$BARE_AWS" && fail "T17: a bare credential survived record sanitization: $OUT"
+# 개인키 블록은 여러 줄 — [ \t] 기반 규칙이 원리적으로 못 잡는 모양이다. BEGIN/END는 남아야 한다.
+PEM="$(printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAKleaked99\n-----END RSA PRIVATE KEY-----\n')"
+OUT="$(printf '%s' "$PEM" | node "$S" --text)" || fail "T17: PEM text mode exited non-zero"
+printf '%s' "$OUT" | grep -q 'leaked99' && fail "T17: private key body survived: $OUT"
+printf '%s' "$OUT" | grep -q 'BEGIN RSA PRIVATE KEY' || fail "T17: BEGIN marker was destroyed — the log can no longer say a key was there: $OUT"
+# 오탐 금지 — 진단 어휘가 우연히 시크릿으로 읽히면 로그가 못 쓰게 된다.
+for keep in 'FAILED src/a.test.ts > expected 401, got 403' 'Authorization: header missing' 'SESSION_SECRET: Required' 'sk-1' 'installed ghost@1.2.3'; do
+  OUT="$(printf '%s\n' "$keep" | node "$S" --text)" || fail "T17: exited non-zero on '$keep'"
+  printf '%s' "$OUT" | grep -q 'REDACTED' && fail "T17: false positive — ordinary diagnostic text was redacted: '$keep' -> $OUT"
+done
+
 echo "PASS: sanitize.mjs — blocklist drop, truncation, pass-through, text masking, in-place atomic rewrite, fail-closed switch, verdict-run + lessons wiring, operand preservation, JSON/URL shapes, metric pass-through, fail-open path"

@@ -55,9 +55,27 @@ const URL_CRED = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+):([^\s@]+)@/gi
 // 마스킹하지 않는다 — lessons 서명의 "operand를 지우지 않는다" 불변식과 loop-fix stall 서명 오탐
 // (진짜 전진을 동일 실패로 오인) 방지(리뷰). 콜론+순수 알파벳 장문/인용값/=값은 여전히 마스킹.
 const OPERAND = /^(?:undefined|null|true|false|nan|\d+)$/i
+// 값 자체가 시크릿인 모양(VALUE SHAPE) — 위 규칙은 전부 **키에 매달려 있다**. `token=`·`Bearer `·
+// `scheme://user:pass@` 중 하나가 곁에 있어야 마스킹된다. 그런데 로그·원장에 시크릿이 착지하는 가장
+// 흔한 모양 하나가 그 셋 어디에도 안 걸린다 — **맨몸 값**이다: 셸 에러가 인자를 그대로 되뱉거나,
+// 테스트 출력이 키를 찍거나, 스택트레이스가 URL 쿼리를 흘릴 때. 그래서 키 없이도 스스로를 증명하는
+// 형태들을 따로 잡는다. 전부 발급자가 정한 고유 프리픽스+길이라 오탐이 사실상 없다 — 진단 어휘가
+// 우연히 `AKIA`+대문자 16자나 `sk-`+20자가 되지는 않는다.
+const VALUE_SHAPES = [
+  [/\bsk-[A-Za-z0-9_-]{20,}/g, 'sk-[REDACTED]'],                    // OpenAI (sk-, sk-proj-)
+  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, '[REDACTED-AWS-KEY-ID]'],      // AWS access key id
+  [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, '[REDACTED-GITHUB-TOKEN]'],     // GitHub PAT / OAuth / refresh
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, '[REDACTED-GITHUB-TOKEN]'],   // GitHub fine-grained PAT
+  [/\bAIza[0-9A-Za-z_-]{35}\b/g, '[REDACTED-GOOGLE-KEY]'],          // Google / Gemini
+  [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, '[REDACTED-SLACK-TOKEN]'],    // Slack
+  // 개인키 블록은 여러 줄이라 위 [ \t] 규칙들이 원리적으로 못 잡는다. 본문만 지우고 BEGIN/END는
+  // 남긴다 — "여기에 개인키가 있었다"가 진단에서 사라지면 안 된다.
+  [/(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----)/g, '$1[REDACTED]$2'],
+]
+
 export function sanitizeText(text, env = process.env) {
   if (sanitizeOff(env) || typeof text !== 'string') return text
-  return text
+  const keyed = text
     .replace(TEXT_KEY, (m, key, sep, ws, val) => {
       const quoted = /^["']/.test(val)
       const inner = quoted ? val.slice(1, -1) : val
@@ -67,6 +85,8 @@ export function sanitizeText(text, env = process.env) {
     })
     .replace(BEARER, '$1 [REDACTED]')
     .replace(URL_CRED, '$1:[REDACTED]@')
+  const shaped = VALUE_SHAPES.reduce((acc, [re, to]) => acc.replace(re, to), keyed)
+  return shaped
 }
 
 // 레코드 살균 — 비파괴(입력 불변, 항상 새 값 반환). blocklist 키는 값을 마커로 낙하(감사 가능하게
