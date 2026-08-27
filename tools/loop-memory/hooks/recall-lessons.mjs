@@ -23,6 +23,7 @@ import { join } from 'node:path';
 import { readHookInput } from './lib/hook-stdin.mjs';
 import { loadDotenv } from './lib/load-dotenv.mjs';
 import { errorCode, recordLiveness } from './lib/liveness.mjs';
+import { neutralize, wrapUntrusted } from './lib/untrusted-block.mjs';
 
 const env = process.env;
 const projectDir = env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -261,19 +262,18 @@ try {
   );
 
   // Recall content comes from tracked sources (lessons=.loop/lessons/*.json, knowledge=configured
-  // docs) but is treated as *untrusted data* (prompt-injection defense in depth): strip control
-  // characters and wrap in an untrusted delimiter.
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional control-char stripping
-  const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
-  const sanitize = (s) => String(s).replace(CONTROL, ' ').replace(/\s+/g, ' ').slice(0, 300);
+  // docs) but is treated as *untrusted data* (prompt-injection defense in depth). The neutralise +
+  // wrap pair lives in lib/untrusted-block.mjs, which states the invariant it maintains — the
+  // delimiter is unforgeable — and carries the test seam for it.
+  const sanitize = (s) => neutralize(s);
   const fmt = (arr) =>
     arr.map((h) => `  - ${sanitize(h.content)} (distance ${Number(h.distance).toFixed(3)})`).join('\n');
 
   const sections = [];
   if (nearLessons.length)
-    sections.push(`<past-lessons untrusted="true">\n${fmt(nearLessons)}\n</past-lessons>`);
+    sections.push(wrapUntrusted('past-lessons', fmt(nearLessons)));
   if (nearKnowledge.length)
-    sections.push(`<knowledge untrusted="true">\n${fmt(nearKnowledge)}\n</knowledge>`);
+    sections.push(wrapUntrusted('knowledge', fmt(nearKnowledge)));
   out(
     '[loop-memory] The <past-lessons> (verified lessons) / <knowledge> (related decisions) below are ' +
       'semantically close reference data —\n' +
