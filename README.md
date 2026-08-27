@@ -285,7 +285,7 @@ valid but are meaningless, not an empty/obviously-wrong result.
 ## Install
 
 ```bash
-claude plugin marketplace add paulkim-lansik/paul-loop
+claude plugin marketplace add reach0908/paul-loop
 claude plugin install loop-engine@paul-loop
 # loop-memory installs disabled (defaultEnabled:false) — install, configure, then enable:
 claude plugin install loop-memory@paul-loop --config openai_api_key=sk-...
@@ -299,7 +299,7 @@ claude plugin enable loop-memory@paul-loop
 trying it against a clone, or for developing this repo itself:
 
 ```bash
-git clone https://github.com/paulkim-lansik/paul-loop
+git clone https://github.com/reach0908/paul-loop
 claude --plugin-dir paul-loop/tools/loop-engine
 # inside the session, bin/ is already on PATH:
 #   verdict-run.sh -- echo hi

@@ -5,8 +5,8 @@
   "author": {
     "name": "paulkim-lansik"
   },
-  "homepage": "https://github.com/paulkim-lansik/paul-loop",
-  "repository": "https://github.com/paulkim-lansik/paul-loop",
+  "homepage": "https://github.com/reach0908/paul-loop",
+  "repository": "https://github.com/reach0908/paul-loop",
   "license": "MIT",
   "keywords": ["verifier", "tdd", "loop", "verdict", "lessons"]
 }
