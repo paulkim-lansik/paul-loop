@@ -15,7 +15,8 @@
 import { readFileSync } from 'node:fs'
 import { appendRunEvent, resolveLedgerTarget } from '../lib/run-ledger.mjs'
 
-function usage() {
+function usage(msg) {
+  if (msg) process.stderr.write(`ledger-append.mjs: ${msg}\n`)
   process.stderr.write(
     'usage: echo <payload-json> | ledger-append.mjs --type <type> [--run-id <id> | --auto-run-id]\n',
   )
@@ -34,6 +35,13 @@ for (let i = 0; i < argv.length; i++) {
   else usage()
 }
 if (!type || (runId && autoRunId)) usage()
+// `run-id` becomes a FILENAME (`<root>/.loop/runs/<run-id>.jsonl`), so an unvalidated value is a path.
+// Measured against the pre-fix binary: `--run-id '../../../../pwned'` from a nested cwd appended to a
+// file four directories above the repo. Restricted to the shape run ids actually have — the session
+// id / `unknown` bucket — rather than filtered for `..`, which loses to `.../....//` and to absolute
+// paths. A bad value is a usage error, not a silent fallback: the caller asked for a specific bucket.
+if (runId && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(runId))
+  usage(`--run-id must match [A-Za-z0-9][A-Za-z0-9._-]{0,127} (it is used as a filename): ${runId}`)
 
 try {
   const cwd = process.cwd()

@@ -169,8 +169,11 @@ if (tool === 'Bash') {
   if (typeof cmd !== 'string' || !cmd) process.exit(0);
   // (a) does it look mutating — conservative; the real gate is the token match below, so
   // over-matching here is harmless (it only lets more commands through the mutation check).
+  // `ln` belongs here for the same reason `mv` does: `ln -sf /dev/null tests/x.test.ts` and
+  // `ln -f decoy tests/x.test.ts` both replace a protected file's content without any of the verbs
+  // that were listed. It was the one obvious mutation verb missing.
   const mutates =
-    /(^|[\s;&|(])(rm|unlink|mv|cp|dd|truncate|tee|install)\b/.test(cmd) ||
+    /(^|[\s;&|(])(rm|unlink|mv|cp|ln|dd|truncate|tee|install)\b/.test(cmd) ||
     /\bsed\b[^|;&]*\s-[a-z]*i/.test(cmd) ||
     /\bgit\s+(checkout|restore|reset|stash)\b/.test(cmd) ||
     />>?/.test(cmd);
