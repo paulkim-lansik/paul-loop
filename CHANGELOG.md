@@ -5,6 +5,30 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.13.3
+
+`ac-verify.sh` (the AC-level success contract gate) gated an AC's `verify:` field purely on
+`verdict-run.sh`'s exit code. A `verify:` command like `vitest run -t "<pattern>"` whose `-t`
+filter matches zero test titles exits 0 by vitest's own default ("0 run" / all-skipped) — so a
+mistyped or drifted filter was silently certified PASS, having exercised nothing. This produced a
+real false-PASS incident in a consuming repo (glucofit-partners, BAC-837), reproduced live against
+this exact published version during a 2026-09-02 harness maturity audit (BAC-1010). Distinct from
+`require-tests.sh`'s existing zero-**matched-files** guard (a test glob matching no files) — this
+is zero-matched-**test-titles** inside a file that genuinely exists and runs, which that guard has
+no reach into.
+
+- **`ac-verify.sh`'s verify branch now also fails closed on a zero-executed verify: command.**
+  When `verdict-run.sh` exits 0, its own best-effort `passed=`/`failed=`/`skipped=` counts (already
+  extracted from the wrapped command's output, jest/vitest/node --test/pytest shapes) are checked:
+  skipped positive, passed and failed both absent-or-zero means nothing actually ran. That AC now
+  reports `FAIL` with an explicit `0 tests executed — verify command exited 0 but ran nothing ...`
+  reason, instead of `PASS`. An ordinary non-test-runner `verify:` command (`true`, a shell
+  one-liner) never matches any of `verdict-run.sh`'s count patterns, so this stays silent — no
+  false positive on the common case.
+- Regression coverage added to `tools/loop-engine/test/ac-verify.test.sh` (block `(u)`):
+  jest-style and vitest's actual colon-less zero-match summary shapes both FAIL, a real passing run
+  (skipped=0) and an ordinary non-test `verify:` command both still PASS.
+
 ## ship-flow 0.9.4
 
 `harness-audit` is a named workflow the `harness-maturity-audit` skill calls internally (kept

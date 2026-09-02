@@ -41,9 +41,13 @@
 # Per contracted AC:
 #   - verify:    run via `verdict-run.sh --log <per-AC log> -- sh -c "<command>"` (same
 #                `-- sh -c` invocation loop-fix.sh uses). verdict-run.sh's own exit code decides
-#                this check: 0 = pass, nonzero = fail. A verdict-run.sh exit of 2 (its own
-#                usage-error / fail-closed refusal) is NOT a normal AC failure — it aborts
-#                ac-verify.sh itself with exit 2, same as loop-fix.sh's handling of the same case.
+#                this check: 0 = pass, nonzero = fail — UNLESS verdict-run.sh's own best-effort
+#                passed=/failed=/skipped= counts show zero tests actually ran (e.g. a vitest `-t`
+#                filter matching zero test titles: exit 0, "0 run"/all-skipped) — that is fail-closed
+#                to FAIL too (BAC-837/BAC-1010: a mistyped/drifted filter must not silently PASS).
+#                A verdict-run.sh exit of 2 (its own usage-error / fail-closed refusal) is NOT a
+#                normal AC failure — it aborts ac-verify.sh itself with exit 2, same as loop-fix.sh's
+#                handling of the same case.
 #   - artifacts: each comma-separated path must exist (`-e`), resolved relative to the CWD
 #                ac-verify.sh itself runs from (NOT the plan file's directory — verify commands
 #                and artifacts are expected relative to the repo/worktree root, same as verify
@@ -381,6 +385,29 @@ while IFS= read -r line || [ -n "$line" ]; do
           reasons+=("verify exited $real_exit")
         else
           reasons+=("verify failed (verdict-run.sh exit $vcode)")
+        fi
+      else
+        # Fake-green hole (BAC-837/BAC-1010): a `verify:` command can exit 0 while having actually
+        # exercised NOTHING — e.g. `vitest run -t "<pattern>"` where the -t filter matches zero
+        # test titles. vitest's default behavior there is "0 run / N skipped" with exit 0. Gating
+        # PASS purely on vcode (as above) silently certifies a mistyped/drifted filter as passing.
+        #
+        # Reuse verdict-run.sh's own best-effort passed=/failed=/skipped= count extraction (its
+        # SUMMARY line) rather than re-parsing test-runner output ourselves — it already recognizes
+        # jest/vitest ("Tests: N failed, N passed, N skipped" and the colon-less "N skipped (N)"
+        # shape, via its pytest-style fallback), node --test, and pytest. Signal: skipped is a
+        # positive number while passed and failed are both absent-or-zero — nothing actually ran,
+        # everything was skipped. A command that isn't a test runner at all (`true`, `echo ...`)
+        # never matches any of verdict-run.sh's count patterns, so all three stay empty and this
+        # check stays silent — no false positive on ordinary non-test verify: commands.
+        vr_summary="$(printf '%s\n' "$vr_out" | grep -m1 '^SUMMARY: ')"
+        vr_skipped="$(printf '%s' "$vr_summary" | sed -n 's/.*skipped=\([0-9]*\).*/\1/p')"
+        vr_passed="$(printf '%s' "$vr_summary" | sed -n 's/.*passed=\([0-9]*\).*/\1/p')"
+        vr_failed="$(printf '%s' "$vr_summary" | sed -n 's/.*failed=\([0-9]*\).*/\1/p')"
+        if [ -n "$vr_skipped" ] && [ "$vr_skipped" -gt 0 ] \
+           && { [ -z "$vr_passed" ] || [ "$vr_passed" -eq 0 ]; } \
+           && { [ -z "$vr_failed" ] || [ "$vr_failed" -eq 0 ]; }; then
+          reasons+=("0 tests executed — verify command exited 0 but ran nothing (passed=${vr_passed:-0} failed=${vr_failed:-0} skipped=$vr_skipped) — likely a filter/pattern mismatch")
         fi
       fi
     else
