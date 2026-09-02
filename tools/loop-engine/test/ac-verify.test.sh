@@ -360,6 +360,43 @@ OUT_S2="$(env -u LOOP_DIR "$AC_VERIFY" plan.md --log-dir --weird 2>&1)"; CODE_S2
 [ "$CODE_S2" -eq 2 ] || fail "(s2): expected exit 2 (flag-shaped --log-dir value), got $CODE_S2: $OUT_S2"
 printf '%s' "$OUT_S2" | grep -qi 'requires a directory path' || fail "(s2): expected a clear error naming --log-dir's value as flag-shaped, got: $OUT_S2"
 
+# ==== (u) BAC-837/BAC-1010 regression: a `verify:` command that EXITS 0 but actually ran zero
+# tests (e.g. `vitest run -t "<pattern>"` whose -t filter matches zero test titles — vitest's
+# default is "0 run"/all-skipped, exit 0) must FAIL the AC, not silently PASS. verdict-run.sh's own
+# best-effort passed=/failed=/skipped= count extraction is reused as the signal — no re-parsing of
+# test-runner output inside ac-verify.sh itself. Fake test runners (`printf`) stand in for real
+# vitest/jest here so this stays fast and dependency-free, matching this suite's existing style. ====
+SUB="$DIR/u"; mkdir -p "$SUB"; cd "$SUB" || fail "cd u"
+
+# ---- (u1) jest/vitest colon-style zero-match line: "Tests: 0 failed, 0 passed, N skipped, N total" ----
+printf -- '- AC: t-filter zero match (jest-style) | verify: printf "Tests: 0 failed, 0 passed, 5 skipped, 5 total\\n"\n' > plan-u1.md
+OUT_U1="$(run_ac_verify plan-u1.md .loop-u1 2>&1)"; CODE_U1=$?
+[ "$CODE_U1" -eq 1 ] || fail "(u1): a verify: command that exits 0 but ran zero tests must FAIL the AC (not silently PASS), got $CODE_U1: $OUT_U1"
+printf '%s' "$OUT_U1" | grep -qE '^SUMMARY: passed=0 failed=1 skipped=0 ' || fail "(u1): expected failed=1 at the ac-verify.sh aggregate level: $OUT_U1"
+printf '%s' "$OUT_U1" | grep -q '^FAIL: AC "t-filter zero match (jest-style)":.*0 tests executed' || fail "(u1): expected a FAIL line naming '0 tests executed': $OUT_U1"
+
+# ---- (u2) vitest's actual colon-less summary shape: "Tests  5 skipped (5)" (no "passed"/"failed"
+# words at all — only verdict-run.sh's pytest-style fallback pattern can see this one) ----
+printf -- '- AC: t-filter zero match (vitest-style) | verify: printf "     Tests  5 skipped (5)\\n"\n' > plan-u2.md
+OUT_U2="$(run_ac_verify plan-u2.md .loop-u2 2>&1)"; CODE_U2=$?
+[ "$CODE_U2" -eq 1 ] || fail "(u2): vitest's colon-less all-skipped summary must also FAIL the AC, got $CODE_U2: $OUT_U2"
+printf '%s' "$OUT_U2" | grep -q '^FAIL: AC "t-filter zero match (vitest-style)":.*0 tests executed' || fail "(u2): expected a FAIL line naming '0 tests executed': $OUT_U2"
+
+# ---- (u3) control: a REAL passing run (skipped=0) must NOT be flagged — proves this is not a
+# blanket rejection of every test-runner-shaped SUMMARY line, only the all-skipped/zero-run one ----
+printf -- '- AC: real tests actually ran | verify: printf "Tests: 0 failed, 5 passed, 0 skipped, 5 total\\n"\n' > plan-u3.md
+OUT_U3="$(run_ac_verify plan-u3.md .loop-u3 2>&1)"; CODE_U3=$?
+[ "$CODE_U3" -eq 0 ] || fail "(u3): a verify: command reporting real passes (skipped=0) must still PASS, got $CODE_U3: $OUT_U3"
+printf '%s' "$OUT_U3" | grep -qE '^SUMMARY: passed=1 failed=0 skipped=0 ' || fail "(u3): expected passed=1 at the ac-verify.sh aggregate level: $OUT_U3"
+
+# ---- (u4) control: an ordinary non-test-runner verify: command (no passed=/failed=/skipped=
+# signal at all) must be completely unaffected by this check — proves no false positive on the
+# common case (verify: true / a shell one-liner) ----
+printf -- '- AC: ordinary non-test verify | verify: true\n' > plan-u4.md
+OUT_U4="$(run_ac_verify plan-u4.md .loop-u4 2>&1)"; CODE_U4=$?
+[ "$CODE_U4" -eq 0 ] || fail "(u4): an ordinary verify: command with no test-runner-shaped output must still PASS, got $CODE_U4: $OUT_U4"
+printf '%s' "$OUT_U4" | grep -qE '^SUMMARY: passed=1 failed=0 skipped=0 ' || fail "(u4): expected passed=1: $OUT_U4"
+
 cd "$ORIG_PWD" || true
-echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync via an EXIT trap covering early-exit paths too (not last-writer-wins, not just the normal-completion path, and now armed BEFORE argument parsing itself), --log-dir/LOOP_DIR coupling applied inline the instant --log-dir is parsed (isolated verdict-state.json per --log-dir, correct even when a later argument errors), flag-shaped --log-dir values rejected up front, case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning (both colon-containing and colon-omitted typos)"
+echo "PASS: ac-verify.sh (issue #23) — zero-AC/zero-contract fail-closed, independent verify:/artifacts:/expect: checks, mixed pass+fail and contracted+uncontracted aggregation, Verdict Contract block shape, verdict-state.json aggregate-sync via an EXIT trap covering early-exit paths too (not last-writer-wins, not just the normal-completion path, and now armed BEFORE argument parsing itself), --log-dir/LOOP_DIR coupling applied inline the instant --log-dir is parsed (isolated verdict-state.json per --log-dir, correct even when a later argument errors), flag-shaped --log-dir values rejected up front, case/markdown-emphasis-tolerant field parsing, unrecognized-field-like-segment warning (both colon-containing and colon-omitted typos), zero-executed/all-skipped verify: commands FAIL instead of fake-greening (BAC-837/BAC-1010)"
 exit 0
