@@ -14,11 +14,19 @@
 // prefixing `meta.name`. (An alternative invocation form exists, `Workflow({ scriptPath:
 // "${CLAUDE_PLUGIN_ROOT}/workflows/<file>.js" })`, used by the official code-modernization
 // plugin; it bypasses name resolution entirely and is not what this plugin uses.)
+//
+// Named workflows are surfaced in the harness's own "available skills" listing and are directly
+// callable via `Workflow({ name: ... })`, bypassing the wrapping skill entirely — including its
+// report-saving/dedup logic. This produced a real duplicate-report incident in a consuming repo
+// (glucofit-partners, 2026-09-02: two independent sessions each invoked this workflow around the
+// same time, one via the skill and one directly, and only the skill-mediated run checked for a
+// same-day report and asked before writing). `meta.description` below carries an explicit
+// do-not-invoke-directly warning as a result — it's the only text a listing shows.
 
 export const meta = {
   name: 'harness-audit',
   description:
-    "Six-lane parallel forensic audit of this repo's self-improvement loop harness — evidence-only, produces an L0-L5 scorecard",
+    "[Internal — do not invoke directly; use the harness-maturity-audit skill instead, which owns report saving/dedup] Six-lane parallel forensic audit of this repo's self-improvement loop harness — evidence-only, produces an L0-L5 scorecard",
   phases: [
     { title: 'Investigate', detail: 'Six dimensions, each measured by a parallel agent' },
     { title: 'Synthesize', detail: 'Scorecard + priority improvement list + delta vs. the prior report' },
