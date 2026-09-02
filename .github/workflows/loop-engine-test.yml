@@ -20,6 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Tags are a test input, not decoration: publish-freshness.test.sh compares each plugin's
+          # subtree against its own `<plugin>--v<version>` tag. Without them it fails closed (by
+          # design — silently passing is the failure it exists to end), so the default tagless
+          # checkout would turn that gate red on every run.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
