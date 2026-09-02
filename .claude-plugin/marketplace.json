@@ -26,7 +26,7 @@
       "name": "loop-memory",
       "source": "./tools/loop-memory",
       "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in / defaultEnabled:false — a database dependency, not core loop mechanics.",
-      "version": "0.6.2",
+      "version": "0.6.3",
       "defaultEnabled": false,
       "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"]
     }

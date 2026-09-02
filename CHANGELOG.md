@@ -5,6 +5,26 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-memory 0.6.3
+
+`loop-engine 0.14.0 / ship-flow 0.10.0` widened every dependent's `loop-engine` range to `^0.14.0`,
+loop-memory's manifest included — but loop-memory's own version was left at 0.6.2. A manifest only
+reaches consumers through a **new version**: the marketplace kept serving 0.6.2, which still
+declared `^0.13.0`, so the widening never shipped and loop-engine became unresolvable —
+`claude plugin update loop-engine@paul-loop` reported `✔ Skipped — conflicting version requirements
+(no version satisfies all of: ^0.13.0, ^0.14.0)`. Note the checkmark on a no-op: this is the same
+shape as the update-reports-success-without-moving failure the repo already had a verified lesson
+for.
+
+`plugin-dep-range.test.sh` passed throughout, correctly — it checks that the ranges in *this repo's
+tree* admit the loop-engine version *this repo ships*, and after the edit they did. It has no reach
+into "a manifest edit that never ships because its version didn't move". Every previous loop-engine
+minor bump carried a matching loop-memory bump (0.4.1→0.4.2 for `^0.11.0`, 0.4.2→0.4.3 for
+`^0.12.0`, …); this one didn't, and nothing said so.
+
+- **loop-memory 0.6.2 → 0.6.3**, publishing the `^0.14.0` range it already declared in-tree. No code
+  change.
+
 ## loop-engine 0.14.0 · ship-flow 0.10.0
 
 Two measurement gaps, found by pointing a token/cost research report at this repo and then checking
