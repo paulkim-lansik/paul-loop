@@ -5,6 +5,22 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## ship-flow 0.9.4
+
+`harness-audit` is a named workflow the `harness-maturity-audit` skill calls internally (kept
+named, not inlined, so an interrupted run can resume via `resumeFromRunId` — see the file's own
+header comment). Claude Code surfaces every named workflow in its "available skills" listing and
+allows it to be invoked directly via `Workflow({ name: ... })`, bypassing the wrapping skill —
+including the skill's report-saving/same-day-dedup logic. This produced a real duplicate-report
+incident in a consuming repo (glucofit-partners, 2026-09-02): two sessions ran a harness maturity
+audit around the same time, one through the skill and one by invoking the workflow directly, and
+only the skill-mediated run checked for an existing same-day report before writing.
+
+- **`harness-audit`'s `meta.description` now opens with an explicit do-not-invoke-directly
+  warning**, pointing at the `harness-maturity-audit` skill instead — the description is the only
+  text a workflow listing shows, so it's the one place this warning can actually reach an agent
+  deciding how to invoke it. No behavior change to the workflow itself.
+
 ## loop-engine 0.13.2 · loop-memory 0.6.2 · ship-flow 0.9.3 — SECURITY
 
 The last batch from the audit that produced 0.13.0 and 0.13.1 — six MED findings. Different files,
