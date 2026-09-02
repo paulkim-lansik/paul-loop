@@ -5,6 +5,32 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.14.1
+
+A gate for the failure that produced 0.6.3 one commit earlier: **a plugin file edited without that
+plugin's version moving.** `tag-on-publish.yml` closed "a released version has no tag"; this closes
+the level below it. The edit merges, CI is green, the marketplace serves the same version number as
+before, and the change reaches nobody — a manifest only travels on a new version.
+
+- **`test/publish-freshness.test.sh`.** For every plugin the marketplace lists (derived, never
+  hardcoded — a hardcoded list is the same failure one level down), if tag `<name>--v<version>`
+  already exists then that version is published, so the plugin's subtree must still match that tag.
+  Any difference means the tree is shipping under a number that already means something else.
+  Verified against the actual incident: run at `9211ab9` (the PR #90 merge) it names loop-memory and
+  the one line that changed; on a clean tree it is quiet.
+- **Two probes, not one.** `git diff <tag> -- <dir>` only considers *tracked* paths, so a new,
+  not-yet-added file reads as no difference — measured: the check passed on the very commit adding
+  its own test file. A plugin gaining a skill/hook/bin/test must ship, and must bump, exactly like
+  one whose file changed; `git ls-files --others` covers that half.
+- **Fail-closed with no tags visible.** A shallow or tagless checkout would let it pass on
+  everything while checking nothing — the exact silence it exists to end. It errors and says how to
+  fix it, and `loop-engine-test.yml`'s selftest job now checks out with `fetch-depth: 0` so CI has
+  the tags this reads.
+
+Scope note: deliberately a repo gate (a `test/`), not a shipped `bin/` tool. It guards this
+marketplace's own release discipline; making it a public tool would add a config surface (tag
+format, manifest path) for a need no consumer has stated.
+
 ## loop-memory 0.6.3
 
 `loop-engine 0.14.0 / ship-flow 0.10.0` widened every dependent's `loop-engine` range to `^0.14.0`,
