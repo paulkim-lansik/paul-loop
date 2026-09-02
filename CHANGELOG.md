@@ -5,6 +5,59 @@ Explicit-version channel — see [README § Development status](README.md#develo
 not a SHA channel. Entries below `## loop-engine 0.2.0` and earlier predate the multi-plugin split
 and refer to `loop-engine` only (see the un-prefixed version numbers).
 
+## loop-engine 0.14.0 · ship-flow 0.10.0
+
+Two measurement gaps, found by pointing a token/cost research report at this repo and then checking
+every one of its claims against the actual code. Most of the report's recommendations did not
+survive that check — the harness invokes no LLM of its own (`--verify` is a shell exit code,
+`--fix` is a user-supplied command), so "route verify to a cheaper model" and "align the prompt
+cache prefix" had nothing to attach to, and the always-on context audit it asked for already exists
+as `bin/context-budget.mjs`. What did survive were two places where **this repo cannot see its own
+behaviour**.
+
+- **`run-metrics.mjs` now folds the `memory.recall` ledger.** loop-memory's recall hook is
+  fail-open by contract (a `UserPromptSubmit` hook exiting non-zero discards the user's prompt), so
+  "nothing to recall" and "broken" look identical from outside — the ledger is the only thing that
+  tells them apart, and no aggregator read it. Measured in a consuming repo (glucofit-partners,
+  958 firings): `cli_failed` ran at **89% of attempted for six days** (2026-08-27→09-01, 626
+  events) with zero user-visible symptom, and was fixed by an unrelated change without anyone being
+  able to confirm the recovery. Three axes are now reported, per-run and overall:
+  - *Failure rate over `attempted` (= fired − skipped), not over `fired`.* Self-gated firings (no
+    embedding key, prompt under 8 chars) are not failures; counting them in the denominator diluted
+    89% down to 65%.
+  - *Cutoff efficacy at the hit level* (`candidates` / `passed` / `dropped`), not via the
+    `above_cutoff` reason. That reason only fires when **every** candidate is dropped: it showed 1
+    event out of 958 while the hit-level count showed 55 dropped out of 456. Reported per corpus —
+    `lessons` dropped 4.4% where `knowledge` dropped 19.7%, a split a single merged number hides.
+  - *Observed nearest-distance distribution beside the observed cutoff.* The right cutoff is
+    embedder-dependent and the code default (0.65) is documented as a loose safety net; this is the
+    only way to tell whether the configured value is doing work. It reports and warns; it does not
+    retune anything, because a sample from one embedder is not grounds to move a default for
+    everyone.
+  Zero `memory.recall` events report `INSUFFICIENT_DATA` rather than a healthy-looking 0%, matching
+  the rest of the file. Coverage: `test/run-metrics-recall.test.sh`.
+- **`adversarial-review`'s verification fan-out is bounded.** Total agents were
+  `domains + 3 × findings + 1` with **no cap on `findings`** — one domain returning 20 findings
+  spawns 60 verifier agents on its own, and the workflow authoring reference this script is written
+  against both caps workflows far below that and requires (`no silent caps`) that any bounded
+  coverage be logged. The finder schema now requires a `severity`, findings are verified in
+  severity order, and each domain verifies at most `maxVerifiedPerDomain` (default 8, raise it via
+  args for a deliberately exhaustive run). Nothing is discarded: findings past the cap come back as
+  `unverifiedOverCap` — a separate field from `unverified` (which means verification ran but too
+  few votes returned) — and the drop is `log()`'d, so a truncated review cannot read as a complete
+  one. Coverage: `test/adversarial-review-fanout.test.sh`, which runs the real script under a stub
+  harness and counts agents (60 before, 24 after). The completeness critic is also told which
+  findings went unverified, so it cannot report full coverage over a capped run.
+  - **The refutation votes were deliberately left at full strength.** Routing them to a cheaper
+    model or lower effort was the obvious token saving and is the wrong trade for this plugin: the
+    votes *are* the verifier, and a cheaper skeptic is precisely how a plausible-but-wrong finding
+    survives. The test asserts they carry no `model` pin and no `low` effort, so that the next
+    cost-cutting pass cannot quietly erode `verifier = ceiling`. Bound the quantity of
+    verification, never its quality.
+- Dependent plugins' `loop-engine` ranges widened to `^0.14.0` (`plugin-dep-range.test.sh` — a
+  caret on a 0.x line excludes the next minor, and `claude plugin update` reports success while
+  keeping the old version).
+
 ## loop-engine 0.13.3
 
 `ac-verify.sh` (the AC-level success contract gate) gated an AC's `verify:` field purely on

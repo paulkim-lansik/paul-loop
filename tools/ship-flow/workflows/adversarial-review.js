@@ -12,6 +12,19 @@
 // one that's genuinely refuted by valid votes, and one that's merely unverified because too few
 // votes came back cleanly (an infrastructure failure isn't read as a refutation).
 //
+// Verification fan-out is BOUNDED. Total agents = domains + VOTES_PER_FINDING x verified-findings + 1,
+// and the finder's `findings` array had no cap — a finder that returns 20 findings across 6 domains
+// spawns 360 verifier agents from a script whose own authoring guidance caps workflows far below
+// that. The bound here is per-domain and severity-ordered (blocker first), so what gets verified is
+// the part most worth spending votes on. Nothing is DISCARDED: findings past the cap are returned as
+// `unverifiedOverCap` and the drop is log()'d — the authoring reference's "no silent caps" rule,
+// because a truncated review that looks complete is worse than one that says what it skipped.
+//
+// Note on what is deliberately NOT done here: the refutation votes are not routed to a cheaper model
+// or a lower effort tier. They are the verifier, and this plugin's whole premise is that the verifier
+// is the ceiling — a cheaper skeptic is exactly how a plausible-but-wrong finding survives. Bound the
+// QUANTITY of verification, never its quality.
+//
 // args (all required — domains are task-specific, this workflow does not guess a default set):
 //   { target: '<what is being reviewed — one sentence>',
 //     domains: [{ key: '<slug>', prompt: '<what to look for in this domain>' }, ...] }
@@ -45,8 +58,12 @@ const FINDER_SCHEMA = {
           title: { type: 'string' },
           detail: { type: 'string' },
           file: { type: 'string' },
+          // severity drives WHICH findings get the verification budget when a domain overflows the
+          // cap. Required so the ordering is the finder's judgement rather than array order, which
+          // carries no meaning. An unrecognised/missing value sorts last (see SEVERITY_RANK).
+          severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
         },
-        required: ['title', 'detail'],
+        required: ['title', 'detail', 'severity'],
       },
     },
   },
@@ -64,6 +81,41 @@ const VERDICT_SCHEMA = {
 
 const VOTES_PER_FINDING = 3
 const REFUTATIONS_REQUIRED = 2
+// Per-domain cap on how many findings get the (VOTES_PER_FINDING-agent) verification treatment.
+// Per-domain rather than global so one noisy domain cannot starve every other domain's findings.
+// Overridable via args.maxVerifiedPerDomain for a deliberately exhaustive run.
+const DEFAULT_MAX_VERIFIED_PER_DOMAIN = 8
+const maxVerifiedPerDomain = Number.isInteger(parsedArgs.maxVerifiedPerDomain)
+  && parsedArgs.maxVerifiedPerDomain > 0
+  ? parsedArgs.maxVerifiedPerDomain
+  : DEFAULT_MAX_VERIFIED_PER_DOMAIN
+// Unknown/missing severity sorts last — a finder that ignores the enum loses priority, it does not
+// silently jump the queue ahead of a declared blocker.
+const SEVERITY_RANK = { blocker: 0, major: 1, minor: 2 }
+const severityRank = (f) => SEVERITY_RANK[f?.severity] ?? 3
+
+// Everything a domain found that the cap kept out of verification. Returned to the caller so a
+// truncated review can never read as an exhaustive one.
+const unverifiedOverCap = []
+
+// Stable severity ordering + hard slice. The schema's enum is a REQUEST to the model; this slice is
+// the enforcement — the same generator-vs-verifier split the rest of this plugin runs on.
+function capForVerification(findings, domainKey) {
+  const ordered = findings
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => severityRank(a.f) - severityRank(b.f) || a.i - b.i)
+    .map((x) => x.f)
+  if (ordered.length <= maxVerifiedPerDomain) return ordered
+  const kept = ordered.slice(0, maxVerifiedPerDomain)
+  const dropped = ordered.slice(maxVerifiedPerDomain)
+  unverifiedOverCap.push(...dropped)
+  log(
+    `${domainKey}: ${ordered.length} findings exceed the per-domain verification cap ` +
+      `(${maxVerifiedPerDomain}) — verifying the ${kept.length} most severe, carrying ` +
+      `${dropped.length} through as unverified (raise args.maxVerifiedPerDomain to verify all).`,
+  )
+  return kept
+}
 
 phase('Find')
 const perDomain = await pipeline(
@@ -73,9 +125,9 @@ const perDomain = await pipeline(
       `Target: ${parsedArgs.target}\n\nDomain: ${d.key}\n${d.prompt}\n\nOnly record something as a finding if you actually observed it by reading a file or running a command — don't assert from inference. This investigation is read-only.`,
       { label: `find:${d.key}`, phase: 'Find', schema: FINDER_SCHEMA }
     ).then((r) => (r?.findings ?? []).map((f) => ({ ...f, domain: d.key }))),
-  (domainFindings) =>
+  (domainFindings, d) =>
     parallel(
-      domainFindings.map((f) => () =>
+      capForVerification(domainFindings, d.key).map((f) => () =>
         parallel(
           Array.from({ length: VOTES_PER_FINDING }, () => () =>
             agent(
@@ -115,10 +167,21 @@ const completeness = await agent(
 ${JSON.stringify(confirmed.map(({ title, detail, file, domain }) => ({ title, detail, file, domain })))}
 
 Domains covered: ${parsedArgs.domains.map((d) => d.key).join(', ')}
+${unverifiedOverCap.length ? `\nNOT verified — ${unverifiedOverCap.length} finding(s) exceeded the per-domain verification cap (${maxVerifiedPerDomain}) and never got a verifier. Treat these as open, not as cleared:\n${JSON.stringify(unverifiedOverCap.map(({ title, file, domain, severity }) => ({ title, file, domain, severity })))}` : ''}
 
 Critique what's missing — domains/angles not covered, claims that went unverified, sources not read.
 Propose concretely what the next round should look at — no generic advice, be specific to this target.`,
   { phase: 'Completeness', label: 'completeness-critic' }
 )
 
-return { target: parsedArgs.target, confirmed, refuted, unverified, completeness }
+return {
+  target: parsedArgs.target,
+  confirmed,
+  refuted,
+  unverified,
+  // Distinct from `unverified` (verification RAN but too few votes came back): these never got a
+  // verifier at all because the per-domain cap stopped at them. Different fact, different field.
+  unverifiedOverCap,
+  maxVerifiedPerDomain,
+  completeness,
+}
