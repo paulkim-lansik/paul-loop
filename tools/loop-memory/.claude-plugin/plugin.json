@@ -10,7 +10,7 @@
   "license": "MIT",
   "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"],
   "defaultEnabled": false,
-  "dependencies": [{ "name": "loop-engine", "version": "^0.13.0" }],
+  "dependencies": [{ "name": "loop-engine", "version": "^0.14.0" }],
   "userConfig": {
     "openai_api_key": {
       "type": "string",
