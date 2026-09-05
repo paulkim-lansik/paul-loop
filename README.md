@@ -25,6 +25,15 @@ the ceiling invariant (`loop-engine`) without also adopting an opinionated deliv
 > These are source versions, not an assertion about installed caches or published tags. Pre-1.0
 > minor versions can change contracts. See [runtime compatibility and migration](docs/runtime-compatibility.md).
 
+For Codex installation without a consumer-specific marketplace, follow the
+[generated local marketplace guide](docs/codex-installation.md). For project paths that survive
+relocation, use the [portable project launcher and update commands](docs/project-installations.md).
+The [release record](docs/audits/2026-09-05-release-results.md) and
+[native evaluation report](docs/audits/2026-09-05-native-evaluation.md) distinguish published
+artifacts, installed versions, and observed runtime behavior.
+The compatibility document's qualification table retains its implementation-time observations;
+use those dated reports for subsequent CI, installation and native-session results.
+
 ## What's in `loop-engine`
 
 The common execution core. It has no opinions about *how* you deliver work — no issue tracker
