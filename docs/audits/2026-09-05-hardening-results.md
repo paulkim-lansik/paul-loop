@@ -1,6 +1,6 @@
 # paul-loop 하네스 개선 결과
 
-상태: 통합 검증과 독립 리뷰 진행 중. 설치·릴리스 승인을 뜻하지 않는다.
+상태: 구현·독립 리뷰·현재 계약의 전체 검증 완료. 기존 계약 고정 검사는 14건 실패했으며, 설치·릴리스 전 호환성 검토가 남아 있다.
 
 사용자는 전체 감사 결과와 편집 제안을 검토한 뒤 구현을 승인했다. 기준은
 `39b6d87fbfcc9a0d4de442e898dee41cbbd8df27`, 구현은 별도
@@ -45,26 +45,28 @@
 
 ## 검증 기록
 
-최종 결과가 확정되면 이 표를 갱신한다. 첫 엔진 통합 실행은 71/80이었다. 실패 원인은
+첫 엔진 통합 실행은 71/80, 두 번째는 79/80이었다. 최종 실행은 80/80이다. 실패 원인은
 이전 계약의 fixture, 생성 문서의 실제 누락 참조, 새 공통 지침의 검사 표현, 실제 생성
-관측으로 바뀐 worktree fixture였다. 실제 구현 수정 없이 검증기만 카운터를 바꿔 통과하던
-lesson fixture는 안정된 검증기와 Git에 보이는 실제 수정으로 교체했다.
+관측으로 바뀐 worktree fixture였다. `infra-exempt`에서 실제 수정 없이 검증기만 카운터를 바꿔
+통과하던 fixture는 안정된 검증기와 실제 수정으로 교체했다. 기존 실제 fixer가 있던
+fail-channel/mark-clean fixture에는 Git target identity를 추가했다. dotenv 검사는 없어진
+debug 문구 대신 실제 child 환경과 payload 비실행을 관측한다.
 
 | 검사 | 결과 | 범위 |
 |---|---|---|
-| 엔진 전체 shell/Node suite | 진행 중 | 판정·보호·수명주기·재개·리뷰·평가·패키징 통합 |
+| 엔진 전체 shell/Node suite | **80/80 PASS, exit 0** | commit `4a8f299`, 검증 전후 clean/동일 digest; 패키지·lock 검사까지 포함 |
 | Memory typecheck | PASS | 개발 소스 타입 검사 |
-| Memory unit/process tests | 151 PASS, 2 SKIP | 14개 파일; 실제 임베딩 호출 2개는 선택적 검사 |
+| Memory unit/process tests | **159 PASS, 2 SKIP** | 16개 파일; 실제 임베딩 호출 2개는 선택적 검사 |
 | PostgreSQL fixture | 54 PASS | 7개 파일, 실제 pgvector/CLI/migration; 전용 임시 서버 종료·제거 |
 | npm audit 전체/production | 각각 0건 | 설치된 advisory snapshot; 취약점 부재의 일반적 증명 아님 |
-| Memory bundle | 진행 중 | source rebuild와 배포 dist 일치 |
-| Claude/Codex 패키지·schema | 진행 중 | 생성 계약과 schema; native 에이전트 행동 검사와 구분 |
-| Skill lock·참조·diff whitespace | 집중 검사 PASS | 최종 생성 후 재확인 |
-| 독립 리뷰 | 진행 중 | 기능 교차 리뷰와 별도 새 문맥의 검증기 무결성 리뷰 |
-| 기준 commit의 고정 테스트 | 후보 commit 생성 후 실행 | 현재 테스트를 변경해서 우회하지 않음 |
+| Memory bundle | **471,756 bytes 일치** | build와 저장된 dist SHA256 일치, 무키 실행은 exit 1로 거부 |
+| Claude/Codex 패키지·schema | **29/29 PASS** | source/generated Claude schema 8개 PASS; Codex schema 3개·역할 TOML 5개 확인; native E2E 미검증 |
+| Skill lock·참조·diff whitespace | PASS | 최종 root 검사에서 재확인 |
+| 독립 리뷰 | 발견한 수정 대상 재검증 완료 | source 교차 리뷰 + 새 문맥 무결성 리뷰; lifecycle 3건·snapshot race 2건도 발견자가 재현 확인 |
+| 기준 commit의 고정 테스트 | **66/80, FAIL exit 1** | [14개 계약 충돌의 검토](2026-09-05-pinned-baseline-review.md). 고정 runner/기준은 그대로 유지 |
 
 독립 리뷰는 구현자 간의 범위 교차 리뷰와, 구현 대화를 상속하지 않은 별도 검증기 무결성
-리뷰로 나눴다. 현재 리뷰에서 발견한 다음 문제들을 최종 검증 전에 추적하고 있다.
+리뷰로 나눴다. 다음 문제를 수정하고 명시된 범위에서 재검증했다.
 
 | 추가 발견 | 처리 상태 | 재현 및 검증 |
 |---|---|---|
@@ -74,10 +76,43 @@ lesson fixture는 안정된 검증기와 Git에 보이는 실제 수정으로 �
 | custom log 또는 unignored `.loop`가 자기 receipt를 stale 처리 | 수정·집중 검사 PASS | 생성·확인 측의 동일 identity policy, 물리 경로 비교 |
 | Git textconv가 이미 변경된 파일의 추가 변경을 감춤 | 수정·집중 검사 PASS | presentation helper 비활성화, dirty→dirty 및 검증 중 변경 차단 |
 | 빈 critic/context/synthesis를 완료 처리 | 수정·집중 검사 PASS | 빈 문자열·공백·객체·배열 응답 모두 incomplete |
-| 캡처한 Node test entry를 symlink로 바꿔치기 | 수정 중 | 원래 실패 테스트 보존과 node/`node --test` 진입 경로 확인 |
-| fabricated lesson summary와 과거 clean receipt 재사용 | 수정 중 | 실제 근거 재검사, 작업 위치 결속, 재발 뒤 시간 순서 확인 |
-| 보호 복구가 symlink 상위 경로를 통해 외부 파일을 덮어씀 | 수정 중 | 외부 임시 파일 보존, compromised 상태 |
-| 종료 직전에 추가된 보호 파일과 receipt 저장 실패를 성공 처리 | 수정 중 | 자식 종료 뒤 전체 보호 집합 재검사, 해당 attempt receipt 필수 |
+| 캡처한 Node test entry를 symlink로 바꿔치기 | 수정·재검증 PASS | 원래 실패 테스트 보존과 node/`node --test` 진입 경로 확인 |
+| fabricated lesson summary와 과거 clean receipt 재사용 | 수정·재검증 PASS | 실제 근거 재검사, 작업 위치 결속, 재발 뒤 시간 순서 확인 |
+| 보호 복구가 symlink 상위 경로를 통해 외부 파일을 덮어씀 | 수정·재검증 PASS | 외부 임시 파일 보존, compromised 상태 |
+| 종료 직전에 추가된 보호 파일과 receipt 저장 실패를 성공 처리 | 수정·재검증 PASS | 자식 종료 뒤 전체 보호 집합 재검사, 해당 attempt receipt 필수 |
+| 잠금 전 snapshot으로 철회한 lesson/ADR이 다시 활성화 | 수정·독립 재현 PASS | 정상 recall 1 → 최신 철회 0 → 지연된 과거 호출 후에도 0, 원본 읽기를 corpus lock 안에서 실행 |
+
+[지침 11개 원문·편집·권한 변화](2026-09-05-instructions-lane.md)와
+[포팅·동시성 독립 재검증](2026-09-05-runtime-portability-lane.md)을 함께 확인할 수 있다.
+마지막 별도 무결성 리뷰는 수정된 근거와 고정 검사 분류를 대조하여, 검토 범위의 미해결
+P1/P2가 없음을 확인했다. 이 판단도 고정 기준의 FAIL을 PASS나 merge 승인으로 바꾸지 않는다.
+
+최종 root 실행 대상은 `4a8f2991ff71ee6d6683d09469e4cd105b7974d6`이다. 실행 전후
+`dirty:false`, `target_changed:false`, digest
+`799452236c051e941d6e5ddcce1275cbc5a91ac1c6c6e7b0f77fc0492256ef4a`가 같았다.
+실제 receipt는 `0821e0ad-908b-4fef-be9d-f1da8a1391be`이며 해당 시점의 `evidence check`도
+`valid`, `authority_granted:false`를 반환했다. 기록된 실행 시간은 363,841ms다.
+
+원문 verdict:
+
+```text
+=== VERDICT ===
+VERDICT: PASS
+EXIT: 0
+SUMMARY: passed=80 failed= skipped= duration_ms=363841
+LOG: /Users/jinhokim/dev/paul-loop-hardening/.loop/hardening-validation/final-root-4a8f299.log
+=== END VERDICT ===
+```
+
+`failed`/`skipped`의 빈 값은 summary 추출기가 수집하지 못한 필드이며 임의로 채우지 않았다.
+전체 suite의 실제 마지막 출력은 `loop-engine selftest: 80/80 passed`다.
+이후 closeout은 `docs/audits/`의 결과 기록만 변경하며, 테스트한 실행 소스·테스트·bundle과의
+동일성을 별도로 확인한다. 과거 receipt를 새 문서 commit의 fresh verification으로 재라벨링하지 않는다.
+
+로컬 원본 로그와 증거는 `.loop/hardening-validation/`에 보관한다(버전 관리 제외).
+`memory-final-summary.json`은 메모리 소스 hash, 원본 로그, DB 정리, bundle byte parity를 연결한다.
+배포 bundle SHA256은 `6e5157b65b46e00fbf7dd3d49c277df651f5abcbe0461ed94573d0dcd479b336`이다.
+Linux/macOS×Node22/24 hosted CI는 정의했으며, 이번 실행은 macOS/Node22.19.0 로컬 검증이다.
 
 교차 리뷰에서 추가로 발견한 두 eval 결함도 수정했다. JSON으로 파싱 가능한 `null`/`false`/`0`
 기준 파일을 거부하고, 마지막 시험의 시간 초과도 품질 임계값과 무관하게 incomplete 처리한다.
