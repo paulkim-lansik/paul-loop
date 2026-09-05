@@ -82,10 +82,10 @@ grep -q hunter2 "$DIR/t8.log" || fail "T8: LOOP_SANITIZE_OFF=1 must leave the lo
 
 # T9: lessons 대칭 배선 — 저장 JSON에 시크릿 부재 AND 같은 원문 서명 재-record가 같은 키에 적중(count=2).
 LDIR="$DIR/ls"
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --fix "export PASSWORD=hunterX99 후 재시도" --verified --lessons "$LDIR" >/dev/null || fail "T9: record #1 failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --fix "export PASSWORD=hunterX99 후 재시도" --verified --lessons "$LDIR" >/dev/null || fail "T9: record #1 failed"
 grep -rq abc123xyz "$LDIR" && fail "T9: signature secret persisted in the lessons store"
 grep -rq hunterX99 "$LDIR" && fail "T9: fix secret persisted in the lessons store"
-ROUT="$(node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --verified --lessons "$LDIR")" || fail "T9: record #2 failed"
+ROUT="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --verified --lessons "$LDIR")" || fail "T9: record #2 failed"
 printf '%s' "$ROUT" | grep -q 'count=2' || fail "T9: same raw signature must hit the same key (record/recall symmetry): $ROUT"
 
 # T10: 리뷰 회귀 — assertion operand·진단 어휘 보존 (lessons 서명 불변식·loop-fix stall 오탐 방지).
@@ -125,19 +125,37 @@ done
 grep -q hunter2 "$DIR/t14.log" && fail "T14: LOOP_SANITIZE_OFF=0 (unknown value) must still redact at the wiring level"
 grep -q '\[REDACTED\]' "$DIR/t14.log" || fail "T14: redaction marker missing under unknown switch value"
 
-# T15: 배선 fail-open — 살균기 실행 불능(node 없는 PATH) 시 경고 발화·원문 유지·exit 불변.
-# node가 시스템 경로에 있는 환경에선 시뮬레이션 불가라 건너뛴다(핵심 계약은 T7/T14가 커버).
-if ! PATH="/usr/bin:/bin" command -v node >/dev/null 2>&1; then
-  ( cd "$WK" && PATH="/usr/bin:/bin" "$VR" --log "$DIR/t15.log" -- sh -c 'echo password=hunter2; exit 1' ) >/dev/null 2>"$DIR/t15.err"
-  rc=$?
-  [ "$rc" = "1" ] || fail "T15: exit code must mirror the command on redaction failure, got rc=$rc"
-  grep -q hunter2 "$DIR/t15.log" || fail "T15: raw log must be kept on redaction failure (fail-open)"
-  grep -q 'redaction failed' "$DIR/t15.err" || fail "T15: failure warning must fire on stderr"
-fi
+# T15: fail only the sanitizer, preserving the now-required Node target/receipt capture.
+# Removing Node entirely fails BEFORE dispatch and cannot exercise post-command redaction.
+# Use the same fixture on every host instead of silently skipping systems with /usr/bin/node.
+REAL_NODE="$(command -v node)"
+mkdir -p "$DIR/redaction-bin"
+cat > "$DIR/redaction-bin/node" <<'EOF'
+#!/bin/sh
+case "$1" in */lib/sanitize.mjs) echo 'fixture sanitizer unavailable' >&2; exit 127;; esac
+exec "$REAL_NODE" "$@"
+EOF
+chmod +x "$DIR/redaction-bin/node"
+( cd "$WK" && REAL_NODE="$REAL_NODE" PATH="$DIR/redaction-bin:$PATH" "$VR" --log "$DIR/t15.log" -- sh -c 'echo dispatched; echo password=hunter2; exit 1' ) >/dev/null 2>"$DIR/t15.err"
+rc=$?
+[ "$rc" = "1" ] || fail "T15: exit code must mirror the command on redaction failure, got rc=$rc"
+grep -q '^dispatched$' "$DIR/t15.log" || fail "T15: verifier must actually execute"
+grep -q hunter2 "$DIR/t15.log" || fail "T15: raw log must be kept on redaction failure (fail-open)"
+grep -q 'redaction failed' "$DIR/t15.err" || fail "T15: failure warning must fire on stderr"
+
+# T15b: an unavailable Node runtime refuses target capture before executing any verifier.
+mkdir -p "$DIR/no-node-bin"
+printf '#!/bin/sh\nexit 127\n' > "$DIR/no-node-bin/node"
+chmod +x "$DIR/no-node-bin/node"
+( cd "$WK" && PATH="$DIR/no-node-bin:$PATH" "$VR" --log "$DIR/t15b.log" -- sh -c 'echo must-not-dispatch' ) >/dev/null 2>"$DIR/t15b.err"
+rc=$?
+[ "$rc" = "2" ] || fail "T15b: missing required Node must refuse setup, got rc=$rc"
+[ ! -s "$DIR/t15b.log" ] || fail "T15b: verifier dispatched without target capture"
+grep -q 'cannot capture verification target' "$DIR/t15b.err" || fail "T15b: missing runtime must be diagnosed"
 
 # T16: lessons --signature-file 분기(loop-fix 정본 경로)도 살균 대칭 — 저장 JSON에 시크릿 부재.
 printf 'FAIL: boom token=sigfileleak77\n' > "$DIR/sig.txt"
-node "$LESSONS" record --signature-file "$DIR/sig.txt" --verified --lessons "$DIR/ls2" >/dev/null || fail "T16: record via signature-file failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file "$DIR/sig.txt" --verified --lessons "$DIR/ls2" >/dev/null || fail "T16: record via signature-file failed"
 grep -rq sigfileleak77 "$DIR/ls2" && fail "T16: signature-file secret persisted in the lessons store"
 
 # T17: 값 자체가 시크릿인 모양(키 없이 맨몸으로 착지한 자격증명).

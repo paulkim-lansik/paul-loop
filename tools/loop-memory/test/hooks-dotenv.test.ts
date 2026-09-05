@@ -30,7 +30,8 @@ function writeFakeCli(root = pluginRoot) {
       'fs.writeFileSync(`${process.env.TEST_ENV_DUMP}.${sub}.json`, JSON.stringify(process.env));',
       // recall parses a single-line JSON object off stdout; distance 0.1 is inside the 0.65 default cutoff.
       "if (sub === 'recall')",
-      "  process.stdout.write(JSON.stringify({ lessons: [{ id: 'l1', content: 'a recalled lesson', distance: 0.1 }], knowledge: [] }) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ schema_version: 1, command: 'recall', outcome: 'ok', lessons: [{ id: 'l1', content: 'a recalled lesson', distance: 0.1 }], knowledge: [] }) + '\\n');",
+      "if (process.argv[2] === 'graduate') process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome: 'synced' }));",
       'process.exit(0);',
     ].join('\n'),
   );

@@ -1,16 +1,19 @@
 name: loop-memory test
 
 on:
+  workflow_call:
   push:
     branches: [main]
     paths:
       - "tools/loop-memory/**"
+      - "tools/loop-engine/lib/**"
       - ".claude-plugin/marketplace.json"
       - ".github/workflows/loop-memory-test.yml"
   pull_request:
     branches: [main]
     paths:
       - "tools/loop-memory/**"
+      - "tools/loop-engine/lib/**"
       - ".claude-plugin/marketplace.json"
       - ".github/workflows/loop-memory-test.yml"
 
@@ -40,6 +43,8 @@ jobs:
         run: npm test
       - name: build (dependency-free bundle)
         run: npm run build
+      - name: reject committed bundle drift
+        run: git diff --exit-code -- dist/cli.js
       # dist/cli.js — not src/cli.ts — is what the shipped hooks actually run at runtime (no
       # node_modules on the end-user machine), but nothing above exercises it. A stub-embedder
       # fail-closed gate check doesn't need a live DB/API key, so it doubles as a bundle
@@ -48,21 +53,19 @@ jobs:
       - name: smoke-test the built bundle (no DB/API key needed)
         run: |
           set +e
-          OPENAI_API_KEY= GEMINI_API_KEY= node dist/cli.js recall --query test 2>&1 | tee /tmp/bundle-smoke.log
+          OPENAI_API_KEY= GEMINI_API_KEY= node dist/cli.js recall --query test 2>&1 | tee "$RUNNER_TEMP/bundle-smoke.log"
           cli_exit=${PIPESTATUS[0]}
           set -e
           test "$cli_exit" -eq 1
-          grep -q "no embedding API key" /tmp/bundle-smoke.log
+          grep -q "no embedding API key" "$RUNNER_TEMP/bundle-smoke.log"
       # hooks/*.mjs ship as plain JS, unrun by the vitest suite (that only exercises src/*.ts) and
       # unchecked by `claude plugin validate` (manifest schema only, not hook script content) — a
       # syntax error here would otherwise merge green.
       - name: syntax-check hooks
         run: |
-          node --check hooks/graduate-lessons.mjs
-          node --check hooks/recall-lessons.mjs
-          node --check hooks/lib/load-dotenv.mjs
-          node --check hooks/lib/liveness.mjs
-          node --check hooks/lib/hook-stdin.mjs
+          for hook in hooks/*.mjs hooks/lib/*.mjs; do
+            node --check "$hook"
+          done
       # Both hooks' fail-open no-op path (no embedding key configured) needs no docker/API key and
       # is the one path every install exercises by default — assert it directly against the real
       # hook processes rather than only trusting their internal logic by inspection.
@@ -84,9 +87,9 @@ jobs:
       - name: assert the no-op run left a liveness record
         run: |
           set -e
-          node dist/cli.js liveness --root "$PWD" --json | tee /tmp/liveness.json
+          node dist/cli.js liveness --root "$PWD" --json | tee "$RUNNER_TEMP/liveness.json"
           node -e '
-            const s = JSON.parse(require("node:fs").readFileSync("/tmp/liveness.json", "utf8"));
+            const s = JSON.parse(require("node:fs").readFileSync(process.env.RUNNER_TEMP + "/liveness.json", "utf8"));
             if (s.recall.total < 1 || s.graduate.total < 1) throw new Error("hooks left no liveness record");
             if (s.recall.reasons.no_embedding_key !== s.recall.total) throw new Error("wrong self-gate reason recorded");
           '
@@ -94,6 +97,6 @@ jobs:
       - name: validate plugin + marketplace manifests
         working-directory: .
         run: |
-          npm install -g @anthropic-ai/claude-code
+          npm install -g @anthropic-ai/claude-code@2.1.261
           claude plugin validate --strict .
           claude plugin validate --strict tools/loop-memory

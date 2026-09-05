@@ -1,8 +1,22 @@
 # CLAUDE.md — {{PROJECT_NAME}} development conventions
 
-Single source of truth for how anyone (human or AI agent) touches this repo's code. This is the
-constitution layer — always loaded, always in force. Merge with any personal/global guidelines you
-also use; on conflict, this file wins for this repo.
+Project conventions for work within this repository. Follow the host's instruction hierarchy and
+the user's current scope, allowed actions, and approval conditions. This file does not override
+those instructions or grant additional authority. Reuse applicable decisions and approvals from
+the conversation; a helper skill does not reset them. Implementation authorization persists across
+necessary source/plan/test edits within its approved scope; a changed working head requires refreshed
+evidence where affected, not a new implementation approval.
+
+Read-only investigations preserve audited resources and external systems. Necessary isolated disposable
+fixtures, temporary reports and browser/test caches are allowed within the investigation unless the
+user forbids those writes. Keep them separate from live/audited state. An explicit no-write-anywhere
+instruction forbids even disposable fixture and cache writes.
+
+Read/report/draft requests do not imply implementation or external publication. Before an action,
+check its authorization, target, reviewed content, and applicable risk gate. AUTO is not permission;
+REQUIRE needs matching human approval. Complete authorized reversible work without unnecessary
+questions. A confirmed no-effect failure may be retried under unchanged authorization after checks;
+an uncertain remote result needs read-only inspection first. Never repeat an already applied action.
 
 ---
 
@@ -74,15 +88,19 @@ and "leave a hard factual constraint as prose" produces violations nobody catche
 - **Risk classification is rule-driven, not self-reported.** Whatever changes a diff touches (schema
   migrations, auth paths, this file itself, CI/deploy config, N+ files) should map to a
   deterministic risk tier via a rule table, not an agent's own claim about how risky its change is.
-  Merge/deploy/release actions are always the highest tier regardless of anything else about the
-  diff — a human approves those, every time.
+  Merge/deploy/release/send actions always require human approval for the exact action regardless of
+  the diff. A reviewed merge/publish/deploy/send approval, or another explicitly artifact-bound
+  approval, remains applicable while its bound target, content/head/base and environment match.
+  Changed bound fields require approval for that affected action; they do not revoke implementation
+  scope or require a confirmation for every necessary edit. A bypass requires its own authorization.
 - **Branch model: {{BRANCH_MODEL}}.** {{BRANCH_MODEL_NOTES}}
 - **Worktree isolation (if concurrent work on this repo is common).** The main checkout's HEAD stays
   on {{RELEASE_OR_INTEGRATION_BRANCH}} — new work starts in its own `git worktree add`, not a
   `checkout -b` in the shared checkout. This is what lets two people/agents work on this repo at the
   same time without one's uncommitted changes breaking the other's `git` operations.
-- **Merge happens on the server, not locally.** Push the branch, open a PR, let a human (or the
-  required CI checks) approve it there. A local `git merge`/`git push` straight to the shared branch
+- **Merge happens on the server, not locally.** With publication authorized, push the branch and open
+  a PR. Required CI checks supply verification evidence; a human approves the merge. CI, agent
+  reviews, and AFK labels never replace that approval. A local `git merge`/`git push` straight to the shared branch
   skips the review surface this whole loop exists to provide.
 
 ---
@@ -103,6 +121,12 @@ get the same quality of collaboration, regardless of who (or which AI agent) is 
 
 Don't let project state (what's in progress, who owns what) leak into this file — it goes stale the
 moment it's written and the tracker is already the source of truth for it.
+
+An ADR records a decision, not authority over the user's future goals. Locate the relevant record,
+explain the consequences of a proposed change, and record an explicitly authorized goal change in
+a superseding ADR. Preserve the old record and independent verifier/merge/deploy approvals.
+Completion requires the requested artifact and observed outcomes for required checks/actions;
+a PR URL alone does not prove all publication steps succeeded. Report partial and not-run work.
 
 ---
 

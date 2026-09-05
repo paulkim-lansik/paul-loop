@@ -1,6 +1,6 @@
 {
   "name": "loop-memory",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "pgvector semantic recall for verified dev-loop lessons (and, optionally, ADR/glossary/research knowledge). Opt-in: installs disabled by default — this is a database dependency, not core loop mechanics.",
   "author": {
     "name": "paulkim-lansik"
@@ -8,9 +8,20 @@
   "homepage": "https://github.com/reach0908/paul-loop",
   "repository": "https://github.com/reach0908/paul-loop",
   "license": "MIT",
-  "keywords": ["memory", "pgvector", "recall", "semantic-search", "lessons"],
+  "keywords": [
+    "memory",
+    "pgvector",
+    "recall",
+    "semantic-search",
+    "lessons"
+  ],
   "defaultEnabled": false,
-  "dependencies": [{ "name": "loop-engine", "version": "^0.14.0" }],
+  "dependencies": [
+    {
+      "name": "loop-engine",
+      "version": "^0.15.0"
+    }
+  ],
   "userConfig": {
     "openai_api_key": {
       "type": "string",
@@ -35,7 +46,7 @@
     "loop_memory_signing_key": {
       "type": "string",
       "title": "Write-path signing key",
-      "description": "HMAC-SHA256 secret that signs graduated lesson notes (defends against memory poisoning of untrusted write paths — see README \"Threat model\"). Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing); the knowledge corpus is unaffected.",
+      "description": "HMAC-SHA256 key required for store writes and recall. Notes are bound to repository owner, corpus, source, embedding identity and content hash, including knowledge notes. Missing configuration fails closed; see README Threat model.",
       "sensitive": true,
       "required": false
     },
@@ -79,6 +90,18 @@
       "type": "number",
       "title": "Knowledge recall distance cutoff",
       "description": "Same as loop_recall_max_distance, but for the knowledge corpus (ADR/glossary/research/design) — kept separate since knowledge prose has a different embedding distribution than short lesson signatures. Default (if unset): 0.65.",
+      "required": false
+    },
+    "loop_embed_provider": {
+      "type": "string",
+      "title": "Embedding provider",
+      "description": "openai or gemini. Set explicitly when both provider credentials are present; ambiguous selection fails closed.",
+      "required": false
+    },
+    "loop_embed_model": {
+      "type": "string",
+      "title": "Embedding model",
+      "description": "Explicit provider model override. The resolved model and dimensions are part of store compatibility; changing them requires a deliberate reindex.",
       "required": false
     }
   }

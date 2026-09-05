@@ -44,6 +44,13 @@ echo "FAILED src/example.test.ts > mark-clean wiring test"
 exit 1
 EOF
 
+# Stable local target identity is required by verified receipts. Preserve all three end-to-end
+# recurrence/clean-count assertions; no synthetic receipt or manual verified flag is substituted.
+printf '.loop/\nlessons/\n' > .gitignore
+git init -q
+git add .gitignore fake-verify.sh
+git -c user.name=Fixture -c user.email=fixture@local commit -qm initial
+
 # ── (a) fail then converge: records a NEW verified lesson, count=1, clean_pass_count=0 ─────────
 "$LOOPFIX" --verify 'sh fake-verify.sh' --fix 'touch converged' --max-iter 3 --stall 5 --lessons lessons >/dev/null 2>&1
 code=$?

@@ -97,7 +97,8 @@ if (typeof cmd !== 'string' || !cmd) allow();
 // classify-risk elsewhere, e.g. a ship-feature step's own classification, where an unmatched command
 // fails closed to REQUIRE.)
 // Detection style: gh/pnpm go through the tokenizer (segments, prefixes, flag traversal); a deploy
-// path is a raw substring match on the pre-tokenized command.
+// path is a raw substring match except for a narrow plain file-read form. This does not override
+// host permission rules or classify an arbitrary shell expression as read-only.
 const GH_VALUE_FLAGS = new Set(['-R', '--repo', '--hostname']);
 // pnpm: --filter/-F/-C/--dir take a value; -w/--workspace-root is boolean (pnpm docs) and falls
 // through the ordinary flag-skip path. A value-flag outside this list can mis-parse -> fail-open defer
@@ -106,7 +107,11 @@ const PNPM_VALUE_FLAGS = new Set(['--filter', '-F', '-C', '--dir']);
 function detectsRiskySurface(command) {
   try {
     const stripped = stripHeredocs(command); // heredoc bodies are data, not commands
-    if (/tools\/deploy\//.test(stripped)) return 'deploy-path'; // same substring classify-risk uses (matches read commands too — same tradeoff as the permissions.ask layer)
+    if (/tools\/deploy\//.test(stripped)) {
+      const plainRead = !/[`$<>|;&(){}\n\r]/.test(command)
+        && ['cat', 'head', 'tail', 'wc', 'ls', 'stat'].includes(tokenize(command)[0]);
+      if (!plainRead) return 'deploy-path';
+    }
     for (const rawToks of splitSegments(stripped).map(tokenize)) {
       const toks = stripPrefix(rawToks); // strip env/word prefixes, incl. sudo/time
       if (toks[0] === 'gh') {
@@ -213,7 +218,7 @@ try {
   const bypass = payload?.permission_mode === 'bypassPermissions';
   const surfaceLabel =
     surface === 'deploy-path'
-      ? "commands touching this repo's deploy-script path (including reads — same tradeoff as the permissions.ask layer) are"
+      ? "execution or ambiguous shell commands using this repo's deploy-script path are"
       : 'merge/deploy commands are';
   const base =
     `[gate-risky-commands] ${surfaceLabel} always routed through a human-approval gate (REQUIRE, ` +

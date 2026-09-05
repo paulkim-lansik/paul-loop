@@ -4,6 +4,9 @@ description: Reviews a diff against this repo's explicit blocker criteria (CLAUD
 tools: Read, Grep, Glob, Bash
 ---
 
+Follow the [shared authorization and completion contract](../skills/AUTHORIZATION.md).
+Use the caller's scope and evidence; return unresolved decisions to the caller without expanding the task.
+
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
 > `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
 > questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,

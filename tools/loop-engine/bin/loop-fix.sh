@@ -68,6 +68,13 @@
 #                       trusted — see round-5 in Guard scope below for why, and what this does and
 #                       does NOT guarantee.
 #   --loop-dir <dir>    State/handoff dir (default .loop).
+#   --resume <run-id>   Resume an interrupted/cancelled execution with original limits and HEAD.
+#                       With no other flags, reuse its exact command/config. Budgets include downtime.
+#                       Node supervises process groups and keeps .loop/lifecycle/<id>.json; concurrent
+#                       executions in one workspace or handoff directory are refused (exit 2).
+#                       SIGINT/SIGTERM exit 130, invalidate PASS, recover protected files and kill the
+#                       worker group before releasing the sentinel. This is not containment of a child
+#                       deliberately escaping its process group. SIGKILL needs explicit stale recovery.
 #   --lessons <dir>     Verified-lessons memory (Phase 3): recall past fixes for this same failure
 #                       into the fix prompt, and record a VERIFIED lesson on success. See bin/lessons.mjs.
 #
@@ -171,6 +178,16 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VERDICT_RUN="$HERE/verdict-run.sh"
 
+# Keep the existing Bash 3.2 worker; the Node owner enforces durable budgets, leases and cancellation.
+# Help remains available without Node. LOOP_LIFECYCLE_WORKER is an internal recursion marker,
+# not an authentication boundary (the same-UID shell already controls this script/environment).
+if [ "${LOOP_LIFECYCLE_WORKER:-}" != 1 ]; then
+  case "${1:-}" in -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+  exec node "$HERE/../lib/loop-lifecycle.mjs" run "$0" "$@"
+fi
+# Consume the marker: a nested loop-fix invocation must acquire its OWN lease, never bypass it.
+unset LOOP_LIFECYCLE_WORKER
+
 VERIFY=""; FIX=""; MAX_ITER=10; BUDGET=0; STALL=3; LOOP_DIR=".loop"
 PROTECT_LIST=""   # newline-separated globs
 LESSONS=""        # optional verified-lessons memory dir (Phase 3)
@@ -268,7 +285,8 @@ PROTECT_MODES_DATA=""   # original perm bits per file, same order (undoes the ba
                          # chmod on restore, step 5)
 LESSONS_BIN="$HERE/lessons.sh"
 FIRST_VERDICT="$LOOP_DIR/first-verdict.txt"
-rm -f "$FIRST_VERDICT" 2>/dev/null   # reset per run: never inherit a prior run's first failure (sharing --loop-dir)
+FIRST_RECEIPT="$LOOP_DIR/first-verdict.receipt"
+[ "${LOOP_LIFECYCLE_RESUME:-}" = 1 ] || rm -f "$FIRST_VERDICT" "$FIRST_RECEIPT" 2>/dev/null   # reset per run; resume preserves the original failure evidence
 WATCHDOG_FIRED="$LOOP_DIR/watchdog-fired"
 rm -f "$WATCHDOG_FIRED" 2>/dev/null  # reset per run: a stale fired flag must not abort a fresh loop
 WATCHDOG_PID=""
@@ -296,49 +314,10 @@ case "$LOOP_DIR" in
   *)   LOOP_DIR_EXCL="$LOOP_DIR" ;;
 esac
 
-# Expand the protect globs into a concrete file list.
-#  - a pattern with '**' recurses via find (skipping node_modules/.git, and $LOOP_DIR itself)
-#  - otherwise it is a single-level shell glob or a literal path
-#
-# The recursive branch used to reduce the pattern to its BASENAME (`packages/db/test/**/*.test.ts` ->
-# `*.test.ts`) and hand that to `find . -name`, discarding the directory part entirely. Every
-# `*.test.ts` in the repository then counted as protected — and `cleanup_rogue_protected()` `rm -f`s
-# any protect-matching file that did not exist at run start, so an unrelated test file created
-# anywhere during a run was deleted. Over-protection is not the safe direction when the protection
-# includes a delete.
-#
-# So the basename is now only a fast PRE-FILTER for find; each candidate is then matched against the
-# WHOLE pattern. Shell `case` is the matcher: its `*` crosses `/`, which is exactly `**` semantics, so
-# `**` -> `*` is a faithful translation. `/**/` additionally has to match zero directories
-# (`a/**/x` matches `a/x`), which one `case` pattern cannot express — hence the second pattern with
-# `/**` elided, and a match against either.
-glob_to_case() { printf '%s' "$1" | sed 's/\*\*/*/g'; }
-
+# The hook, supervisor and Bash snapshot use one glob language (including zero-depth **/).
+# Enumeration failures remain visible; per-pattern validation runs before the initial snapshot.
 protect_files() {
-  printf '%s\n' "$PROTECT_LIST" | while IFS= read -r g; do
-    [ -z "$g" ] && continue
-    case "$g" in
-      *'**'*)
-        base="${g##*/}"                                   # fast pre-filter only, NOT the match
-        pat_deep="$(glob_to_case "$g")"                   # '**' -> '*' (one or more dirs)
-        pat_flat="$(glob_to_case "$(printf '%s' "$g" | sed 's#/\*\*##g')")"   # zero dirs
-        find . -type f -name "$base" 2>/dev/null \
-          | grep -vE '/(node_modules|\.git)/' \
-          | sed 's#^\./##' \
-          | while IFS= read -r p; do
-              if [ -n "$LOOP_DIR_EXCL" ]; then
-                case "$p" in
-                  "$LOOP_DIR_EXCL"/*) continue ;;
-                esac
-              fi
-              case "$p" in
-                $pat_deep|$pat_flat) printf '%s\n' "$p" ;;
-              esac
-            done ;;
-      *)
-        for f in $g; do [ -f "$f" ] && printf '%s\n' "$f"; done ;;
-    esac
-  done
+  node "$HERE/../lib/loop-protect-files.mjs" "$LOOP_DIR" "$PROTECT_LIST"
 }
 
 # Snapshots both the sha256 (detection, held in-memory — round-3 fix, see PROTECT_SNAP_DATA above)
@@ -386,11 +365,20 @@ snapshot_protected() {
 # scan in PROTECT_NOW_DATA (a global, not a return value) purely so the caller can render a
 # human-readable "changed vs snapshot" diff on a violation — that var is diagnostic output, not
 # ground truth, and nothing re-reads it for the actual pass/fail decision.
+protected_path_safe() {
+  local _guard_path="$1"
+  while [ "$_guard_path" != "." ] && [ "$_guard_path" != "/" ]; do
+    [ ! -L "$_guard_path" ] || return 1
+    _guard_path="$(dirname "$_guard_path")"
+  done
+  [ ! -e "$1" ] || [ -f "$1" ]
+}
 check_protected() {
   [ -n "$PROTECT_SNAP_DATA" ] || return 0
   _now=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    protected_path_safe "$f" || { PROTECT_NOW_DATA="unsafe protected path: $f"; return 1; }
     _now="$_now$(sha_of "$f")
 "
   done < <(protect_files | sort -u)
@@ -471,6 +459,12 @@ restore_protected() {
   # _integrity_failed set below correctly persist past the loop.
   while IFS= read -r f <&3 && IFS= read -r _origline <&4 && IFS= read -r _origmode <&5; do
     [ -n "$f" ] || continue
+    if ! protected_path_safe "$f"; then
+      log "  RESTORE FAILED for $f: unsafe protected path (symlink or non-file) — refusing to follow it."
+      printf 'file=%s reason=unsafe protected path; inspect symlink ancestors before restoring\n' "$f" >> "$COMPROMISED_MARKER"
+      _restore_failed=1
+      continue
+    fi
     _orig_hash="${_origline%% *}"
     _b="$PROTECT_BACKUP/$f"
     if [ ! -f "$_b" ]; then
@@ -622,9 +616,7 @@ RUNNER_FAIL_RE='(✕|✗|✖|✘|×|not ok|--- FAIL|FAILED|AssertionError|panic:
 # 원장을 소비하지 않으므로 원장으로 루프 수명을 연장하는 경로는 없다.
 resolve_ledger() {
   if [ -n "${LOOP_RUN_LEDGER:-}" ]; then printf '%s' "$LOOP_RUN_LEDGER"; return 0; fi
-  _rid="$(head -n1 .loop/runs/current 2>/dev/null | tr -d '[:space:]')"
-  printf '%s' "$_rid" | grep -qE '^[A-Za-z0-9_-]{1,40}$' || _rid="unknown"
-  printf '%s/.loop/runs/%s.jsonl' "$(pwd)" "$_rid"
+  node "$HERE/../lib/loop-lifecycle.mjs" ledger
 }
 
 # 실질 진전 = 새 verdict 이벤트(passed든 failed든 — 이슈의 명시 목록 "새 verdict"). 수렴 실패는
@@ -732,6 +724,8 @@ fi
 
 # Snapshot protected files, and FAIL CLOSED if a protect pattern was given but matched nothing —
 # never run believing the guard is on when it is silently off.
+# Validate EVERY requested pattern before constructing the Bash in-memory snapshot.
+node "$HERE/../lib/loop-protect-files.mjs" "$LOOP_DIR" "$PROTECT_LIST" validate >/dev/null || exit 2
 snapshot_protected
 has_protect=0
 printf '%s\n' "$PROTECT_LIST" | grep -q '[^[:space:]]' && has_protect=1
@@ -752,11 +746,19 @@ if [ "$IDLE_T" -gt 0 ] || [ "$PROG_T" -gt 0 ]; then
   start_watchdog
 fi
 
-start_epoch="$(date +%s)"
-prev_fp=""; prev_counts=""; stall_count=0; iter=0; infra_count=0
+prev_fp="${LOOP_RESUME_FP:-}"; prev_counts="${LOOP_RESUME_COUNTS:-}"
+stall_count="${LOOP_RESUME_STALL:-0}"; iter="${LOOP_RESUME_ITER:-0}"; infra_count="${LOOP_RESUME_INFRA:-0}"
+attempt="${LOOP_ATTEMPT:-0}"
+checkpoint_loop() {
+  node "$HERE/../lib/loop-lifecycle.mjs" checkpoint "$1" "$iter" "$infra_count" "$stall_count" "$attempt" "$prev_fp" "$prev_counts" || exit 2
+}
 
 while [ "$iter" -lt "$MAX_ITER" ]; do
   iter=$(( iter + 1 ))
+  attempt=$(( attempt + 1 ))
+  export LOOP_ATTEMPT="$attempt"
+  # Persist the reservation before invoking the verifier: a crash cannot refund an attempt.
+  checkpoint_loop verify
 
   # ---- VERIFY (ground truth). Run via `sh -c` so quoting in $VERIFY is honoured. ----
   # stderr는 버리지 않고 파일로 보존한다 — --guard-mutation의 fail-closed 거부(exit 2)가 무음으로
@@ -764,6 +766,13 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   # shellcheck disable=SC2086 — $GUARD_MUT는 빈 값(off) 또는 단일 플래그라 무인용 확장이 의도.
   "$VERDICT_RUN" $GUARD_MUT --log "$LOG_FILE" -- sh -c "$VERIFY" > "$VERDICT_FILE" 2>"$LOOP_DIR/verdict-run.err"
   vcode=$?
+  if [ "$vcode" -eq 0 ] || [ "$vcode" -eq 1 ]; then
+    checkpoint_loop verified
+    CURRENT_RECEIPT="$(node "$HERE/../lib/loop-lifecycle.mjs" receipt)" || exit 2
+  else
+    checkpoint_loop verifier-error
+    CURRENT_RECEIPT=""
+  fi
 
   # ---- BAC-626 ③: 워치독 발화 확인 — 타임아웃으로 살해된 verify를 일반 FAIL과 구분 ----
   if [ -f "$WATCHDOG_FIRED" ]; then
@@ -815,13 +824,16 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     # a clean pass. Runs whenever --lessons is set, independent of FIRST_VERDICT — a fully clean pass
     # (no failure this run) has no FIRST_VERDICT but must still bump every lesson on this gate.
     if [ -n "$LESSONS" ] && [ -x "$LESSONS_BIN" ]; then
-      "$LESSONS_BIN" mark-clean --gate "$VERIFY" --lessons "$LESSONS" >/dev/null 2>&1
+      "$LESSONS_BIN" mark-clean --receipt "$CURRENT_RECEIPT" --gate "$VERIFY" --lessons "$LESSONS" >/dev/null 2>"$LOOP_DIR/lessons.err" \
+        || log "WARNING: clean-pass lesson update refused; see $LOOP_DIR/lessons.err"
     fi
     # Phase 3: record a VERIFIED lesson — ground truth (the verifier) confirmed this fix worked.
     if [ -n "$LESSONS" ] && [ -s "$FIRST_VERDICT" ] && [ -x "$LESSONS_BIN" ]; then
       "$LESSONS_BIN" record --signature-file "$FIRST_VERDICT" --source loop-fix \
-        --iterations "$iter" --verified --gate "$VERIFY" --lessons "$LESSONS" >/dev/null 2>&1 \
-        && log "recorded a verified lesson to memory ($LESSONS)"
+        --iterations "$iter" --verified --gate "$VERIFY" --lessons "$LESSONS" \
+        --receipt "$CURRENT_RECEIPT" --failure-receipt "$(cat "$FIRST_RECEIPT" 2>/dev/null || true)" >/dev/null 2>"$LOOP_DIR/lessons.err" \
+        && log "recorded a verified lesson to memory ($LESSONS)" \
+        || log "WARNING: verified lesson update refused; see $LOOP_DIR/lessons.err"
     fi
     log "=== loop-fix done: SUCCESS in $iter iteration(s) ==="
     exit 0
@@ -838,28 +850,25 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
      && grep -qE "$INFRA_RE" "$LOG_FILE" 2>/dev/null \
      && ! grep -qE "$RUNNER_FAIL_RE" "$LOG_FILE" 2>/dev/null; then
     infra_count=$(( infra_count + 1 ))
+    checkpoint_loop infra-failed
     if [ "$infra_count" -gt "$INFRA_RETRIES" ]; then
       log "iter $iter: INFRA failure ${infra_count}x — retry cap exhausted. Aborting (infra, not code)."
       check_protected_on_abort
       log "=== loop-fix done: INFRA ==="
       exit 1
     fi
-    # 하드 정지 기준은 면제 경로도 우회하지 못한다 — --budget-sec 검사를 continue 앞에 둔다
-    # (아래 정규 경로의 budget 블록과 동일 판정, 3축 리뷰 ②).
-    if [ "$BUDGET" -gt 0 ] && [ $(( $(date +%s) - start_epoch )) -ge "$BUDGET" ]; then
-      log "iter $iter: budget ${BUDGET}s exhausted during an infra-exempt retry. Aborting."
-      check_protected_on_abort
-      log "=== loop-fix done: BUDGET ==="
-      exit 1
-    fi
+    # The supervisor's absolute deadline also bounds exempt retries and their backoff sleep.
     iter=$(( iter - 1 ))   # 예산 면제: 실제 결과를 수령한 iteration만 max-iter를 소모한다
     log "iter(exempt): transient infra failure (${infra_count}/${INFRA_RETRIES}) — retrying verify without consuming max-iter."
+    checkpoint_loop infra-retry
     sleep 2
     continue
   fi
 
   # Remember the FIRST failure; its signature is what we record as a lesson once the loop converges.
-  [ -s "$FIRST_VERDICT" ] || cp "$VERDICT_FILE" "$FIRST_VERDICT" 2>/dev/null
+  if [ ! -s "$FIRST_VERDICT" ]; then
+    cp "$VERDICT_FILE" "$FIRST_VERDICT" 2>/dev/null && printf '%s\n' "$CURRENT_RECEIPT" > "$FIRST_RECEIPT"
+  fi
 
   # ---- stall detection (BAC-626 ①): dual-signal ----
   # fingerprint(EXIT+FAIL 줄)가 동일 "그리고" 합산 카운트가 무전진일 때만 stall로 센다 —
@@ -874,6 +883,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     stall_count=1
   fi
   prev_fp="$fp"; prev_counts="$counts"
+  checkpoint_loop failed
   if [ "$stall_count" -ge "$STALL" ]; then
     log "iter $iter: STALLED — identical failure fingerprint and no count progress ${stall_count}x running. Aborting."
     check_protected_on_abort
@@ -882,17 +892,8 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     exit 1
   fi
 
-  # ---- budget check ----
-  if [ "$BUDGET" -gt 0 ]; then
-    elapsed=$(( $(date +%s) - start_epoch ))
-    if [ "$elapsed" -ge "$BUDGET" ]; then
-      log "iter $iter: budget ${BUDGET}s exhausted (${elapsed}s). Aborting."
-      check_protected_on_abort
-      record_fail_lesson
-      log "=== loop-fix done: BUDGET ==="
-      exit 1
-    fi
-  fi
+  # The supervisor owns the precise, durable total deadline. A second whole-second clock here
+  # can expire almost a second early and misclassify exhaustion as an ordinary worker failure.
 
   # ---- verify-only mode: no fixer, just report and stop ----
   if [ -z "$FIX" ]; then
@@ -932,6 +933,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     echo "Full log: $LOG_FILE  (read it only if the FAIL lines above are not enough)"
   } > "$PROMPT_FILE"
 
+  checkpoint_loop fix
   log "iter $iter: invoking fixer…"
   # LOOP_STOP_GATE_OFF=1: 수정자 서브프로세스(claude -p 등)에는 Stop verdict 게이트를 끈다 —
   # 수정자는 성공을 결정하지 않고(GENERATOR != EVALUATOR) 종료 직후 이 루프가 검증기를 다시

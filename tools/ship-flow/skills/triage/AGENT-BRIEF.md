@@ -1,6 +1,8 @@
 # Writing Agent Briefs
 
-An agent brief is a structured comment posted on a GitHub issue when it moves to `ready-for-agent`. It is the authoritative specification that an AFK agent will work from. The original issue body and discussion are context — the agent brief is the contract.
+An agent brief is a structured comment posted on a GitHub issue when it moves to `ready-for-agent`. It is the scoped specification for an AFK implementation, subject to host instructions and the
+user's current authorization. It cannot grant merge, deploy, external-send or verifier-bypass rights.
+Original discussion is context; later authorized changes supersede an older brief.
 
 ## Principles
 
@@ -41,6 +43,7 @@ State what is out of scope. This prevents the agent from gold-plating or making 
 
 **Category:** bug / enhancement
 **Summary:** one-line description of what needs to happen
+**Authorization:** permitted actions, target/worktree, endpoint and exclusions; no implied merge/deploy/send.
 
 **Current behavior:**
 Describe what happens now. For bugs, this is the broken behavior.

@@ -1,6 +1,5 @@
 # Dedicated Postgres (pgvector) for loop-memory. A separate instance from any product DB you may
-# have — this holds dev-loop lesson/knowledge notes only, never product/tenant data, so it carries
-# no RLS/tenant-role separation.
+# have — this holds dev-loop lesson/knowledge notes only, may contain sensitive development text. See HARDENING.md for ownership and privacy limits.
 # Exposed on port 5434 (default product Postgres ports are usually 5432/5433 — avoids collision).
 # Data is ephemeral (dev-only volume).
 #
@@ -9,7 +8,7 @@
 # `docker compose up` from a clone of *this* repo can match and recreate a stopped
 # container/volume left over from unrelated `loop-memory`-named checkouts on the same machine
 # (reused container_name + service key = same identity to Compose, regardless of path).
-name: loop-memory-plugin
+name: ${LOOP_MEMORY_COMPOSE_PROJECT:?Set a repository-specific compose project name}
 services:
   loop-memory-pg:
     # init.sql is baked into the image at build time (no host bind mount) — keeps the container
@@ -17,13 +16,12 @@ services:
     build:
       context: ./docker
     image: loop-memory-pg:local
-    container_name: loop-memory-pg
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: loop_memory
     ports:
-      - "5434:5432"
+      - "127.0.0.1:${LOOP_MEMORY_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d loop_memory"]
       interval: 2s

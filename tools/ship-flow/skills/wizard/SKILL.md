@@ -3,6 +3,8 @@ name: wizard
 description: Generate an interactive bash wizard that walks a human through steps only they can perform. Use when provisioning infrastructure, setting up credentials or CI secrets, walking an unfamiliar third-party dashboard, or running a one-off migration or cutover. Don't invoke this for steps the agent can perform itself.
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Wizard
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -29,7 +31,10 @@ Work out every manual step the human must take and every value that gets capture
 - For setup: `.env`, `.env.example`, `.env.*`, `README`, `docker-compose*`, framework config, and `.github/workflows/*` (every `secrets.*` / `vars.*` reference is a value the wizard must produce).
 - For a migration or transition: the current state, the target state, and the irreversible actions between them.
 
-Then show the user the ordered list of stages and the values each produces, and confirm: they may add, drop, or reorder.
+Reuse already-established stages and scope. Prepare the ordered stages and concrete script for review;
+ask only for a missing material decision. Authoring a wizard does not authorize running it, creating
+accounts, setting secrets, migrations, or changing remote settings. Keep its runtime confirmations at
+the actual irreversible boundaries.
 
 **Done when:** every stage is named in order, and for each captured value you know (a) where the human gets it, (b) where it's written (`.env`, a GitHub secret, both, or nowhere; some stages are pure actions), and (c) whether it's secret (hidden entry) or public.
 
@@ -50,7 +55,8 @@ Hold the bar the template sets: open the URL before asking for its value, use `a
 - `bash -n <script>`; run `shellcheck` if available.
 - `chmod +x <script>`.
 - Don't run it end-to-end yourself: it opens browsers and blocks on human input. Trace it statically instead: every value from step 1 is captured and lands where step 1 said, and every `set_secret` name exactly matches a `secrets.*` reference in CI.
-- Tell the user how to run it. If it's a repeatable setup path, commit it and link it from the README so the next person runs the script instead of asking an AI.
+- Tell the user how to run it. If a repeatable setup path was requested, save and link it within scope;
+  commit only if authorized. Report authoring/validation separately from actual execution.
 
 ## The failure this exists to prevent
 

@@ -15,6 +15,20 @@
       "when": 1786519785148,
       "tag": "0001_even_vulture",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788603649686,
+      "tag": "0002_memory_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788606016728,
+      "tag": "0003_signed_note_identity",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,8 @@ argument-hint: "What will the next session be used for?"
 disable-model-invocation: true
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Handoff
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from

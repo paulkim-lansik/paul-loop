@@ -66,10 +66,10 @@ node -e '
 ' "$JSON" || fail "T1b gate-key normalization wrong"
 # record --gate도 같은 정규화를 거쳐 교차 참조 키가 일치해야 한다(lessons 쪽 표면).
 LDIRN="$DIR/lessons-norm"
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --gate "sh -c pnpm verify" --lessons "$LDIRN" >/dev/null || fail "T1b record --gate failed"
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --lessons "$LDIRN" >/dev/null
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --lessons "$LDIRN" >/dev/null
-PNORM="$(node "$LESSONS" promote --runs "$N" --lessons "$LDIRN" 2>/dev/null)" || fail "T1b promote --runs must exit 0"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --gate "sh -c pnpm verify" --lessons "$LDIRN" >/dev/null || fail "T1b record --gate failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --lessons "$LDIRN" >/dev/null
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: norm cross-ref") --verified --lessons "$LDIRN" >/dev/null
+PNORM="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$N" --lessons "$LDIRN" 2>/dev/null)" || fail "T1b promote --runs must exit 0"
 printf '%s' "$PNORM" | grep -q "\[REGRESSION: pnpm verify PASS→FAIL" || fail "T1b record --gate 'sh -c pnpm verify' must cross-reference the normalized gate, got: $PNORM"
 echo "PASS: T1b gate identity converges across call paths (sh -c wrapper normalized, both surfaces)"
 
@@ -222,17 +222,17 @@ node -e '
 ' "$JSON" || fail "T6 empty ledger must fold to nothing"
 echo "PASS: T6 missing/empty runs dir is handled without crash, exit 0"
 
-# ── T7) lessons record --gate ×3 → promote --runs: [3×] 카운트와 [REGRESSION:] 줄이 구분 병기 ─
+# ── T7) lessons record --gate ×3 → promote --runs: [3 verified runs] 카운트와 [REGRESSION:] 줄이 구분 병기 ─
 LDIR="$DIR/lessons7"
 for i in 1 2 3; do
-  node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: rls policy missing on tenant table") --verified \
+  node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: rls policy missing on tenant table") --verified \
     --fix "add pgPolicy + FORCE" --title "rls policy fix" --gate "pnpm verify" --lessons "$LDIR" >/dev/null \
     || fail "T7 record #$i failed"
 done
-ID_PLAIN="$(node "$LESSONS" promote --lessons "$LDIR" 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)"
+ID_PLAIN="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --lessons "$LDIR" 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)"
 [ -n "$ID_PLAIN" ] || fail "T7 could not extract lesson id from plain promote output"
-POUT="$(node "$LESSONS" promote --runs "$A" --lessons "$LDIR" 2>/dev/null)" || fail "T7 promote --runs must exit 0"
-printf '%s' "$POUT" | grep -q "\[3×\]" || fail "T7 recurrence count [3×] must stay, got: $POUT"
+POUT="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$A" --lessons "$LDIR" 2>/dev/null)" || fail "T7 promote --runs must exit 0"
+printf '%s' "$POUT" | grep -q "\[3 verified runs\]" || fail "T7 recurrence count [3 verified runs] must stay, got: $POUT"
 printf '%s' "$POUT" | grep -q "\[REGRESSION: pnpm verify PASS→FAIL" || fail "T7 candidate must carry a distinct [REGRESSION:] line, got: $POUT"
 printf '%s' "$POUT" | grep -q "gate regressions (deterministic" || fail "T7 independent regression section must appear, got: $POUT"
 # 기존 소비자 계약: promote 출력의 첫 16-hex 토큰은 여전히 후보 lesson id다 (retire 테스트의 추출 방식).
@@ -240,7 +240,7 @@ ID_RUNS="$(printf '%s' "$POUT" | grep -oE '[0-9a-f]{16}' | head -1)"
 [ "$ID_RUNS" = "$ID_PLAIN" ] || fail "T7 first 16-hex token must still be the candidate id (got $ID_RUNS want $ID_PLAIN)"
 echo "PASS: T7 promote --runs carries [N×] and [REGRESSION:] as visually distinct signals"
 
-# ── T8) gate_history 없는 구형 lesson → 전 명령 종전 동작 + REGRESSION 병기 없음(하위호환) ──
+# ── T8) 구형 lesson은 historical 통계에 남고, 영수증 없는 verified 플래그는 승격 불가 ──
 LDIR8="$DIR/lessons8"
 mkdir -p "$LDIR8"
 cat > "$LDIR8/0123456789abcdef.json" <<'EOF'
@@ -257,28 +257,33 @@ cat > "$LDIR8/0123456789abcdef.json" <<'EOF'
   "last_seen": "2026-01-02T00:00:00.000Z"
 }
 EOF
-SOUT="$(node "$LESSONS" stats --lessons "$LDIR8")" || fail "T8 stats on legacy lesson must exit 0"
-printf '%s' "$SOUT" | grep -q "total=1 verified=1" || fail "T8 stats must read the legacy lesson, got: $SOUT"
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: fresh failure") --verified --lessons "$LDIR8" >/dev/null || fail "T8 record without --gate must work"
-ROUT="$(node "$LESSONS" recall --signature "FAIL: fresh failure" --lessons "$LDIR8" 2>/dev/null)" || fail "T8 recall must exit 0"
+SOUT="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" stats --lessons "$LDIR8")" || fail "T8 stats on legacy lesson must exit 0"
+printf '%s' "$SOUT" | grep -q "total=1 verified=0" || fail "T8 stats must read the legacy lesson, got: $SOUT"
+printf '%s' "$SOUT" | grep -q "total_recurrences=3" || fail "T8 historical recurrences must remain visible: $SOUT"
+printf '%s' "$SOUT" | grep -q "avg_iterations_to_green=n/a (over 0 verified convergence(s))" || fail "T8 legacy iterations must not enter verified convergence metrics: $SOUT"
+printf '%s' "$SOUT" | grep -q "\[0 verified runs\] (unverified) legacy lesson" || fail "T8 legacy lesson must be explicitly marked unverified: $SOUT"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: fresh failure") --verified --lessons "$LDIR8" >/dev/null || fail "T8 record without --gate must work"
+ROUT="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" recall --signature "FAIL: fresh failure" --lessons "$LDIR8" 2>/dev/null)" || fail "T8 recall must exit 0"
 printf '%s' "$ROUT" | grep -q "Past lesson" || fail "T8 recall must behave as before, got: $ROUT"
-POUT8="$(node "$LESSONS" promote --runs "$A" --lessons "$LDIR8" 2>/dev/null)" || fail "T8 promote --runs must exit 0"
-printf '%s' "$POUT8" | grep -q "0123456789abcdef" || fail "T8 legacy candidate must still list, got: $POUT8"
+POUT8="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$A" --lessons "$LDIR8" 2>/dev/null)" || fail "T8 promote --runs must exit 0"
+printf '%s' "$POUT8" | grep -q "0123456789abcdef" && fail "T8 legacy flag must not become a verified candidate: $POUT8"
+HIST8="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --include-unverified --lessons "$LDIR8")"
+printf '%s' "$HIST8" | grep -q "0123456789abcdef" || fail "T8 legacy record must remain available in explicit unverified view"
 printf '%s' "$POUT8" | grep -q "\[REGRESSION:" && fail "T8 legacy lesson (no gate_history) must not get a [REGRESSION:] line, got: $POUT8"
-echo "PASS: T8 legacy lessons (no gate_history) keep prior behavior across commands"
+echo "PASS: T8 legacy lessons remain historical; verified recall/promotion requires new receipts"
 
 # ── T9) promote (--runs 미지정) → 기존 출력 그대로 (회귀 섹션·REGRESSION 줄 0건) ────────────
-POUT9="$(node "$LESSONS" promote --lessons "$LDIR" 2>/dev/null)" || fail "T9 plain promote must exit 0"
+POUT9="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --lessons "$LDIR" 2>/dev/null)" || fail "T9 plain promote must exit 0"
 printf '%s' "$POUT9" | grep -q "REGRESSION" && fail "T9 promote without --runs must not mention REGRESSION, got: $POUT9"
 printf '%s' "$POUT9" | grep -q "gate regressions" && fail "T9 promote without --runs must not print the regression section, got: $POUT9"
-printf '%s' "$POUT9" | grep -q "\[3×\]" || fail "T9 plain promote must keep the legacy format, got: $POUT9"
-echo "PASS: T9 promote without --runs is byte-compatible with the legacy format"
+printf '%s' "$POUT9" | grep -q "\[3 verified runs\]" || fail "T9 plain promote must keep the legacy format, got: $POUT9"
+echo "PASS: T9 promote without --runs keeps verified recurrence format without regression annotations"
 
 # ── T10) promote --runs <부재 원장> → stderr 경고 1줄 + 본연 listing 정상 (fail-open) ───────
 ERRF="$DIR/t10.stderr"
-POUT10="$(node "$LESSONS" promote --runs "$DIR/no-such-ledger" --lessons "$LDIR" 2>"$ERRF")" || fail "T10 promote with missing ledger must exit 0"
+POUT10="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$DIR/no-such-ledger" --lessons "$LDIR" 2>"$ERRF")" || fail "T10 promote with missing ledger must exit 0"
 grep -q "회귀 신호 없이 진행" "$ERRF" || fail "T10 must warn on stderr about the unreadable ledger, got: $(cat "$ERRF")"
-printf '%s' "$POUT10" | grep -q "\[3×\]" || fail "T10 listing must stay intact (fail-open), got: $POUT10"
+printf '%s' "$POUT10" | grep -q "\[3 verified runs\]" || fail "T10 listing must stay intact (fail-open), got: $POUT10"
 printf '%s' "$POUT10" | grep -q "\[REGRESSION:" && fail "T10 must not fabricate regression lines without a ledger, got: $POUT10"
 echo "PASS: T10 unreadable ledger warns on stderr and never breaks the promote listing"
 
@@ -293,14 +298,14 @@ cat > "$P/runP.jsonl" <<'EOF'
 EOF
 LDIRP="$DIR/lessons-proto"
 for i in 1 2 3; do
-  node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: no gate attribution here") --verified --lessons "$LDIRP" >/dev/null || fail "T11 record #$i failed"
+  node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: no gate attribution here") --verified --lessons "$LDIRP" >/dev/null || fail "T11 record #$i failed"
 done
-POUTP="$(node "$LESSONS" promote --runs "$P" --lessons "$LDIRP" 2>/dev/null)" || fail "T11 promote --runs must exit 0"
+POUTP="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$P" --lessons "$LDIRP" 2>/dev/null)" || fail "T11 promote --runs must exit 0"
 printf '%s' "$POUTP" | grep -q "\[REGRESSION: constructor" && fail "T11 candidate WITHOUT gate_history must never get a per-candidate line via the prototype chain, got: $POUTP"
 printf '%s' "$POUTP" | grep -q "REGRESSION: constructor" || fail "T11 the independent section must still surface the forged-name regression, got: $POUTP"
 # record --gate "__proto__"의 일반 대입은 프로토타입 세터를 타 무음 유실된다 — own property로 남아야 한다.
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: proto gate lesson") --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #1 failed"
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: proto gate lesson") --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #2 failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: proto gate lesson") --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #1 failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: proto gate lesson") --verified --gate "__proto__" --lessons "$LDIRP" >/dev/null || fail "T11 record --gate proto #2 failed"
 node -e '
   const { readdirSync, readFileSync } = require("node:fs");
   const dir = process.argv[1];
@@ -316,7 +321,7 @@ echo "PASS: T11 forged gate names cannot false-attribute (hasOwn) and __proto__ 
 # ── T12) 후보 0건 + 회귀 존재 → 독립 섹션은 그래도 나온다 (lesson 미귀속 회귀 표면화 — AC 취지) ─
 LDIR12="$DIR/lessons-empty"
 mkdir -p "$LDIR12"
-POUT12="$(node "$LESSONS" promote --runs "$A" --lessons "$LDIR12" 2>/dev/null)" || fail "T12 promote must exit 0"
+POUT12="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$A" --lessons "$LDIR12" 2>/dev/null)" || fail "T12 promote must exit 0"
 printf '%s' "$POUT12" | grep -q "no open recurring" || fail "T12 empty pool line must stay, got: $POUT12"
 printf '%s' "$POUT12" | grep -q "gate regressions (deterministic" || fail "T12 regression section must surface even with zero candidates, got: $POUT12"
 echo "PASS: T12 zero-candidate promote still surfaces the regression section"
@@ -330,10 +335,10 @@ cat > "$V/runV.jsonl" <<'EOF'
 {"id":"v2","type":"verdict.failed","ts":"2026-08-08T07:01:00.000Z","aggregate_id":"runV","payload":{"verdict":"FAIL","exit":1,"cmd":"pnpm verify","log":"/tmp/v.log"},"version":2}
 EOF
 ERRF13="$DIR/t13.stderr"
-POUT13="$(node "$LESSONS" promote --runs "$V" --lessons "$LDIR" 2>"$ERRF13")" || fail "T13 promote must stay exit 0 (fail-open)"
+POUT13="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --runs "$V" --lessons "$LDIR" 2>"$ERRF13")" || fail "T13 promote must stay exit 0 (fail-open)"
 grep -q "부분 결손" "$ERRF13" || fail "T13 dropped-event counters must surface on stderr, got: $(cat "$ERRF13")"
 grep -q "skipped_events=2" "$ERRF13" || fail "T13 the warning must carry the counts, got: $(cat "$ERRF13")"
-printf '%s' "$POUT13" | grep -q "\[3×\]" || fail "T13 listing must stay intact, got: $POUT13"
+printf '%s' "$POUT13" | grep -q "\[3 verified runs\]" || fail "T13 listing must stay intact, got: $POUT13"
 echo "PASS: T13 a contract-violating ledger is loudly distinguishable from a healthy no-regression one"
 
 echo "PASS: regression-signals — deterministic PASS→FAIL detection + promote signal wiring (BAC-631)"

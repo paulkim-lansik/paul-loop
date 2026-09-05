@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "status": "proposed",
+  "repo": "reach0908/paul-loop",
+  "branch": "main",
+  "before_hash": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "before": null,
+  "after": {
+    "required_status_checks": {
+      "strict": true,
+      "contexts": [],
+      "checks": [
+        {
+          "context": "selftest"
+        },
+        {
+          "context": "test"
+        },
+        {
+          "context": "verifier-pinned-review"
+        },
+        {
+          "context": "scan"
+        }
+      ]
+    },
+    "enforce_admins": true,
+    "required_pull_request_reviews": {
+      "required_approving_review_count": 0
+    },
+    "restrictions": null,
+    "allow_force_pushes": false,
+    "allow_deletions": false
+  },
+  "preserved_separate_controls": {
+    "required_signatures": null
+  },
+  "changed_fields": [
+    "required_status_checks",
+    "enforce_admins",
+    "required_pull_request_reviews",
+    "restrictions",
+    "allow_force_pushes",
+    "allow_deletions"
+  ],
+  "plan_hash": "3116790d5f7848929cb78b336aec1bfe2e70010dbc1a8d2691a61777b014cfac"
+}

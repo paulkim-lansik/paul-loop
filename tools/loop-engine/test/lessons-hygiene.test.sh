@@ -20,13 +20,13 @@ DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 DIR2="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 DIR3="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR" "$DIR2" "$DIR3"' EXIT
-L() { node "$LESSONS" "$@" --lessons "$DIR"; }
-L2() { node "$LESSONS" "$@" --lessons "$DIR2"; }
-L3() { node "$LESSONS" "$@" --lessons "$DIR3"; }
+L() { node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" "$@" --lessons "$DIR"; }
+L2() { node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" "$@" --lessons "$DIR2"; }
+L3() { node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" "$@" --lessons "$DIR3"; }
 # extract the 16-hex id from a `promote` listing line naming a specific title (avoids brittle "seen ids"
 # bookkeeping — each lesson below gets a unique title instead).
 id_for() { # $1 = lessons dir  $2 = title substring
-  node "$LESSONS" promote --min-count 1 --lessons "$1" 2>/dev/null | grep -F "$2" | grep -oE '[0-9a-f]{16}' | head -1
+  node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" promote --min-count 1 --lessons "$1" 2>/dev/null | grep -F "$2" | grep -oE '[0-9a-f]{16}' | head -1
 }
 
 # ==== 1) coerce-time hygiene: malformed invalid_at/invalid_reason/superseded_by/invalidated_by/
@@ -43,7 +43,7 @@ EOF
 SOUT1="$(L stats 2>&1)"
 printf '%s' "$SOUT1" | grep -q "invalidated=0" || fail "malformed (non-string) invalid_at must coerce to NOT invalidated: $SOUT1"
 printf '%s' "$SOUT1" | grep -q "^total=1 " || fail "coerce probe must still count as a normal lesson: $SOUT1"
-POUT1="$(L promote --min-count 1 2>&1)"
+POUT1="$(L promote --min-count 1 --include-unverified 2>&1)"
 printf '%s' "$POUT1" | grep -q "coerce hygiene probe" || fail "coerced-clean lesson must still appear as an open candidate: $POUT1"
 printf '%s' "$POUT1" | grep -q "RETIREMENT CANDIDATE" && fail "negative clean_pass_count must coerce to 0, not trip the >=5 retirement annotation: $POUT1"
 

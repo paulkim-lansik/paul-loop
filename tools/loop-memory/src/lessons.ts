@@ -1,12 +1,16 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { lstatSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Pool } from 'pg';
 import type { LoopDb } from './client';
 import type { Embedder } from './embedding';
 import { LOCK_NAMESPACE } from './knowledge';
 import { addNote, type RecallHit, softDeleteNote, toVectorLiteral, updateNote } from './ops';
-import { signContent, verifySignature } from './provenance';
+import { signNote, verifyNote } from './provenance';
+import { MemoryError, storeContext } from './store';
+import { assertEmbedder, memoryNoteColumns } from './ops';
+import { sanitizeMemory } from '../hooks/lib/privacy.mjs';
+import { lessonState } from '../../loop-engine/lib/lesson-state.mjs';
 import { memoryNote } from './schema/memory';
 
 /**
@@ -45,6 +49,7 @@ export interface LessonFile {
  */
 export interface LessonRecord extends LessonFile {
   verified: boolean;
+  invalidated: boolean;
   /** 회의적 평가가 명시적으로 기각(challenge.verdict === 'reject') — 영구 배제, 코디파이 위치가
    *  없으므로 스텁도 남기지 않는다(아래 decideLessonReap). */
   rejected: boolean;
@@ -64,7 +69,7 @@ const lessonKey = (id: string) => `${LESSON_KEY_PREFIX}${id}`;
 
 /** ADD 대상 여부 — 검증됐고, 기각되지 않았고, 퇴역하지 않은 교훈만 졸업 자격이 있다. */
 function isGraduationEligible(l: LessonRecord): boolean {
-  return l.verified && !l.rejected && !l.retired;
+  return l.verified && !l.invalidated && !l.rejected && !l.retired;
 }
 
 /**
@@ -72,11 +77,12 @@ function isGraduationEligible(l: LessonRecord): boolean {
  * 손상/수기편집 파일은 조용히 건너뛴다(코어를 오도하지 못함, lessons.mjs와 동일). 내부 전용이 아니라
  * export하는 이유: `graduateLessons`(회수 패스)와 테스트가 같은 파서를 공유해야 판정이 갈리지 않는다.
  */
-export function readLessonRecords(dir: string): LessonRecord[] {
+export function readLessonRecords(dir: string, options: { root?: string } = {}): LessonRecord[] {
   if (!existsSync(dir)) return [];
   const out: LessonRecord[] = [];
   for (const f of readdirSync(dir)) {
     if (!f.endsWith('.json')) continue;
+    if (!lstatSync(join(dir, f)).isFile() || lstatSync(join(dir, f)).isSymbolicLink()) throw new MemoryError('source_symlink');
     let raw: unknown;
     try {
       raw = JSON.parse(readFileSync(join(dir, f), 'utf8'));
@@ -86,6 +92,7 @@ export function readLessonRecords(dir: string): LessonRecord[] {
     if (!raw || typeof raw !== 'object') continue;
     const l = raw as Record<string, unknown>;
     if (typeof l.id !== 'string' || !l.id) continue;
+    const state = lessonState(l, options);
     const challenge =
       l.challenge && typeof l.challenge === 'object'
         ? (l.challenge as Record<string, unknown>)
@@ -105,7 +112,8 @@ export function readLessonRecords(dir: string): LessonRecord[] {
       // 조용히 decay 계산을 오염시키지 못하게.
       count: Number.isInteger(l.count) && (l.count as number) >= 0 ? (l.count as number) : 0,
       lastSeen: typeof l.last_seen === 'string' ? l.last_seen : '',
-      verified: l.verified === true,
+      verified: state.verified,
+      invalidated: state.invalidated,
       rejected: challenge?.verdict === 'reject',
       retired,
       retiredRef: retired && typeof retiredRaw?.ref === 'string' ? retiredRaw.ref : '',
@@ -120,8 +128,8 @@ export function readLessonRecords(dir: string): LessonRecord[] {
  * 둘 다 "더 이상 주입돼선 안 되는" 상태이고, 이전엔 이 필터가 `verified`만 봐서 승격 게이트
  * (promote/challenge/retire)가 회상 경로엔 효력이 없었다.
  */
-export function readVerifiedLessons(dir: string): LessonFile[] {
-  return readLessonRecords(dir)
+export function readVerifiedLessons(dir: string, options: { root?: string } = {}): LessonFile[] {
+  return readLessonRecords(dir, options)
     .filter(isGraduationEligible)
     .map(({ id, title, fix, source, signature, count, lastSeen }) => ({
       id,
@@ -136,10 +144,10 @@ export function readVerifiedLessons(dir: string): LessonFile[] {
 
 /** 교훈 → 임베딩 대상 텍스트. 실패의 *의미*와 고친 방법을 함께 담아 의미검색이 걸리게 한다. */
 export function lessonContent(l: LessonFile): string {
-  return [l.title, l.fix ? `fix: ${l.fix}` : '', l.signature.join(' | ')]
+  return sanitizeMemory([l.title, l.fix ? `fix: ${l.fix}` : '', l.signature.join(' | ')]
     .map((s) => s.trim())
     .filter(Boolean)
-    .join('\n');
+    .join('\n'));
 }
 
 /**
@@ -155,7 +163,7 @@ export function lessonContent(l: LessonFile): string {
  */
 export function lessonStub(l: Pick<LessonFile, 'id' | 'title'>, ref: string): string {
   const where = ref || '(위치 미기록)';
-  return `[퇴역] ${l.title}\n이미 ${where}로 코디파이됨 — 원문 참조. (원 교훈 id: ${l.id})`;
+  return sanitizeMemory(`[퇴역] ${l.title}\n이미 ${where}로 코디파이됨 — 원문 참조. (원 교훈 id: ${l.id})`);
 }
 
 export type LessonReapDecision =
@@ -170,32 +178,27 @@ export type LessonReapDecision =
  * 해당 id의 파일을 이번 호출이 못 봤으면(다른 디렉터리를 가리켰거나, 부분/빈 디렉터리로 호출됐거나)
  * `undefined`.
  *
- * ⚠️ `rec`이 `undefined`(이 호출이 그 파일을 못 봄)면 반드시 `keep` — "안 봤다"를 "지워야 한다"로
- * 해석하지 않는다. `graduateLessons`는 CLI/훅뿐 아니라 테스트에서도 다양한 임시/부분 디렉터리로
- * 호출되는데(예: cli.integration.test.ts가 `--knowledge`만 검증하려고 빈 `--lessons` 디렉터리를
- * 넘기는 경우), "이 dir엔 없음 = 파일이 실제로 사라짐"으로 취급하면 그 호출이 다른 테스트/실행이 만든
- * 무관한 노트까지 회수해버린다. 그래서 이 함수는 **파일을 실제로 읽어 retired/rejected를 확인한
- * 경우에만** 능동적으로 판단하고, 모르면 손대지 않는다(fail-closed 방향은 "회수하지 않는 쪽").
- *
- * - `rec.retired`면 → `stub`(코디파이 위치를 가리키는 대체 콘텐츠로 UPDATE). 이미 그 스텁이면 `keep`.
- * - `rec.rejected`면 → `purge`(soft-delete, 코디파이 위치가 없으므로 스텁도 없음).
- * - 그 외(`rec` 없음, 또는 여전히 활성 교훈) → `keep`.
+ * This pure decision helper preserves undefined for compatibility. The owner-bound authoritative
+ * snapshot adapter treats a missing source as retraction after validating the source directory.
  */
 export function decideLessonReap(
   currentContent: string,
   rec: LessonRecord | undefined,
 ): LessonReapDecision {
   if (!rec) return { op: 'keep' };
+  if (rec.invalidated) return { op: 'purge', reason: 'invalidated' };
+  if (!rec.verified) return { op: 'purge', reason: 'verification retracted or legacy' };
+  if (rec.rejected) return { op: 'purge', reason: 'challenge verdict=reject' };
   if (rec.retired) {
     const desired = lessonStub(rec, rec.retiredRef);
     return currentContent === desired ? { op: 'keep' } : { op: 'stub', content: desired };
   }
-  if (rec.rejected) return { op: 'purge', reason: 'challenge verdict=reject' };
   return { op: 'keep' };
 }
 
 export interface GraduateResult {
   added: number;
+  updated: number;
   skipped: number;
   /** 이미 졸업된 노트 중 퇴역으로 판정돼 스텁 콘텐츠로 대체(UPDATE, 재임베드)한 건수(BAC-580). */
   stubbed: number;
@@ -206,44 +209,10 @@ export interface GraduateResult {
   locked?: true;
 }
 
-/**
- * 파일 lessons의 *verified* 교훈을 의미검색 층으로 졸업시키고, 이미 졸업된 노트를 현재 파일 상태로
- * 수렴시킨다(BAC-580 미러-싱크 패스).
- * ADD: 멱등 — 같은 교훈 id는 한 번만 ADD(keywords의 `lesson:<id>`로 dedup). 재실행해도 중복 노트를
- * 만들지 않는다. (UPDATE-on-change·자동 링크 진화는 후속 — ADR-0023의 op 결정 LLM 시맨.)
- * 회수(REAP, BAC-580): 필터(readVerifiedLessons)만으론 부족하다 — 졸업은 add-once라 파일이 나중에
- * retire/reject 되어도 이미 pgvector에 박힌 노트는 그대로 남는다. knowledge.ts의 syncKnowledge(미러-싱크:
- * 파일 desired 상태로 노트를 수렴)와 같은 정신을 lessons에 맞게 적용하되, 판단은 **이 호출이 실제로 읽은
- * 파일에 한해서만** 능동적이다(decideLessonReap 참고) — knowledge.ts처럼 "desired에 없으면 무조건
- * DELETE"는 아니다(부분/빈 디렉터리로 호출될 때 무관한 노트를 회수해버리는 사고를 막기 위함).
- * `decideLessonReap`이 순수 결정을, 여기 루프가 그 결정의 실행만 맡는다.
- *
- * 동시 졸업 가드(BAC-372, syncKnowledge/BAC-367과 동일 메커니즘): 여러 SessionStart가 동시에 같은
- * 미졸업 교훈을 각자 "없음"으로 읽고 각자 addNote(ON CONFLICT 없는 순수 INSERT)하면 같은 lesson id의
- * 중복 노트가 영구 잔류한다(BAC-580의 회수 패스는 파일 상태 대비 id 단위 mirror-sync일 뿐 중복 제거가
- * 아니라서 이 레이스는 여전히 advisory lock으로만 막는다). 세션-스코프 advisory lock
- * (pg_try_advisory_lock/pg_advisory_unlock, 트랜잭션-스코프 아님)으로 함수 전체(ADD+회수)를
- * 직렬화하되, 개별 쓰기는 여전히 auto-commit(트랜잭션으로 안 묶음) — db.transaction()으로 감싸면
- * 함수 전체가 원자적 트랜잭션이 되어 SessionStart 훅의 12s 타임아웃(graduate-lessons.mjs)에 걸려
- * SIGTERM되면 그때까지의 쓰기가 전부 롤백된다(syncKnowledge가 BAC-367 PR #39 리뷰에서 실측으로
- * 지적받은 회귀 — "개별 커밋 → 세션마다 증분 수렴" 설계 계약을 깨므로 여기서도 재도입하지 않는다).
- * pool에서 커넥션 하나를 명시로 checkout해 락 획득/해제를 그 커넥션에 고정한다(세션-스코프 락은
- * 커넥션에 묶이므로). 연결 종료(크래시 포함) 시 postgres가 자동 해제.
- *
- * write-path provenance(BAC-619, README "위협모델" 참고): `signingKey`가 있으면 이 함수가 ADD/스텁
- * UPDATE하는 노트의 content를 HMAC-SHA256으로 서명해 `memory_note.provenance`에 남긴다 — secret을
- * 모르는 다른 쓰기 경로(직접 SQL INSERT 등)는 이 서명을 위조할 수 없어, `recallLessons`가 구조적으로
- * 걸러낸다. `signingKey`가 없으면(secret 미설정) 서명 없이 그대로 쓴다 — 쓰기 자체를 막지 않는다
- * (fail-closed는 recall 쪽 책임, README 참고).
- *
- * 호출 출처 태그(paul-loop 이슈 #35): `source`가 있으면 이 함수가 ADD/스텁 UPDATE하는 memory_op 행의
- * `payload.source`로 그대로 남는다(ops.ts의 NoteInput.source 참고) — hooks/graduate-lessons.mjs가 실
- * SessionStart에서 CLI를 spawn할 때만 `LOOP_MEMORY_SOURCE=hook`을 심어 cli.ts가 여기로 흘려보낸다.
- * 수동 CLI 호출·테스트는 생략하므로 payload에 이 키 자체가 안 남는다. ⚠️ 이건 자기신고 관측용
- * 메타데이터일 뿐 위조방지 신호가 아니다 — 셸 접근이 있으면 누구든 이 env를 손으로 심어 같은 값을 낼 수
- * 있다(DB 직접 질의와 같은 신뢰 수준). 이 값의 존재 여부는 "훅 코드 경로로 명시 표시됨"과 "안 됨"만
- * 구분할 뿐, "훅이 실제로 발동했다"는 증명하지 않는다.
- */
+/** Mirror one authoritative owner-scoped lesson snapshot. Content changes and key rotation update
+ * existing rows; invalidated/retracted/rejected/missing sources are scrubbed, retired sources become
+ * authenticated stubs. A session advisory lock serializes synchronization, while each note+op commits
+ * atomically so an interrupted refresh can resume. Signing is mandatory. */
 export async function graduateLessons(
   db: LoopDb,
   pool: Pool,
@@ -252,6 +221,9 @@ export async function graduateLessons(
   signingKey: string | undefined,
   source?: string,
 ): Promise<GraduateResult> {
+  const ctx = storeContext(db, true);
+  assertEmbedder(db, embedder);
+  if (!signingKey || signingKey !== ctx.signingKey) throw new MemoryError('signing_key_mismatch');
   const client = await pool.connect();
   try {
     const lock = await client.query<{ locked: boolean }>(
@@ -265,52 +237,54 @@ export async function graduateLessons(
       throw new Error(`graduateLessons: pg_try_advisory_lock returned ${lock.rows.length} rows`);
     }
     if (!lock.rows[0]?.locked) {
-      return { added: 0, skipped: 0, stubbed: 0, purged: 0, locked: true };
+      return { added: 0, updated: 0, skipped: 0, stubbed: 0, purged: 0, locked: true };
     }
     try {
+      // Snapshot only after serialization: a delayed connection must not replay source state read
+      // before another graduation completed a retraction.
+      if (!existsSync(dir) || !lstatSync(dir).isDirectory()) throw new MemoryError('lesson_source_missing');
+      const records = readLessonRecords(dir, { root: ctx.canonical || process.cwd() });
       let added = 0;
+      let updated = 0;
       let skipped = 0;
-      for (const l of readVerifiedLessons(dir)) {
+      for (const l of records.filter(isGraduationEligible)) {
         const key = lessonKey(l.id);
-        const [existing] = await db
-          .select({ id: memoryNote.id })
-          .from(memoryNote)
-          .where(and(isNull(memoryNote.deletedAt), sql`${key} = any(${memoryNote.keywords})`))
-          .limit(1);
-        if (existing) {
-          skipped++;
-          continue;
-        }
         const content = lessonContent(l);
-        await addNote(db, embedder, {
-          content,
-          keywords: [key],
-          tags: [LESSON_TAG, l.source],
-          context: l.source,
-          provenance: signingKey ? signContent(content, signingKey) : undefined,
-          source,
-        });
-        added++;
+        const [existing] = await db.select(memoryNoteColumns()).from(memoryNote)
+          .where(and(isNull(memoryNote.deletedAt), eq(memoryNote.ownerId, ctx.owner), eq(memoryNote.corpus, LESSON_TAG), eq(memoryNote.sourceKey, key))).limit(1);
+        const provenance = signNote(content, LESSON_TAG, key, ctx);
+        if (existing) {
+          if (existing.content === content && verifyNote(existing, ctx)) { skipped++; continue; }
+          await updateNote(db, embedder, existing.id, { content, provenance, source });
+          updated++;
+        } else {
+          await addNote(db, embedder, { content, keywords: [key], tags: [LESSON_TAG],
+            corpus: LESSON_TAG, sourceKey: key, context: l.source, provenance, source });
+          added++;
+        }
       }
 
       // 회수 패스(BAC-580) — 이미 졸업된 노트 전부를 현재 파일 상태와 대조.
       let stubbed = 0;
       let purged = 0;
-      const byId = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
+      const byId = new Map(records.map((l) => [l.id, l]));
       const graduated = await db
-        .select({ id: memoryNote.id, keywords: memoryNote.keywords, content: memoryNote.content })
+        .select(memoryNoteColumns())
         .from(memoryNote)
-        .where(and(isNull(memoryNote.deletedAt), sql`${LESSON_TAG} = any(${memoryNote.tags})`));
+        .where(and(isNull(memoryNote.deletedAt), eq(memoryNote.corpus, LESSON_TAG), eq(memoryNote.ownerId, ctx.owner)));
       for (const note of graduated) {
-        const id = note.keywords
-          .find((k) => k.startsWith(LESSON_KEY_PREFIX))
-          ?.slice(LESSON_KEY_PREFIX.length);
+        const id = note.sourceKey.startsWith(LESSON_KEY_PREFIX) ? note.sourceKey.slice(LESSON_KEY_PREFIX.length) : '';
         if (!id) continue; // lesson 노트인데 lesson:<id> 키워드가 없음 — 있을 수 없지만 방어적으로 skip
-        const decision = decideLessonReap(note.content, byId.get(id));
-        if (decision.op === 'stub') {
+        const rec = byId.get(id);
+        const decision = decideLessonReap(note.content, rec);
+        // A snapshot is authoritative only for this owner's configured directory. Missing/corrupt
+        // source is not safe to recall; quarantine it instead of resurrecting old guidance.
+        if (!rec) { await softDeleteNote(db, note.id, 'source missing'); purged++; continue; }
+        if (decision.op === 'stub' || (decision.op === 'keep' && rec.retired && !verifyNote(note, ctx))) {
+          const content = lessonStub(rec, rec.retiredRef);
           await updateNote(db, embedder, note.id, {
-            content: decision.content,
-            provenance: signingKey ? signContent(decision.content, signingKey) : undefined,
+            content,
+            provenance: signNote(content, LESSON_TAG, note.sourceKey, ctx),
             source,
           });
           stubbed++;
@@ -320,7 +294,7 @@ export async function graduateLessons(
         }
       }
 
-      return { added, skipped, stubbed, purged };
+      return { added, updated, skipped, stubbed, purged };
     } finally {
       await client.query('select pg_advisory_unlock($1, hashtext($2))', [
         LOCK_NAMESPACE,
@@ -343,7 +317,7 @@ export async function graduateLessons(
  * 바뀌고 재서명 안 된 stale 서명)는 injection 후보에서 제외된다.
  */
 interface RecallHitWithKeywords extends RecallHit {
-  keywords: string[];
+  sourceKey: string;
 }
 
 /**
@@ -359,31 +333,19 @@ async function recallLessonsRaw(
   signingKey: string | undefined,
   k: number,
 ): Promise<RecallHitWithKeywords[]> {
-  // signingKey 없으면 결과는 항상 []다 — 임베드 API 호출·DB 질의를 낼 필요 없이 여기서 바로 반환한다.
   if (!signingKey) return [];
-  const literal = toVectorLiteral(await embedder.embed(query));
+  const ctx = assertEmbedder(db, embedder);
+  if (ctx.signingKey !== signingKey) throw new MemoryError('signing_key_mismatch');
+  const literal = toVectorLiteral(await embedder.embed(sanitizeMemory(query, 2048)));
   const distance = sql<number>`${memoryNote.embedding} <=> ${literal}::vector`;
-  const rows = await db
-    .select({
-      id: memoryNote.id,
-      content: memoryNote.content,
-      distance,
-      provenance: memoryNote.provenance,
-      keywords: memoryNote.keywords,
-    })
-    .from(memoryNote)
-    .where(
-      and(
-        isNull(memoryNote.deletedAt),
-        sql`${memoryNote.embedding} is not null`,
-        sql`${LESSON_TAG} = any(${memoryNote.tags})`,
-      ),
-    )
-    .orderBy(distance)
-    .limit(k);
-  return rows
-    .filter((r) => verifySignature(r.content, signingKey, r.provenance))
-    .map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance), keywords: r.keywords }));
+  const rows = await db.select({ ...memoryNoteColumns(), distance }).from(memoryNote)
+    .where(and(isNull(memoryNote.deletedAt), eq(memoryNote.ownerId, ctx.owner),
+      eq(memoryNote.embeddingId, ctx.embeddingId), eq(memoryNote.corpus, LESSON_TAG), sql`${memoryNote.embedding} is not null`))
+    .orderBy(distance);
+  // Authenticate before top-k so unsigned nearest neighbours cannot starve genuine matches.
+  return rows.filter(r => verifyNote(r, ctx)).slice(0, k)
+    .map(r => ({ id: r.id, content: sanitizeMemory(r.content), distance: Number(r.distance), sourceKey: r.sourceKey }));
+
 }
 
 export async function recallLessons(
@@ -507,28 +469,16 @@ async function fetchLessonEmbeddings(
   signingKey: string | undefined,
 ): Promise<LessonEmbeddingRow[]> {
   if (!signingKey) return [];
-  const notes = await db
-    .select({
-      id: memoryNote.id,
-      keywords: memoryNote.keywords,
-      embedding: memoryNote.embedding,
-      content: memoryNote.content,
-      provenance: memoryNote.provenance,
-    })
-    .from(memoryNote)
-    .where(
-      and(
-        isNull(memoryNote.deletedAt),
-        sql`${LESSON_TAG} = any(${memoryNote.tags})`,
-        sql`${memoryNote.embedding} is not null`,
-      ),
-    );
+  const ctx = storeContext(db);
+  if (ctx.signingKey !== signingKey) throw new MemoryError('signing_key_mismatch');
+  const notes = await db.select({ ...memoryNoteColumns(), embedding: memoryNote.embedding }).from(memoryNote)
+    .where(and(isNull(memoryNote.deletedAt), eq(memoryNote.ownerId, ctx.owner),
+      eq(memoryNote.embeddingId, ctx.embeddingId), eq(memoryNote.corpus, LESSON_TAG), sql`${memoryNote.embedding} is not null`));
+
   const out: LessonEmbeddingRow[] = [];
   for (const n of notes) {
-    if (!verifySignature(n.content, signingKey, n.provenance)) continue;
-    const lessonId = n.keywords
-      .find((k) => k.startsWith(LESSON_KEY_PREFIX))
-      ?.slice(LESSON_KEY_PREFIX.length);
+    if (!verifyNote(n, ctx)) continue;
+    const lessonId = n.sourceKey.startsWith(LESSON_KEY_PREFIX) ? n.sourceKey.slice(LESSON_KEY_PREFIX.length) : '';
     if (!lessonId || !n.embedding) continue;
     out.push({ noteId: n.id, lessonId, embedding: n.embedding });
   }
@@ -691,9 +641,7 @@ export async function recallLessonsDecayed(
   const meta = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
   return candidates
     .map((h) => {
-      const lessonId = h.keywords
-        .find((kw) => kw.startsWith(LESSON_KEY_PREFIX))
-        ?.slice(LESSON_KEY_PREFIX.length);
+      const lessonId = h.sourceKey.startsWith(LESSON_KEY_PREFIX) ? h.sourceKey.slice(LESSON_KEY_PREFIX.length) : '';
       const m = lessonId ? meta.get(lessonId) : undefined;
       const score = decayedScore(
         { distance: h.distance, lastSeen: m?.lastSeen ?? '', count: m?.count ?? 0 },

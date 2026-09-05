@@ -1193,7 +1193,7 @@ var require_utils2 = __commonJS({
       postgresMd5PasswordHash,
       randomBytes,
       deriveKey,
-      sha256,
+      sha256: sha2563,
       hashByName,
       hmacSha256,
       md5
@@ -1209,8 +1209,8 @@ var require_utils2 = __commonJS({
         return nodeCrypto.createHash("md5").update(string, "utf-8").digest("hex");
       } catch (e) {
         const data = typeof string === "string" ? textEncoder.encode(string) : string;
-        const hash = await subtleCrypto.digest("MD5", data);
-        return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+        const hash2 = await subtleCrypto.digest("MD5", data);
+        return Array.from(new Uint8Array(hash2)).map((b) => b.toString(16).padStart(2, "0")).join("");
       }
     }
     async function postgresMd5PasswordHash(user, password, salt) {
@@ -1218,7 +1218,7 @@ var require_utils2 = __commonJS({
       const outer = await md5(Buffer.concat([Buffer.from(inner), salt]));
       return "md5" + outer;
     }
-    async function sha256(text2) {
+    async function sha2563(text2) {
       return await subtleCrypto.digest("SHA-256", text2);
     }
     async function hashByName(hashName, text2) {
@@ -3077,7 +3077,7 @@ var require_dist = __commonJS({
     function parse(stream, callback) {
       const parser = new parser_1.Parser();
       stream.on("data", (buffer) => parser.parse(buffer, callback));
-      return new Promise((resolve) => stream.on("end", () => resolve()));
+      return new Promise((resolve6) => stream.on("end", () => resolve6()));
     }
   }
 });
@@ -3842,12 +3842,12 @@ var require_client = __commonJS({
           this._connect(callback);
           return;
         }
-        return new this._Promise((resolve, reject) => {
+        return new this._Promise((resolve6, reject) => {
           this._connect((error) => {
             if (error) {
               reject(error);
             } else {
-              resolve(this);
+              resolve6(this);
             }
           });
         });
@@ -4229,8 +4229,8 @@ var require_client = __commonJS({
         } else {
           query = new Query2(config, values, callback);
           if (!query.callback) {
-            result = new this._Promise((resolve, reject) => {
-              query.callback = (err, res) => err ? reject(err) : resolve(res);
+            result = new this._Promise((resolve6, reject) => {
+              query.callback = (err, res) => err ? reject(err) : resolve6(res);
             }).catch((err) => {
               Error.captureStackTrace(err);
               throw err;
@@ -4321,8 +4321,8 @@ var require_client = __commonJS({
         if (cb) {
           this.connection.once("end", cb);
         } else {
-          return new this._Promise((resolve) => {
-            this.connection.once("end", resolve);
+          return new this._Promise((resolve6) => {
+            this.connection.once("end", resolve6);
           });
         }
       }
@@ -4371,8 +4371,8 @@ var require_pg_pool = __commonJS({
       const cb = function(err, client) {
         err ? rej(err) : res(client);
       };
-      const result = new Promise2(function(resolve, reject) {
-        res = resolve;
+      const result = new Promise2(function(resolve6, reject) {
+        res = resolve6;
         rej = reject;
       }).catch((err) => {
         Error.captureStackTrace(err);
@@ -4433,7 +4433,7 @@ var require_pg_pool = __commonJS({
         if (typeof Promise2.try === "function") {
           return Promise2.try(f);
         }
-        return new Promise2((resolve) => resolve(f()));
+        return new Promise2((resolve6) => resolve6(f()));
       }
       _isFull() {
         return this._clients.length >= this.options.max;
@@ -4826,8 +4826,8 @@ var require_query2 = __commonJS({
     NativeQuery.prototype._getPromise = function() {
       if (this._promise) return this._promise;
       this._promise = new Promise(
-        function(resolve, reject) {
-          this._once("end", resolve);
+        function(resolve6, reject) {
+          this._once("end", resolve6);
           this._once("error", reject);
         }.bind(this)
       );
@@ -5006,12 +5006,12 @@ var require_client2 = __commonJS({
         this._connect(callback);
         return;
       }
-      return new this._Promise((resolve, reject) => {
+      return new this._Promise((resolve6, reject) => {
         this._connect((error) => {
           if (error) {
             reject(error);
           } else {
-            resolve(this);
+            resolve6(this);
           }
         });
       });
@@ -5035,8 +5035,8 @@ var require_client2 = __commonJS({
         query = new NativeQuery(config, values, callback);
         if (!query.callback) {
           let resolveOut, rejectOut;
-          result = new this._Promise((resolve, reject) => {
-            resolveOut = resolve;
+          result = new this._Promise((resolve6, reject) => {
+            resolveOut = resolve6;
             rejectOut = reject;
           }).catch((err) => {
             Error.captureStackTrace(err);
@@ -5099,8 +5099,8 @@ var require_client2 = __commonJS({
       }
       let result;
       if (!cb) {
-        result = new this._Promise(function(resolve, reject) {
-          cb = (err) => err ? reject(err) : resolve();
+        result = new this._Promise(function(resolve6, reject) {
+          cb = (err) => err ? reject(err) : resolve6();
         });
       }
       const doEnd = function() {
@@ -5312,8 +5312,8 @@ var require_lib2 = __commonJS({
 });
 
 // src/cli.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-import { join as join4 } from "node:path";
+import { readFileSync as readFileSync7, realpathSync as realpathSync4, existsSync as existsSync3 } from "node:fs";
+import { join as join6, relative as relative3, resolve as resolve5, isAbsolute as isAbsolute3 } from "node:path";
 
 // node_modules/drizzle-orm/entity.js
 var entityKind = Symbol.for("drizzle:entityKind");
@@ -6346,7 +6346,7 @@ function sql(strings, ...params) {
     return new SQL([new StringChunk(str)]);
   }
   sql2.raw = raw;
-  function join5(chunks, separator) {
+  function join7(chunks, separator) {
     const result = [];
     for (const [i, chunk] of chunks.entries()) {
       if (i > 0 && separator !== void 0) {
@@ -6356,7 +6356,7 @@ function sql(strings, ...params) {
     }
     return new SQL(result);
   }
-  sql2.join = join5;
+  sql2.join = join7;
   function identifier(value) {
     return new Name(value);
   }
@@ -8793,6 +8793,9 @@ var Index = class {
 function index(name) {
   return new IndexBuilderOn(false, name);
 }
+function uniqueIndex(name) {
+  return new IndexBuilderOn(true, name);
+}
 
 // node_modules/drizzle-orm/casing.js
 function toSnakeCase(input) {
@@ -10062,7 +10065,7 @@ var PgSelectQueryBuilderBase = class extends TypedQueryBuilder {
       const baseTableName = this.tableName;
       const tableName = getTableLikeName(table);
       for (const item of extractUsedTable(table)) this.usedTables.add(item);
-      if (typeof tableName === "string" && this.config.joins?.some((join5) => join5.alias === tableName)) {
+      if (typeof tableName === "string" && this.config.joins?.some((join7) => join7.alias === tableName)) {
         throw new Error(`Alias "${tableName}" is already used in this query`);
       }
       if (!this.isPartialSelect) {
@@ -11283,7 +11286,7 @@ var PgUpdateBase = class extends QueryPromise {
   createJoin(joinType) {
     return (table, on) => {
       const tableName = getTableLikeName(table);
-      if (typeof tableName === "string" && this.config.joins.some((join5) => join5.alias === tableName)) {
+      if (typeof tableName === "string" && this.config.joins.some((join7) => join7.alias === tableName)) {
         throw new Error(`Alias "${tableName}" is already used in this query`);
       }
       if (typeof on === "function") {
@@ -11379,10 +11382,10 @@ var PgUpdateBase = class extends QueryPromise {
           const fromFields = this.getTableLikeFields(this.config.from);
           fields[tableName] = fromFields;
         }
-        for (const join5 of this.config.joins) {
-          const tableName2 = getTableLikeName(join5.table);
-          if (typeof tableName2 === "string" && !is(join5.table, SQL)) {
-            const fromFields = this.getTableLikeFields(join5.table);
+        for (const join7 of this.config.joins) {
+          const tableName2 = getTableLikeName(join7.table);
+          if (typeof tableName2 === "string" && !is(join7.table, SQL)) {
+            const fromFields = this.getTableLikeFields(join7.table);
             fields[tableName2] = fromFields;
           }
         }
@@ -12388,7 +12391,8 @@ function drizzle(...params) {
 var schema_exports = {};
 __export(schema_exports, {
   memoryNote: () => memoryNote,
-  memoryOp: () => memoryOp
+  memoryOp: () => memoryOp,
+  memoryStore: () => memoryStore
 });
 
 // src/schema/memory.ts
@@ -12396,6 +12400,11 @@ var memoryNote = pgTable(
   "memory_note",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    ownerId: text("owner_id").notNull().default(""),
+    corpus: text("corpus").notNull().default(""),
+    sourceKey: text("source_key").notNull().default(""),
+    embeddingId: text("embedding_id").notNull().default(""),
+    contentHash: text("content_hash").notNull().default(""),
     content: text("content").notNull(),
     keywords: text("keywords").array().notNull().default(sql`'{}'`),
     tags: text("tags").array().notNull().default(sql`'{}'`),
@@ -12405,9 +12414,8 @@ var memoryNote = pgTable(
     // 의미검색용 임베딩. 차원은 Embedder.dimensions와 반드시 일치(기본 384 = all-MiniLM-L6-v2).
     // nullable: 임베더 없이 노트만 먼저 쌓는 경로 허용. recall은 non-null만 본다.
     embedding: vector("embedding", { dimensions: 384 }),
-    // write-path provenance(BAC-619) — HMAC-SHA256(content, LOOP_MEMORY_SIGNING_KEY) hex, lesson 노트만
-    // 채운다(src/provenance.ts). nullable: knowledge 코퍼스는 무관 + signing key 미설정 시 서명 없이도
-    // 쓰기는 허용(recall이 걸러낸다 — 쓰기를 막지 않고 주입만 막는 fail-closed, README "위협모델" 참고).
+    // Scope-bound HMAC: owner, corpus, source key, embedding identity, full content hash.
+    // Unsigned/legacy rows remain representable for migration but never enter trusted recall.
     provenance: text("provenance"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -12415,7 +12423,8 @@ var memoryNote = pgTable(
   },
   (t) => [
     // pgvector HNSW(코사인). recall()의 ORDER BY embedding <=> query 를 가속.
-    index("memory_note_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops"))
+    index("memory_note_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    uniqueIndex("memory_note_owner_source_active_idx").on(t.ownerId, t.corpus, t.sourceKey).where(sql`${t.deletedAt} is null and ${t.sourceKey} <> ''`)
   ]
 );
 var memoryOp = pgTable("memory_op", {
@@ -12425,11 +12434,16 @@ var memoryOp = pgTable("memory_op", {
   payload: jsonb("payload"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });
+var memoryStore = pgTable("memory_store", {
+  id: text("id").primaryKey(),
+  owner: text("owner").notNull(),
+  embeddingId: text("embedding_id").notNull()
+});
 
 // src/client.ts
 var LOOP_DATABASE_URL = process.env.LOOP_DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5434/loop_memory";
-function createLoopDb(connectionString = LOOP_DATABASE_URL) {
-  const pool = new Pool({ connectionString });
+function createLoopDb(connectionString = process.env.LOOP_DATABASE_URL || LOOP_DATABASE_URL) {
+  const pool = new Pool({ connectionString, connectionTimeoutMillis: 3e3, statement_timeout: 5e3 });
   const db = drizzle(pool, { schema: schema_exports });
   return { db, pool };
 }
@@ -12451,9 +12465,26 @@ function stubEmbedder(dimensions = 384) {
   };
   return {
     dimensions,
+    identity: `stub:character-hash:v1:${dimensions}`,
     embed,
     embedBatch: (texts) => sequentialEmbedBatch(embed, texts)
   };
+}
+
+// hooks/lib/privacy.mjs
+function sanitizeMemory(value, max = 16e3) {
+  return String(value ?? "").replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[PRIVATE-KEY-REDACTED]").replace(/\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[\w-]{35}|(?:AKIA|ASIA)[A-Z0-9]{16}|xox[baprs]-[\w-]{10,})\b/g, "[SECRET-REDACTED]").replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "[AUTH-REDACTED]").replace(/(["']?[\w.-]*(?:token|secret|password|passwd|api[-_]?key|authorization|cookie)[\w.-]*["']?\s*[=:]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, "$1[REDACTED]").replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, (raw) => {
+    try {
+      const u = new URL(raw);
+      u.username = "";
+      u.password = "";
+      u.search = "";
+      u.hash = "";
+      return u.toString();
+    } catch {
+      return "[URL-REDACTED]";
+    }
+  }).replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[EMAIL-REDACTED]").replace(/\b\d{6}-[1-8]\d{6}\b/g, "[ID-REDACTED]").replace(/(?<!\w)(?:\+\d{1,3}[- .]?)?(?:0\d{1,2}|\(\d{3}\))[- .]\d{3,4}[- .]\d{4}(?!\w)/g, "[PHONE-REDACTED]").replace(/\b(?:\d[ -]?){13,19}\b/g, "[NUMBER-REDACTED]").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").slice(0, max);
 }
 
 // src/embedding-api.ts
@@ -12467,6 +12498,7 @@ var KEY_ENV = {
 };
 var DEFAULT_TIMEOUT_MS = 3e4;
 function l2normalize(v) {
+  if (!v.every(Number.isFinite) || !v.some((x) => x !== 0)) throw new Error("embedding vector invalid");
   const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
   return v.map((x) => x / norm);
 }
@@ -12491,7 +12523,7 @@ async function embedOpenAI(text2, { apiKey, model, dimensions, timeoutMs }) {
     timeoutMs,
     "openai embeddings"
   );
-  if (!res.ok) throw new Error(`openai embeddings ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`openai embeddings HTTP ${res.status}`);
   const json2 = await res.json();
   const vec = json2.data?.[0]?.embedding;
   if (!vec) throw new Error("openai embeddings: missing data[0].embedding");
@@ -12513,7 +12545,7 @@ async function embedGemini(text2, { apiKey, model, dimensions, timeoutMs }) {
     timeoutMs,
     "gemini embedContent"
   );
-  if (!res.ok) throw new Error(`gemini embedContent ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`gemini embedContent HTTP ${res.status}`);
   const json2 = await res.json();
   const vec = json2.embedding?.values;
   if (!vec) throw new Error("gemini embedContent: missing embedding.values");
@@ -12531,7 +12563,7 @@ async function embedBatchOpenAI(texts, { apiKey, model, dimensions, timeoutMs })
     timeoutMs,
     "openai embeddings(batch)"
   );
-  if (!res.ok) throw new Error(`openai embeddings(batch) ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`openai embeddings(batch) HTTP ${res.status}`);
   const json2 = await res.json();
   const data = json2.data;
   if (!data || data.length !== texts.length) {
@@ -12565,7 +12597,7 @@ async function embedBatchGemini(texts, { apiKey, model, dimensions, timeoutMs })
     timeoutMs,
     "gemini batchEmbedContents"
   );
-  if (!res.ok) throw new Error(`gemini batchEmbedContents ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`gemini batchEmbedContents HTTP ${res.status}`);
   const json2 = await res.json();
   const embeddings = json2.embeddings;
   if (!embeddings || embeddings.length !== texts.length) {
@@ -12587,15 +12619,17 @@ function apiEmbedder(opts = {}) {
     );
   }
   const dimensions = opts.dimensions ?? 384;
-  const model = opts.model ?? DEFAULT_MODEL[provider];
+  const model = opts.model ?? process.env.LOOP_EMBED_MODEL ?? DEFAULT_MODEL[provider];
+  if (!model.trim() || model !== model.trim() || !Number.isInteger(dimensions) || dimensions <= 0) throw new Error("embedding identity invalid");
   const apiKey = opts.apiKey ?? process.env[KEY_ENV[provider]];
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return {
     dimensions,
+    identity: `${provider}:${model}:l2-v1:${dimensions}`,
     async embed(text2) {
       if (!apiKey) throw new Error(`apiEmbedder: missing API key (set ${KEY_ENV[provider]})`);
       const call = { apiKey, model, dimensions, timeoutMs };
-      const raw = provider === "openai" ? await embedOpenAI(text2, call) : await embedGemini(text2, call);
+      const raw = provider === "openai" ? await embedOpenAI(sanitizeMemory(text2), call) : await embedGemini(sanitizeMemory(text2), call);
       if (raw.length !== dimensions) {
         throw new Error(
           `apiEmbedder: ${provider} returned ${raw.length} dims, expected ${dimensions} (memory_note.embedding mismatch)`
@@ -12609,7 +12643,7 @@ function apiEmbedder(opts = {}) {
       const call = { apiKey, model, dimensions, timeoutMs };
       const out = [];
       for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
-        const slice = texts.slice(i, i + MAX_BATCH_SIZE);
+        const slice = texts.slice(i, i + MAX_BATCH_SIZE).map((text2) => sanitizeMemory(text2));
         const raw = provider === "openai" ? await embedBatchOpenAI(slice, call) : await embedBatchGemini(slice, call);
         for (const vec of raw) {
           if (vec.length !== dimensions) {
@@ -12626,74 +12660,239 @@ function apiEmbedder(opts = {}) {
 }
 
 // src/knowledge.ts
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { createHash as createHash2 } from "node:crypto";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // src/ops.ts
+import { randomUUID } from "node:crypto";
+
+// src/store.ts
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
+var MemoryError = class extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+    this.name = "MemoryError";
+  }
+};
+var sha256 = (text2) => createHash("sha256").update(text2).digest("hex");
+var stores = /* @__PURE__ */ new WeakMap();
+function repositoryIdentity(root) {
+  const current = realpathSync(root);
+  let canonical = current;
+  try {
+    const common = resolve(current, execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: current,
+      encoding: "utf8",
+      timeout: 3e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim());
+    if (basename(common) === ".git") canonical = realpathSync(dirname(common));
+  } catch {
+  }
+  return { owner: sha256(canonical), canonical, current, writable: current === canonical };
+}
+async function bindStore(db, pool, context) {
+  memoryAccess();
+  stores.delete(db);
+  if (!context.signingKey) throw new MemoryError("signing_key_missing");
+  if (!/^[a-f0-9]{64}$/.test(context.owner)) throw new MemoryError("store_identity_invalid");
+  const client = await pool.connect();
+  try {
+    const frozen = process.env.LOOP_LEARNING_OFF === "1" || process.env.LOOP_MEMORY_RECALL_ONLY === "1";
+    await client.query(frozen ? "BEGIN READ ONLY" : "BEGIN");
+    if (!frozen) await client.query("SELECT pg_advisory_xact_lock(1819109234)");
+    const result = await client.query(
+      "SELECT owner, embedding_id FROM memory_store WHERE id = 'primary'"
+    );
+    if (result.rows.length === 0) {
+      if (frozen) throw new MemoryError("frozen_store_uninitialized");
+      memoryAccess(true);
+      if (!context.writable || !context.embeddingId) throw new MemoryError("store_uninitialized");
+      const counts = await client.query(
+        "SELECT EXISTS(SELECT 1 FROM memory_note) OR EXISTS(SELECT 1 FROM memory_op) AS occupied"
+      );
+      if (counts.rows.length !== 1 || counts.rows[0]?.occupied !== false) throw new MemoryError("legacy_store_unowned");
+      await client.query("INSERT INTO memory_store(id, owner, embedding_id) VALUES ('primary', $1, $2)", [context.owner, context.embeddingId]);
+    } else if (result.rows.length !== 1 || result.rows[0]?.owner !== context.owner) {
+      throw new MemoryError("store_owner_mismatch");
+    } else if (context.embeddingId && result.rows[0]?.embedding_id !== context.embeddingId) {
+      throw new MemoryError("embedding_identity_mismatch");
+    }
+    await client.query("COMMIT");
+    stores.set(db, Object.freeze({ ...context, embeddingId: context.embeddingId || result.rows[0].embedding_id }));
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+function memoryAccess(write = false) {
+  if (process.env.LOOP_MEMORY_OFF === "1") throw new MemoryError("memory_off");
+  if (write && process.env.LOOP_LEARNING_OFF === "1") throw new MemoryError("learning_off");
+  if (write && process.env.LOOP_MEMORY_RECALL_ONLY === "1") throw new MemoryError("memory_recall_only");
+}
+function storeContext(db, write = false) {
+  memoryAccess(write);
+  const context = stores.get(db);
+  if (!context) throw new MemoryError("store_not_bound");
+  if (write && !context.writable) throw new MemoryError("worktree_read_only");
+  return context;
+}
+
+// src/provenance.ts
+import { createHmac, timingSafeEqual } from "node:crypto";
+function signContent(content, secret) {
+  return createHmac("sha256", secret).update(content).digest("hex");
+}
+function verifySignature(content, secret, signature) {
+  if (!signature || !/^[a-f0-9]{64}$/.test(signature)) return false;
+  const expected = signContent(content, secret);
+  const a = Buffer.from(expected, "hex");
+  const b = Buffer.from(signature, "hex");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+var envelope = (note) => JSON.stringify([
+  "loop-memory-note-v2",
+  note.ownerId,
+  note.corpus,
+  note.sourceKey,
+  note.embeddingId,
+  note.contentHash
+]);
+function signNote(content, corpus, sourceKey, ctx) {
+  return signContent(envelope({
+    content,
+    contentHash: sha256(content),
+    corpus,
+    sourceKey,
+    ownerId: ctx.owner,
+    embeddingId: ctx.embeddingId
+  }), ctx.signingKey);
+}
+function verifyNote(note, ctx) {
+  return note.ownerId === ctx.owner && note.embeddingId === ctx.embeddingId && !!note.sourceKey && note.contentHash === sha256(note.content) && verifySignature(envelope(note), ctx.signingKey, note.provenance);
+}
+function signingKeyFromEnv() {
+  return process.env.LOOP_MEMORY_SIGNING_KEY || void 0;
+}
+
+// src/ops.ts
 function toVectorLiteral(v) {
+  if (!v.length || !v.every(Number.isFinite)) throw new MemoryError("embedding_invalid");
   return `[${v.join(",")}]`;
 }
+function assertEmbedder(db, embedder) {
+  const ctx = storeContext(db);
+  if (!embedder.identity || embedder.identity !== ctx.embeddingId) throw new MemoryError("embedding_identity_mismatch");
+  return ctx;
+}
+var sourceTag = (source2) => source2 === "hook" || source2 === "cli" ? source2 : void 0;
+var audit = (content, source2) => ({ content_hash: sha256(content), chars: content.length, source: sourceTag(source2) });
 async function addNote(db, embedder, input) {
-  const embedding = input.embedding ?? await embedder.embed(input.content);
-  const [note] = await db.insert(memoryNote).values({
-    content: input.content,
-    keywords: input.keywords ?? [],
-    tags: input.tags ?? [],
-    context: input.context ?? "",
-    links: input.links ?? [],
-    embedding,
-    provenance: input.provenance ?? null
-  }).returning();
-  if (!note) throw new Error("addNote: insert returned no row");
-  await db.insert(memoryOp).values({
-    op: "ADD",
-    noteId: note.id,
-    payload: {
-      content: input.content,
-      keywords: input.keywords,
-      tags: input.tags,
-      context: input.context,
-      links: input.links,
-      source: input.source
-    }
+  const ctx = storeContext(db, true);
+  assertEmbedder(db, embedder);
+  const content = sanitizeMemory(input.content);
+  const embedding = input.embedding ?? await embedder.embed(content);
+  if (embedding.length !== embedder.dimensions) throw new MemoryError("embedding_dimensions_mismatch");
+  toVectorLiteral(embedding);
+  return db.transaction(async (tx) => {
+    const [note] = await tx.insert(memoryNote).values({
+      ownerId: ctx.owner,
+      embeddingId: ctx.embeddingId,
+      contentHash: sha256(content),
+      corpus: input.corpus ?? "untrusted",
+      sourceKey: input.sourceKey ?? randomUUID(),
+      content,
+      keywords: (input.keywords ?? []).map((k) => sanitizeMemory(k, 512)),
+      tags: input.tags ?? [],
+      context: sanitizeMemory(input.context ?? ""),
+      links: input.links ?? [],
+      embedding,
+      provenance: input.provenance ?? null
+    }).returning();
+    if (!note) throw new MemoryError("insert_no_row");
+    await tx.insert(memoryOp).values({ op: "ADD", noteId: note.id, payload: audit(content, input.source) });
+    return note;
   });
-  return note;
 }
 async function updateNote(db, embedder, noteId, patch) {
+  const ctx = storeContext(db, true);
+  assertEmbedder(db, embedder);
   const set = { updatedAt: /* @__PURE__ */ new Date() };
   if (patch.content !== void 0) {
-    set.content = patch.content;
-    set.embedding = patch.embedding ?? await embedder.embed(patch.content);
+    set.content = sanitizeMemory(patch.content);
+    set.contentHash = sha256(set.content);
+    set.embedding = patch.embedding ?? await embedder.embed(set.content);
+    if (set.embedding.length !== embedder.dimensions) throw new MemoryError("embedding_dimensions_mismatch");
+    toVectorLiteral(set.embedding);
   }
-  if (patch.keywords !== void 0) set.keywords = patch.keywords;
+  if (patch.keywords !== void 0) set.keywords = patch.keywords.map((k) => sanitizeMemory(k, 512));
   if (patch.tags !== void 0) set.tags = patch.tags;
-  if (patch.context !== void 0) set.context = patch.context;
+  if (patch.context !== void 0) set.context = sanitizeMemory(patch.context);
   if (patch.links !== void 0) set.links = patch.links;
+  if (patch.corpus !== void 0) set.corpus = patch.corpus;
+  if (patch.sourceKey !== void 0) set.sourceKey = patch.sourceKey;
   if (patch.provenance !== void 0) set.provenance = patch.provenance;
-  await db.update(memoryNote).set(set).where(eq(memoryNote.id, noteId));
-  await db.insert(memoryOp).values({
-    op: "UPDATE",
-    noteId,
-    payload: {
-      content: patch.content,
-      keywords: patch.keywords,
-      tags: patch.tags,
-      context: patch.context,
-      links: patch.links,
-      source: patch.source
-    }
+  await db.transaction(async (tx) => {
+    const changed = await tx.update(memoryNote).set(set).where(and(eq(memoryNote.id, noteId), eq(memoryNote.ownerId, ctx.owner), isNull(memoryNote.deletedAt))).returning({ id: memoryNote.id });
+    if (!changed.length) throw new MemoryError("note_not_owned_or_active");
+    await tx.insert(memoryOp).values({ op: "UPDATE", noteId, payload: set.content === void 0 ? { source: sourceTag(patch.source) } : audit(set.content, patch.source) });
   });
 }
-async function softDeleteNote(db, noteId, reason) {
-  await db.update(memoryNote).set({ deletedAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq(memoryNote.id, noteId));
-  await db.insert(memoryOp).values({ op: "DELETE", noteId, payload: reason ? { reason } : null });
+async function softDeleteNote(db, noteId, _reason) {
+  const ctx = storeContext(db, true);
+  await db.transaction(async (tx) => {
+    const changed = await tx.update(memoryNote).set({
+      deletedAt: /* @__PURE__ */ new Date(),
+      updatedAt: /* @__PURE__ */ new Date(),
+      content: "",
+      contentHash: "",
+      embedding: null,
+      provenance: null,
+      context: "",
+      keywords: [],
+      tags: [],
+      links: []
+    }).where(and(eq(memoryNote.id, noteId), eq(memoryNote.ownerId, ctx.owner))).returning({ id: memoryNote.id });
+    if (!changed.length) throw new MemoryError("note_not_owned");
+    await tx.insert(memoryOp).values({ op: "DELETE", noteId, payload: { redacted: true } });
+  });
 }
-async function noop(db, noteId, reason) {
-  await db.insert(memoryOp).values({ op: "NOOP", noteId, payload: reason ? { reason } : null });
+async function noop(db, noteId, _reason) {
+  storeContext(db, true);
+  void noteId;
 }
 async function recordRecall(db, noteId, payload) {
-  await db.insert(memoryOp).values({ op: "RECALL", noteId, payload: payload ?? null });
+  memoryAccess(true);
+  const ctx = storeContext(db);
+  const [note] = await db.select().from(memoryNote).where(and(eq(memoryNote.id, noteId), eq(memoryNote.ownerId, ctx.owner), isNull(memoryNote.deletedAt))).limit(1);
+  if (!note || !verifyNote(note, ctx)) throw new MemoryError("recall_note_untrusted");
+  await db.insert(memoryOp).values({ op: "RECALL", noteId, payload: {
+    source: sourceTag(payload?.source),
+    corpus: note.corpus,
+    distance: typeof payload?.distance === "number" && Number.isFinite(payload.distance) ? payload.distance : null
+  } });
+}
+function memoryNoteColumns() {
+  return {
+    id: memoryNote.id,
+    content: memoryNote.content,
+    contentHash: memoryNote.contentHash,
+    ownerId: memoryNote.ownerId,
+    embeddingId: memoryNote.embeddingId,
+    corpus: memoryNote.corpus,
+    sourceKey: memoryNote.sourceKey,
+    provenance: memoryNote.provenance,
+    keywords: memoryNote.keywords
+  };
 }
 
 // src/knowledge.ts
@@ -12703,10 +12902,10 @@ var RESEARCH_TAG = "kb:research";
 var DESIGN_TAG = "kb:design";
 var KNOWLEDGE_TAGS = [ADR_TAG, CONTEXT_TAG, RESEARCH_TAG, DESIGN_TAG];
 function sha8(s) {
-  return createHash("sha256").update(s).digest("hex").slice(0, 8);
+  return createHash2("sha256").update(s).digest("hex").slice(0, 8);
 }
 var SUPERSEDED_RE = /^\**\s*(폐기|대체|superseded|deprecated)/i;
-var STATUS_RE = /^-\s*\*\*상태\*\*\s*:\s*(.+)$/m;
+var STATUS_RE = /^(?:-\s*)?\*\*(?:상태|status)\*\*\s*:\s*(.+)$/im;
 var TITLE_RE = /^#\s+ADR-\S+:\s*(.+)$/m;
 var SECTION_RE = /^##\s+(.+)$/;
 function parseAdrChunks(markdown, adrId) {
@@ -12829,12 +13028,16 @@ ${body.join("\n").trim()}`;
   return chunks;
 }
 var HASH_PREFIX = "hash:";
+var opaqueKey = (tag, key) => `${tag}:${sha256(key)}`;
 var noteKeywords = (chunk) => [
   chunk.key,
   `${HASH_PREFIX}${chunk.hash}`
 ];
 var LOCK_NAMESPACE = 1802398823;
-async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
+async function syncKnowledge(db, pool, embedder, tag, desiredSource, source2) {
+  const ctx = storeContext(db, true);
+  assertEmbedder(db, embedder);
+  if (!/^kb:[a-zA-Z0-9_:-]+$/.test(tag)) throw new MemoryError("knowledge_source_invalid");
   const client = await pool.connect();
   try {
     const lock = await client.query(
@@ -12848,12 +13051,19 @@ async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
       return { added: 0, updated: 0, deleted: 0, noop: 0, locked: true };
     }
     try {
-      const stored = await db.select({ id: memoryNote.id, keywords: memoryNote.keywords }).from(memoryNote).where(and(isNull(memoryNote.deletedAt), sql`${tag} = any(${memoryNote.tags})`));
+      const snapshot = typeof desiredSource === "function" ? desiredSource() : desiredSource;
+      if (snapshot === null) return { added: 0, updated: 0, deleted: 0, noop: 0, incomplete: true };
+      if (snapshot.some((c) => c.tag !== tag) || new Set(snapshot.map((c) => c.key)).size !== snapshot.length) throw new MemoryError("knowledge_source_invalid");
+      const desired = snapshot.map((c) => {
+        const content = sanitizeMemory(c.content);
+        return { ...c, content, hash: sha256(content) };
+      });
+      const stored = await db.select(memoryNoteColumns()).from(memoryNote).where(and(isNull(memoryNote.deletedAt), eq(memoryNote.corpus, tag), eq(memoryNote.ownerId, ctx.owner)));
       const byKey = /* @__PURE__ */ new Map();
       for (const n of stored) {
-        const key = n.keywords.find((k) => !k.startsWith(HASH_PREFIX));
-        const hash = n.keywords.find((k) => k.startsWith(HASH_PREFIX))?.slice(HASH_PREFIX.length) ?? "";
-        if (key) byKey.set(key, { id: n.id, hash });
+        const key = n.sourceKey;
+        const hash2 = n.contentHash;
+        if (key) byKey.set(key, { id: n.id, hash: hash2, valid: verifyNote(n, ctx) });
       }
       const result = { added: 0, updated: 0, deleted: 0, noop: 0 };
       const desiredKeys = /* @__PURE__ */ new Set();
@@ -12861,11 +13071,11 @@ async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
       const toUpdate = [];
       const toNoop = [];
       for (const chunk of desired) {
-        desiredKeys.add(chunk.key);
-        const existing = byKey.get(chunk.key);
+        desiredKeys.add(opaqueKey(tag, chunk.key));
+        const existing = byKey.get(opaqueKey(tag, chunk.key));
         if (!existing) {
           toAdd.push(chunk);
-        } else if (existing.hash === chunk.hash) {
+        } else if (existing.hash === chunk.hash && existing.valid) {
           toNoop.push(existing.id);
         } else {
           toUpdate.push({ chunk, noteId: existing.id });
@@ -12876,6 +13086,11 @@ async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
         ...toUpdate.map((u) => u.chunk.content)
       ];
       const embeddings = embedTargets.length > 0 ? await embedder.embedBatch(embedTargets) : [];
+      if (embeddings.length !== embedTargets.length) throw new MemoryError("embedding_batch_count_mismatch");
+      for (const v of embeddings) {
+        if (v.length !== embedder.dimensions) throw new MemoryError("embedding_dimensions_mismatch");
+        toVectorLiteral(v);
+      }
       let ei = 0;
       for (const chunk of toAdd) {
         await addNote(db, embedder, {
@@ -12883,6 +13098,9 @@ async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
           keywords: noteKeywords(chunk),
           // 수렴 대상 네임스페이스(tag)로 저장 — chunk.tag가 아니라 tag로 불변식을 구조적으로 보장.
           tags: [tag],
+          corpus: tag,
+          sourceKey: opaqueKey(tag, chunk.key),
+          provenance: signNote(chunk.content, tag, opaqueKey(tag, chunk.key), ctx),
           context: chunk.context,
           embedding: embeddings[ei++],
           source: source2
@@ -12892,6 +13110,7 @@ async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
       for (const { chunk, noteId } of toUpdate) {
         await updateNote(db, embedder, noteId, {
           content: chunk.content,
+          provenance: signNote(chunk.content, tag, opaqueKey(tag, chunk.key), ctx),
           keywords: noteKeywords(chunk),
           context: chunk.context,
           embedding: embeddings[ei++],
@@ -12917,69 +13136,182 @@ async function syncKnowledge(db, pool, embedder, tag, desired, source2) {
     client.release();
   }
 }
+function sourceText(path) {
+  if (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink()) throw new MemoryError("source_symlink");
+  return readFileSync(path, "utf8");
+}
+function validateParsed(text2, chunks, retired = false) {
+  if (!chunks.length && text2.trim() && !retired && !text2.includes("<!-- loop-memory: empty -->")) throw new MemoryError("source_format_unrecognized");
+  return chunks;
+}
 var SKIP_FILES = /* @__PURE__ */ new Set(["0000-template.md", "README.md"]);
 async function graduateKnowledge(db, pool, embedder, adrDir, source2) {
-  const desired = [];
-  for (const f of readdirSync(adrDir)) {
-    if (!f.endsWith(".md") || SKIP_FILES.has(f)) continue;
-    const adrId = f.match(/^(\d+)/)?.[1];
-    if (!adrId) continue;
-    desired.push(...parseAdrChunks(readFileSync(join(adrDir, f), "utf8"), adrId));
-  }
-  if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, ADR_TAG, desired, source2);
+  storeContext(db, true);
+  return syncKnowledge(db, pool, embedder, ADR_TAG, () => {
+    const desired = [];
+    const files = readdirSync(adrDir);
+    let parsed = 0;
+    for (const f of files) {
+      if (!f.endsWith(".md") || SKIP_FILES.has(f)) continue;
+      const adrId = f.match(/^(\d+)/)?.[1];
+      if (!adrId) continue;
+      parsed++;
+      const text2 = sourceText(join(adrDir, f));
+      desired.push(...validateParsed(text2, parseAdrChunks(text2, adrId), SUPERSEDED_RE.test(text2.match(STATUS_RE)?.[1] ?? "")));
+    }
+    if (files.length && !parsed) return null;
+    return desired;
+  }, source2);
 }
 async function graduateContext(db, pool, embedder, contextPath, source2) {
-  const desired = parseContextChunks(readFileSync(contextPath, "utf8"));
-  if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, desired, source2);
+  storeContext(db, true);
+  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, () => {
+    const text2 = sourceText(contextPath);
+    return validateParsed(text2, parseContextChunks(text2));
+  }, source2);
 }
 async function graduateMarkdownDir(db, pool, embedder, dir, tag, sourceLabel, source2) {
-  const desired = [];
+  storeContext(db, true);
   const skipped = [];
-  for (const f of readdirSync(dir)) {
-    if (f.startsWith(".")) continue;
-    if (!f.endsWith(".md")) {
-      const reason = f.toLowerCase().endsWith(".html") ? "HTML \u2014 \uD14D\uC2A4\uD2B8 \uCD94\uCD9C \uBBF8\uAD6C\uD604(BAC-355 \uBC94\uC704: \uBA85\uC2DC \uC81C\uC678)" : ".md \uC544\uB2D8(\uBBF8\uC9C0\uC6D0 \uD655\uC7A5\uC790)";
-      skipped.push({ file: f, reason });
-      continue;
+  const result = await syncKnowledge(db, pool, embedder, tag, () => {
+    const desired = [];
+    for (const f of readdirSync(dir)) {
+      if (f.startsWith(".")) continue;
+      if (!f.endsWith(".md")) {
+        const reason = f.toLowerCase().endsWith(".html") ? "HTML \u2014 \uD14D\uC2A4\uD2B8 \uCD94\uCD9C \uBBF8\uAD6C\uD604(BAC-355 \uBC94\uC704: \uBA85\uC2DC \uC81C\uC678)" : ".md \uC544\uB2D8(\uBBF8\uC9C0\uC6D0 \uD655\uC7A5\uC790)";
+        skipped.push({ file: f, reason });
+        continue;
+      }
+      const docId = f.replace(/\.md$/, "");
+      const text2 = sourceText(join(dir, f));
+      desired.push(...validateParsed(text2, parseMarkdownChunks(text2, tag, docId, `${sourceLabel}/${f}`)));
     }
-    const docId = f.replace(/\.md$/, "");
-    desired.push(
-      ...parseMarkdownChunks(readFileSync(join(dir, f), "utf8"), tag, docId, `${sourceLabel}/${f}`)
-    );
-  }
-  const result = desired.length === 0 ? { added: 0, updated: 0, deleted: 0, noop: 0 } : await syncKnowledge(db, pool, embedder, tag, desired, source2);
+    if (!desired.length && skipped.length) return null;
+    return desired;
+  }, source2);
   return { ...result, skipped };
 }
 async function recallKnowledge(db, embedder, query, k = 5, tags = KNOWLEDGE_TAGS) {
-  const literal = toVectorLiteral(await embedder.embed(query));
+  const ctx = assertEmbedder(db, embedder);
+  const literal = toVectorLiteral(await embedder.embed(sanitizeMemory(query, 2048)));
   const distance = sql`${memoryNote.embedding} <=> ${literal}::vector`;
   const tagList = Array.isArray(tags) ? tags : [tags];
-  const tagFilter = or(...tagList.map((t) => sql`${t} = any(${memoryNote.tags})`));
-  const rows = await db.select({ id: memoryNote.id, content: memoryNote.content, distance }).from(memoryNote).where(and(isNull(memoryNote.deletedAt), sql`${memoryNote.embedding} is not null`, tagFilter)).orderBy(distance).limit(k);
-  return rows.map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance) }));
+  if (tagList.length === 0) return [];
+  const tagFilter = or(...tagList.map((t) => eq(memoryNote.corpus, t)));
+  const rows = await db.select({ ...memoryNoteColumns(), distance }).from(memoryNote).where(and(isNull(memoryNote.deletedAt), eq(memoryNote.ownerId, ctx.owner), eq(memoryNote.embeddingId, ctx.embeddingId), sql`${memoryNote.embedding} is not null`, tagFilter)).orderBy(distance);
+  return rows.filter((r) => verifyNote(r, ctx)).slice(0, k).map((r) => ({ id: r.id, content: sanitizeMemory(r.content), distance: Number(r.distance) }));
 }
 
 // src/lessons.ts
-import { existsSync, readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+import { lstatSync as lstatSync3, existsSync, readdirSync as readdirSync3, readFileSync as readFileSync4 } from "node:fs";
+import { join as join4 } from "node:path";
 
-// src/provenance.ts
-import { createHmac, timingSafeEqual } from "node:crypto";
-function signContent(content, secret) {
-  return createHmac("sha256", secret).update(content).digest("hex");
+// ../loop-engine/lib/lesson-state.mjs
+import { createHash as createHash5 } from "node:crypto";
+
+// ../loop-engine/lib/lesson-evidence.mjs
+import { lstatSync as lstatSync2, realpathSync as realpathSync3, readFileSync as readFileSync3 } from "node:fs";
+import { basename as basename2, dirname as dirname3, resolve as resolve3, join as join3 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+
+// ../loop-engine/lib/evidence-graph.mjs
+import { mkdirSync, readFileSync as readFileSync2, writeFileSync, realpathSync as realpathSync2, readdirSync as readdirSync2 } from "node:fs";
+import { join as join2, resolve as resolve2, relative, dirname as dirname2, isAbsolute } from "node:path";
+
+// ../loop-engine/lib/workspace-identity.mjs
+import { createHash as createHash3 } from "node:crypto";
+var sha2562 = (value) => createHash3("sha256").update(value).digest("hex");
+
+// ../loop-engine/lib/evidence-graph.mjs
+var KINDS = /* @__PURE__ */ new Set(["requirement", "ac", "artifact", "verification", "review", "approval", "knowledge"]);
+var safeId = (id) => typeof id === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(id);
+var evidenceDir = (root = process.cwd(), loopDir = process.env.LOOP_DIR || ".loop") => resolve2(root, loopDir, "evidence");
+function readEvidence(dir, id) {
+  if (!safeId(id)) throw new Error("invalid evidence id");
+  const record = JSON.parse(readFileSync2(join2(dir, `${id}.json`), "utf8"));
+  const { content_hash, ...body } = record;
+  if (record.id !== id || record.schema_version !== 1 || !KINDS.has(record.kind) || sha2562(JSON.stringify(body)) !== content_hash) throw new Error("evidence hash or schema mismatch");
+  return record;
 }
-function verifySignature(content, secret, signature) {
-  if (!signature) return false;
-  const expected = signContent(content, secret);
-  const a = Buffer.from(expected, "hex");
-  const b = Buffer.from(signature, "hex");
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+
+// ../loop-engine/lib/lesson-evidence.mjs
+var hash = (x) => createHash4("sha256").update(x).digest("hex");
+var digest = (x) => typeof x === "string" && /^[a-f0-9]{64}$/.test(x);
+function lessonReceipt(file, verdict, root = process.cwd()) {
+  if (!file) throw Error("--receipt/--failure-receipt required for verified evidence");
+  const expected = evidenceDir(root);
+  const abs = resolve3(file);
+  if (lstatSync2(abs).isSymbolicLink() || !lstatSync2(abs).isFile() || realpathSync3(dirname3(abs)) !== realpathSync3(expected)) throw Error("receipt outside local evidence directory");
+  const id = basename2(abs, ".json");
+  if (basename2(abs) !== `${id}.json`) throw Error("receipt extension invalid");
+  const r = readEvidence(expected, id);
+  if (r.kind !== "verification" || r.verdict !== verdict || !Number.isInteger(r.exit) || (verdict === "PASS" ? r.exit !== 0 : r.exit === 0) || r.mode && r.mode !== "gate" || r.root_hash !== hash(realpathSync3(root)) || !digest(r.command_hash) || !digest(r.verdict_sha256) || !digest(r.target_before?.digest) || r.target_before.digest !== r.target_after?.digest || typeof r.run_id !== "string" || !r.run_id || !Number.isFinite(Date.parse(r.started_at)) || !Number.isFinite(Date.parse(r.finished_at)) || Date.parse(r.finished_at) < Date.parse(r.started_at)) throw Error("receipt does not prove stable local verification");
+  return r;
 }
-function signingKeyFromEnv() {
-  return process.env.LOOP_MEMORY_SIGNING_KEY || void 0;
+function pairSummary(pass, fail) {
+  if (fail.target_after.digest === pass.target_before.digest || pass.id === fail.id || pass.run_id !== fail.run_id || pass.command_hash !== fail.command_hash || Date.parse(fail.finished_at) > Date.parse(pass.started_at)) throw Error("receipt pair is not a matching FAIL-to-PASS verification");
+  return {
+    id: pass.id,
+    failure_id: fail.id,
+    run_id: pass.run_id,
+    verdict: "PASS",
+    command_hash: pass.command_hash,
+    root_hash: pass.root_hash,
+    finished_at: pass.finished_at,
+    fix_target_before: fail.target_after.digest,
+    fix_target_after: pass.target_before.digest
+  };
+}
+function localFile(id, root) {
+  if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw Error("invalid lesson evidence id");
+  return join3(evidenceDir(root), `${id}.json`);
+}
+function backedSummary(summary, root) {
+  return pairSummary(
+    lessonReceipt(localFile(summary.id, root), "PASS", root),
+    lessonReceipt(localFile(summary.failure_id, root), "FAIL", root)
+  );
+}
+function verifiedLessonSummary(lesson, contentHash, candidate, root = process.cwd()) {
+  const file = localFile(candidate.seal_id, root);
+  if (!lstatSync2(file).isFile() || lstatSync2(file).isSymbolicLink()) throw Error("invalid lesson seal file");
+  const seal = readEvidence(evidenceDir(root), candidate.seal_id);
+  if (seal.kind !== "knowledge" || seal.purpose !== "lesson-verification" || seal.lesson_id !== lesson.id || seal.lesson_content_hash !== contentHash || seal.root_hash !== hash(realpathSync3(root))) throw Error("lesson seal content/workspace mismatch");
+  const backing = backedSummary(seal.summary, root);
+  for (const [key, value] of Object.entries(backing)) if (seal.summary[key] !== value) throw Error("lesson backing mismatch");
+  const expected = { ...seal.summary, seal_id: seal.id };
+  if (Object.keys(candidate).length !== Object.keys(expected).length || Object.entries(expected).some(([key, value]) => candidate[key] !== value)) throw Error("lesson summary differs from producer seal");
+  return expected;
+}
+
+// ../loop-engine/lib/lesson-state.mjs
+function lessonContentHash(l) {
+  return createHash5("sha256").update(JSON.stringify([
+    typeof l.title === "string" ? l.title : "",
+    typeof l.fix === "string" ? l.fix : "",
+    Array.isArray(l.signature) ? l.signature.filter((s) => typeof s === "string") : []
+  ])).digest("hex");
+}
+function lessonState(l, { root = process.cwd() } = {}) {
+  const receipts = Array.isArray(l.verification?.receipts) ? l.verification.receipts : [];
+  const contentHash = lessonContentHash(l);
+  const valid = [];
+  if (l.verified === true && l.verification?.version === 1 && l.verification.content_hash === contentHash) {
+    for (const candidate of receipts) {
+      try {
+        valid.push(verifiedLessonSummary(l, contentHash, candidate, root));
+      } catch {
+      }
+    }
+  }
+  const unique = [...new Map(valid.map((r) => [r.run_id, r])).values()];
+  return {
+    invalidated: typeof l.invalid_at === "string" && !!l.invalid_at,
+    rejected: l.challenge?.verdict === "reject",
+    retired: typeof l.retired?.at === "string" && !!l.retired.at,
+    verified: l.verified === true && l.verification?.version === 1 && l.verification.content_hash === lessonContentHash(l) && unique.length > 0,
+    receipts: unique
+  };
 }
 
 // src/lessons.ts
@@ -12987,22 +13319,24 @@ var LESSON_TAG = "lesson";
 var LESSON_KEY_PREFIX = "lesson:";
 var lessonKey = (id) => `${LESSON_KEY_PREFIX}${id}`;
 function isGraduationEligible(l) {
-  return l.verified && !l.rejected && !l.retired;
+  return l.verified && !l.invalidated && !l.rejected && !l.retired;
 }
-function readLessonRecords(dir) {
+function readLessonRecords(dir, options = {}) {
   if (!existsSync(dir)) return [];
   const out = [];
-  for (const f of readdirSync2(dir)) {
+  for (const f of readdirSync3(dir)) {
     if (!f.endsWith(".json")) continue;
+    if (!lstatSync3(join4(dir, f)).isFile() || lstatSync3(join4(dir, f)).isSymbolicLink()) throw new MemoryError("source_symlink");
     let raw;
     try {
-      raw = JSON.parse(readFileSync2(join2(dir, f), "utf8"));
+      raw = JSON.parse(readFileSync4(join4(dir, f), "utf8"));
     } catch {
       continue;
     }
     if (!raw || typeof raw !== "object") continue;
     const l = raw;
     if (typeof l.id !== "string" || !l.id) continue;
+    const state = lessonState(l, options);
     const challenge = l.challenge && typeof l.challenge === "object" ? l.challenge : null;
     const retiredRaw = l.retired && typeof l.retired === "object" ? l.retired : null;
     const retired = !!(retiredRaw && typeof retiredRaw.at === "string" && retiredRaw.at);
@@ -13016,7 +13350,8 @@ function readLessonRecords(dir) {
       // 조용히 decay 계산을 오염시키지 못하게.
       count: Number.isInteger(l.count) && l.count >= 0 ? l.count : 0,
       lastSeen: typeof l.last_seen === "string" ? l.last_seen : "",
-      verified: l.verified === true,
+      verified: state.verified,
+      invalidated: state.invalidated,
       rejected: challenge?.verdict === "reject",
       retired,
       retiredRef: retired && typeof retiredRaw?.ref === "string" ? retiredRaw.ref : ""
@@ -13024,35 +13359,29 @@ function readLessonRecords(dir) {
   }
   return out;
 }
-function readVerifiedLessons(dir) {
-  return readLessonRecords(dir).filter(isGraduationEligible).map(({ id, title, fix, source: source2, signature, count, lastSeen }) => ({
-    id,
-    title,
-    fix,
-    source: source2,
-    signature,
-    count,
-    lastSeen
-  }));
-}
 function lessonContent(l) {
-  return [l.title, l.fix ? `fix: ${l.fix}` : "", l.signature.join(" | ")].map((s) => s.trim()).filter(Boolean).join("\n");
+  return sanitizeMemory([l.title, l.fix ? `fix: ${l.fix}` : "", l.signature.join(" | ")].map((s) => s.trim()).filter(Boolean).join("\n"));
 }
 function lessonStub(l, ref) {
   const where = ref || "(\uC704\uCE58 \uBBF8\uAE30\uB85D)";
-  return `[\uD1F4\uC5ED] ${l.title}
-\uC774\uBBF8 ${where}\uB85C \uCF54\uB514\uD30C\uC774\uB428 \u2014 \uC6D0\uBB38 \uCC38\uC870. (\uC6D0 \uAD50\uD6C8 id: ${l.id})`;
+  return sanitizeMemory(`[\uD1F4\uC5ED] ${l.title}
+\uC774\uBBF8 ${where}\uB85C \uCF54\uB514\uD30C\uC774\uB428 \u2014 \uC6D0\uBB38 \uCC38\uC870. (\uC6D0 \uAD50\uD6C8 id: ${l.id})`);
 }
 function decideLessonReap(currentContent, rec) {
   if (!rec) return { op: "keep" };
+  if (rec.invalidated) return { op: "purge", reason: "invalidated" };
+  if (!rec.verified) return { op: "purge", reason: "verification retracted or legacy" };
+  if (rec.rejected) return { op: "purge", reason: "challenge verdict=reject" };
   if (rec.retired) {
     const desired = lessonStub(rec, rec.retiredRef);
     return currentContent === desired ? { op: "keep" } : { op: "stub", content: desired };
   }
-  if (rec.rejected) return { op: "purge", reason: "challenge verdict=reject" };
   return { op: "keep" };
 }
 async function graduateLessons(db, pool, embedder, dir, signingKey, source2) {
+  const ctx = storeContext(db, true);
+  assertEmbedder(db, embedder);
+  if (!signingKey || signingKey !== ctx.signingKey) throw new MemoryError("signing_key_mismatch");
   const client = await pool.connect();
   try {
     const lock = await client.query(
@@ -13063,41 +13392,59 @@ async function graduateLessons(db, pool, embedder, dir, signingKey, source2) {
       throw new Error(`graduateLessons: pg_try_advisory_lock returned ${lock.rows.length} rows`);
     }
     if (!lock.rows[0]?.locked) {
-      return { added: 0, skipped: 0, stubbed: 0, purged: 0, locked: true };
+      return { added: 0, updated: 0, skipped: 0, stubbed: 0, purged: 0, locked: true };
     }
     try {
+      if (!existsSync(dir) || !lstatSync3(dir).isDirectory()) throw new MemoryError("lesson_source_missing");
+      const records = readLessonRecords(dir, { root: ctx.canonical || process.cwd() });
       let added = 0;
+      let updated = 0;
       let skipped = 0;
-      for (const l of readVerifiedLessons(dir)) {
+      for (const l of records.filter(isGraduationEligible)) {
         const key = lessonKey(l.id);
-        const [existing] = await db.select({ id: memoryNote.id }).from(memoryNote).where(and(isNull(memoryNote.deletedAt), sql`${key} = any(${memoryNote.keywords})`)).limit(1);
-        if (existing) {
-          skipped++;
-          continue;
-        }
         const content = lessonContent(l);
-        await addNote(db, embedder, {
-          content,
-          keywords: [key],
-          tags: [LESSON_TAG, l.source],
-          context: l.source,
-          provenance: signingKey ? signContent(content, signingKey) : void 0,
-          source: source2
-        });
-        added++;
+        const [existing] = await db.select(memoryNoteColumns()).from(memoryNote).where(and(isNull(memoryNote.deletedAt), eq(memoryNote.ownerId, ctx.owner), eq(memoryNote.corpus, LESSON_TAG), eq(memoryNote.sourceKey, key))).limit(1);
+        const provenance = signNote(content, LESSON_TAG, key, ctx);
+        if (existing) {
+          if (existing.content === content && verifyNote(existing, ctx)) {
+            skipped++;
+            continue;
+          }
+          await updateNote(db, embedder, existing.id, { content, provenance, source: source2 });
+          updated++;
+        } else {
+          await addNote(db, embedder, {
+            content,
+            keywords: [key],
+            tags: [LESSON_TAG],
+            corpus: LESSON_TAG,
+            sourceKey: key,
+            context: l.source,
+            provenance,
+            source: source2
+          });
+          added++;
+        }
       }
       let stubbed = 0;
       let purged = 0;
-      const byId = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
-      const graduated = await db.select({ id: memoryNote.id, keywords: memoryNote.keywords, content: memoryNote.content }).from(memoryNote).where(and(isNull(memoryNote.deletedAt), sql`${LESSON_TAG} = any(${memoryNote.tags})`));
+      const byId = new Map(records.map((l) => [l.id, l]));
+      const graduated = await db.select(memoryNoteColumns()).from(memoryNote).where(and(isNull(memoryNote.deletedAt), eq(memoryNote.corpus, LESSON_TAG), eq(memoryNote.ownerId, ctx.owner)));
       for (const note of graduated) {
-        const id = note.keywords.find((k) => k.startsWith(LESSON_KEY_PREFIX))?.slice(LESSON_KEY_PREFIX.length);
+        const id = note.sourceKey.startsWith(LESSON_KEY_PREFIX) ? note.sourceKey.slice(LESSON_KEY_PREFIX.length) : "";
         if (!id) continue;
-        const decision = decideLessonReap(note.content, byId.get(id));
-        if (decision.op === "stub") {
+        const rec = byId.get(id);
+        const decision = decideLessonReap(note.content, rec);
+        if (!rec) {
+          await softDeleteNote(db, note.id, "source missing");
+          purged++;
+          continue;
+        }
+        if (decision.op === "stub" || decision.op === "keep" && rec.retired && !verifyNote(note, ctx)) {
+          const content = lessonStub(rec, rec.retiredRef);
           await updateNote(db, embedder, note.id, {
-            content: decision.content,
-            provenance: signingKey ? signContent(decision.content, signingKey) : void 0,
+            content,
+            provenance: signNote(content, LESSON_TAG, note.sourceKey, ctx),
             source: source2
           });
           stubbed++;
@@ -13106,7 +13453,7 @@ async function graduateLessons(db, pool, embedder, dir, signingKey, source2) {
           purged++;
         }
       }
-      return { added, skipped, stubbed, purged };
+      return { added, updated, skipped, stubbed, purged };
     } finally {
       await client.query("select pg_advisory_unlock($1, hashtext($2))", [
         LOCK_NAMESPACE,
@@ -13119,22 +13466,18 @@ async function graduateLessons(db, pool, embedder, dir, signingKey, source2) {
 }
 async function recallLessonsRaw(db, embedder, query, signingKey, k) {
   if (!signingKey) return [];
-  const literal = toVectorLiteral(await embedder.embed(query));
+  const ctx = assertEmbedder(db, embedder);
+  if (ctx.signingKey !== signingKey) throw new MemoryError("signing_key_mismatch");
+  const literal = toVectorLiteral(await embedder.embed(sanitizeMemory(query, 2048)));
   const distance = sql`${memoryNote.embedding} <=> ${literal}::vector`;
-  const rows = await db.select({
-    id: memoryNote.id,
-    content: memoryNote.content,
-    distance,
-    provenance: memoryNote.provenance,
-    keywords: memoryNote.keywords
-  }).from(memoryNote).where(
-    and(
-      isNull(memoryNote.deletedAt),
-      sql`${memoryNote.embedding} is not null`,
-      sql`${LESSON_TAG} = any(${memoryNote.tags})`
-    )
-  ).orderBy(distance).limit(k);
-  return rows.filter((r) => verifySignature(r.content, signingKey, r.provenance)).map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance), keywords: r.keywords }));
+  const rows = await db.select({ ...memoryNoteColumns(), distance }).from(memoryNote).where(and(
+    isNull(memoryNote.deletedAt),
+    eq(memoryNote.ownerId, ctx.owner),
+    eq(memoryNote.embeddingId, ctx.embeddingId),
+    eq(memoryNote.corpus, LESSON_TAG),
+    sql`${memoryNote.embedding} is not null`
+  )).orderBy(distance);
+  return rows.filter((r) => verifyNote(r, ctx)).slice(0, k).map((r) => ({ id: r.id, content: sanitizeMemory(r.content), distance: Number(r.distance), sourceKey: r.sourceKey }));
 }
 async function recallLessons(db, embedder, query, signingKey, k = 5) {
   const rows = await recallLessonsRaw(db, embedder, query, signingKey, k);
@@ -13195,23 +13538,19 @@ function clusterBySimilarity(rows, threshold) {
 }
 async function fetchLessonEmbeddings(db, signingKey) {
   if (!signingKey) return [];
-  const notes = await db.select({
-    id: memoryNote.id,
-    keywords: memoryNote.keywords,
-    embedding: memoryNote.embedding,
-    content: memoryNote.content,
-    provenance: memoryNote.provenance
-  }).from(memoryNote).where(
-    and(
-      isNull(memoryNote.deletedAt),
-      sql`${LESSON_TAG} = any(${memoryNote.tags})`,
-      sql`${memoryNote.embedding} is not null`
-    )
-  );
+  const ctx = storeContext(db);
+  if (ctx.signingKey !== signingKey) throw new MemoryError("signing_key_mismatch");
+  const notes = await db.select({ ...memoryNoteColumns(), embedding: memoryNote.embedding }).from(memoryNote).where(and(
+    isNull(memoryNote.deletedAt),
+    eq(memoryNote.ownerId, ctx.owner),
+    eq(memoryNote.embeddingId, ctx.embeddingId),
+    eq(memoryNote.corpus, LESSON_TAG),
+    sql`${memoryNote.embedding} is not null`
+  ));
   const out = [];
   for (const n of notes) {
-    if (!verifySignature(n.content, signingKey, n.provenance)) continue;
-    const lessonId = n.keywords.find((k) => k.startsWith(LESSON_KEY_PREFIX))?.slice(LESSON_KEY_PREFIX.length);
+    if (!verifyNote(n, ctx)) continue;
+    const lessonId = n.sourceKey.startsWith(LESSON_KEY_PREFIX) ? n.sourceKey.slice(LESSON_KEY_PREFIX.length) : "";
     if (!lessonId || !n.embedding) continue;
     out.push({ noteId: n.id, lessonId, embedding: n.embedding });
   }
@@ -13251,7 +13590,7 @@ async function recallLessonsDecayed(db, embedder, query, signingKey, dir, k = 5,
   const candidates = await recallLessonsRaw(db, embedder, query, signingKey, Math.max(k * 4, 20));
   const meta = new Map(readLessonRecords(dir).map((l) => [l.id, l]));
   return candidates.map((h) => {
-    const lessonId = h.keywords.find((kw) => kw.startsWith(LESSON_KEY_PREFIX))?.slice(LESSON_KEY_PREFIX.length);
+    const lessonId = h.sourceKey.startsWith(LESSON_KEY_PREFIX) ? h.sourceKey.slice(LESSON_KEY_PREFIX.length) : "";
     const m = lessonId ? meta.get(lessonId) : void 0;
     const score = decayedScore(
       { distance: h.distance, lastSeen: m?.lastSeen ?? "", count: m?.count ?? 0 },
@@ -13263,8 +13602,8 @@ async function recallLessonsDecayed(db, embedder, query, signingKey, dir, k = 5,
 }
 
 // src/liveness.ts
-import { readFileSync as readFileSync3, readdirSync as readdirSync3, statSync } from "node:fs";
-import { join as join3 } from "node:path";
+import { readFileSync as readFileSync5, readdirSync as readdirSync4, statSync } from "node:fs";
+import { join as join5 } from "node:path";
 var RECALL_TYPE = "memory.recall";
 var GRADUATE_TYPE = "memory.graduate";
 function emptyCounts() {
@@ -13284,7 +13623,7 @@ function tally(counts, e) {
 }
 function summarizeLiveness(root, opts = {}) {
   const limit = opts.runs && opts.runs > 0 ? opts.runs : 20;
-  const dir = join3(root, ".loop", "runs");
+  const dir = join5(root, ".loop", "runs");
   const summary = {
     root,
     runsScanned: 0,
@@ -13296,14 +13635,14 @@ function summarizeLiveness(root, opts = {}) {
   };
   let files;
   try {
-    files = readdirSync3(dir).filter((f) => f.endsWith(".jsonl"));
+    files = readdirSync4(dir).filter((f) => f.endsWith(".jsonl"));
   } catch {
     return summary;
   }
   const byRecency = files.map((f) => {
     let mtime = 0;
     try {
-      mtime = statSync(join3(dir, f)).mtimeMs;
+      mtime = statSync(join5(dir, f)).mtimeMs;
     } catch {
     }
     return { f, mtime };
@@ -13311,7 +13650,7 @@ function summarizeLiveness(root, opts = {}) {
   for (const { f } of byRecency) {
     let raw;
     try {
-      raw = readFileSync3(join3(dir, f), "utf8");
+      raw = readFileSync5(join5(dir, f), "utf8");
     } catch {
       continue;
     }
@@ -13352,36 +13691,160 @@ function formatLiveness(s) {
     last: ${c.lastAt ?? "(never)"}
 `;
   return `loop-memory liveness:
-  ledger: ${join3(s.root, ".loop", "runs")} \u2014 ${s.runsScanned} run file(s) scanned${s.skippedLines ? `, ${s.skippedLines} unparseable line(s) skipped` : ""}
+  ledger: ${join5(s.root, ".loop", "runs")} \u2014 ${s.runsScanned} run file(s) scanned${s.skippedLines ? `, ${s.skippedLines} unparseable line(s) skipped` : ""}
   recall fired in ${s.runsWithRecall}/${s.runsScanned} run(s)
 ` + line2("recall", s.recall) + line2("graduate", s.graduate) + `  last injected: ${s.lastInjectedAt ?? "(never)"}
 `;
 }
 
+// hooks/lib/load-dotenv.mjs
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync as existsSync2, readFileSync as readFileSync6 } from "node:fs";
+import { basename as basename3, dirname as dirname4, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve4 } from "node:path";
+var DEFAULT_DOTENV_PATH = ".loop/.env";
+var ALLOWED_KEYS = Object.freeze([
+  // credentials — the reason this loader exists at all
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "LOOP_MEMORY_SIGNING_KEY",
+  // connection
+  "LOOP_DATABASE_URL",
+  "LOOP_EMBED_PROVIDER",
+  "LOOP_EMBED_MODEL",
+  // recall tuning — numeric thresholds, no behaviour switch
+  "LOOP_RECALL_MAX_DISTANCE",
+  "LOOP_KNOWLEDGE_MAX_DISTANCE"
+]);
+var ALLOWED = new Set(ALLOWED_KEYS);
+function mainWorktreeRoot(cwd) {
+  try {
+    const out = execFileSync2("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      timeout: 3e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+    if (!out) return null;
+    const commonDir = resolve4(cwd, out);
+    return basename3(commonDir) === ".git" ? dirname4(commonDir) : null;
+  } catch {
+    return null;
+  }
+}
+function resolveDotenvPath(projectDir, configured) {
+  const rel = configured || DEFAULT_DOTENV_PATH;
+  if (isAbsolute2(rel)) return existsSync2(rel) ? rel : null;
+  const local = contained(projectDir, rel);
+  if (local && existsSync2(local)) return local;
+  const mainRoot = mainWorktreeRoot(projectDir);
+  if (!mainRoot) return null;
+  const fallback = contained(mainRoot, rel);
+  return fallback && existsSync2(fallback) ? fallback : null;
+}
+function contained(root, rel) {
+  const abs = resolve4(root, rel);
+  const r = relative2(resolve4(root), abs);
+  return r === "" || !r.startsWith("..") && !isAbsolute2(r) ? abs : null;
+}
+function loadDotenv(projectDir, configured, target = process.env) {
+  try {
+    const file = resolveDotenvPath(projectDir, configured);
+    if (!file) return null;
+    for (const raw of readFileSync6(file, "utf8").split("\n")) {
+      const line2 = raw.trim();
+      if (!line2 || line2.startsWith("#")) continue;
+      const eq2 = line2.indexOf("=");
+      if (eq2 < 1) continue;
+      const key = line2.slice(0, eq2).replace(/^export\s+/, "").trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !ALLOWED.has(key) || key in target) continue;
+      let val = line2.slice(eq2 + 1).trim();
+      const q = val[0];
+      if (q === '"' || q === "'") {
+        const end = val.indexOf(q, 1);
+        val = end === -1 ? val.slice(1) : val.slice(1, end);
+      } else {
+        const c = val.search(/\s#/);
+        if (c !== -1) val = val.slice(0, c).trim();
+      }
+      target[key] = val;
+    }
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+// hooks/lib/runtime-env.mjs
+function runtimeEnv(root, input = process.env) {
+  const env = { ...input };
+  for (const name of [
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "LOOP_DATABASE_URL",
+    "LOOP_MEMORY_SIGNING_KEY",
+    "LOOP_DOTENV_PATH",
+    "LOOP_EMBED_PROVIDER",
+    "LOOP_EMBED_MODEL",
+    "LOOP_RECALL_MAX_DISTANCE",
+    "LOOP_KNOWLEDGE_MAX_DISTANCE"
+  ]) {
+    const option = `CLAUDE_PLUGIN_OPTION_${name}`;
+    if (!(name in env) && option in env) env[name] = env[option];
+  }
+  const dotenv = loadDotenv(root, env.LOOP_DOTENV_PATH, env);
+  return { env, dotenv };
+}
+
 // src/cli.ts
+var runtime = runtimeEnv(process.cwd());
+Object.assign(process.env, runtime.env);
+async function openBound(embeddingId = "") {
+  const repository = repositoryIdentity(process.cwd());
+  const signingKey = signingKeyFromEnv();
+  if (!signingKey) throw new MemoryError("signing_key_missing");
+  const connection = createLoopDb();
+  try {
+    await bindStore(connection.db, connection.pool, { ...repository, embeddingId, signingKey });
+    return connection;
+  } catch (e) {
+    await connection.pool.end();
+    throw e;
+  }
+}
+function sourcePath(value) {
+  const root = realpathSync4(process.cwd());
+  const target = realpathSync4(resolve5(root, value));
+  const rel = relative3(root, target);
+  if (rel.startsWith("..") || isAbsolute3(rel)) throw new MemoryError("source_outside_repository");
+  return target;
+}
 function pickEmbedder(allowStub) {
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
   const hasGemini = !!process.env.GEMINI_API_KEY;
+  const requested = process.env.LOOP_EMBED_PROVIDER;
+  if (requested && requested !== "openai" && requested !== "gemini") throw new MemoryError("embedding_provider_invalid");
+  if (requested === "openai" && !hasOpenAI || requested === "gemini" && !hasGemini) throw new MemoryError("embedding_provider_key_missing");
   if (!hasOpenAI && !hasGemini) {
     if (!allowStub) {
       process.stderr.write(
         "loop-memory: no embedding API key (OPENAI_API_KEY/GEMINI_API_KEY) \u2014 refusing to run with a stub embedder against a store built with a real one (results would look valid but be meaningless). Pass --allow-stub to force it anyway.\n"
       );
-      process.exit(1);
+      throw new MemoryError("embedding_key_missing");
     }
     process.stderr.write(
       "loop-memory: no embedding API key (OPENAI_API_KEY/GEMINI_API_KEY) \u2014 using stub (--allow-stub); recall is NOT semantic.\n"
     );
     return stubEmbedder();
   }
-  const requested = process.env.LOOP_EMBED_PROVIDER;
-  const provider = requested === "openai" && hasOpenAI ? "openai" : requested === "gemini" && hasGemini ? "gemini" : hasOpenAI ? "openai" : "gemini";
+  if (!requested && hasOpenAI && hasGemini) throw new MemoryError("embedding_provider_ambiguous");
+  const provider = requested || (hasOpenAI ? "openai" : "gemini");
   return apiEmbedder({ provider });
 }
 function memoizeEmbedder(base) {
   const cache = /* @__PURE__ */ new Map();
   return {
     dimensions: base.dimensions,
+    identity: base.identity,
     embed(text2) {
       let p = cache.get(text2);
       if (!p) {
@@ -13421,6 +13884,7 @@ var opt = {
   // docs/product/design 디렉토리(BAC-355). 비면 graduate가 건너뛴다.
   query: "",
   queryFile: "",
+  queryStdin: false,
   k: 5,
   json: false,
   allowStub: false,
@@ -13466,6 +13930,9 @@ for (let i = 0; i < argv.length; i++) {
     case "--query":
       opt.query = val();
       break;
+    case "--query-stdin":
+      opt.queryStdin = true;
+      break;
     case "--query-file":
       opt.queryFile = val();
       break;
@@ -13507,7 +13974,7 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 async function runStats(json2) {
-  const { db, pool } = createLoopDb();
+  const { db, pool } = await openBound();
   try {
     const notesRes = await db.execute(sql`
       select count(*)::int as total,
@@ -13556,7 +14023,7 @@ async function runStats(json2) {
 `);
     process.stdout.write(`  ops: ${fmtOps}
 `);
-    process.stdout.write(`  last graduate op: ${lastOpAt ?? "(never)"}
+    process.stdout.write(`  last memory op: ${lastOpAt ?? "(never)"}
 `);
   } finally {
     await pool.end();
@@ -13571,7 +14038,7 @@ async function runRecordRecall(hitsJson, source2) {
     process.exit(2);
   }
   if (!Array.isArray(hits) || hits.length === 0) return;
-  const { db, pool } = createLoopDb();
+  const { db, pool } = await openBound();
   try {
     for (const h of hits) {
       if (!h?.id) continue;
@@ -13582,7 +14049,7 @@ async function runRecordRecall(hitsJson, source2) {
   }
 }
 async function runConsolidate(json2, signingKey) {
-  const { db, pool } = createLoopDb();
+  const { db, pool } = await openBound();
   try {
     const report = await consolidateLessonMemory(db, signingKey);
     if (json2) {
@@ -13618,6 +14085,7 @@ async function runConsolidate(json2, signingKey) {
   }
 }
 async function main() {
+  if (cmd !== "liveness") memoryAccess(cmd === "graduate" || cmd === "record-recall");
   if (cmd === "stats") {
     await runStats(opt.json);
     return;
@@ -13632,7 +14100,7 @@ async function main() {
 ` : formatLiveness(summary));
     if (opt.assert && summary.recall.total === 0) {
       process.stderr.write(
-        `loop-memory: liveness assertion failed \u2014 no ${RECALL_TYPE} events in the last ${opt.runs} run file(s) under ${join4(summary.root, ".loop", "runs")} (the UserPromptSubmit hook has not fired)
+        `loop-memory: liveness assertion failed \u2014 no ${RECALL_TYPE} events in the last ${opt.runs} run file(s) under ${join6(summary.root, ".loop", "runs")} (the UserPromptSubmit hook has not fired)
 `
       );
       process.exit(1);
@@ -13641,11 +14109,7 @@ async function main() {
   }
   if (cmd === "consolidate") {
     const signingKey2 = signingKeyFromEnv();
-    if (!signingKey2) {
-      process.stderr.write(
-        "loop-memory: LOOP_MEMORY_SIGNING_KEY not set \u2014 consolidate returns empty (fail-closed, BAC-619 write-path provenance)\n"
-      );
-    }
+    if (!signingKey2) throw new MemoryError("signing_key_missing");
     await runConsolidate(opt.json, signingKey2);
     return;
   }
@@ -13657,70 +14121,50 @@ async function main() {
   }
   const embedder = pickEmbedder(opt.allowStub);
   const signingKey = signingKeyFromEnv();
-  if (!signingKey) {
-    process.stderr.write(
-      "loop-memory: LOOP_MEMORY_SIGNING_KEY not set \u2014 lesson writes are unsigned and lesson recall returns 0 (fail-closed, BAC-619 write-path provenance; knowledge corpus unaffected)\n"
-    );
-  }
-  const { db, pool } = createLoopDb();
+  if (!signingKey) throw new MemoryError("signing_key_missing");
+  const { db, pool } = await openBound(embedder.identity);
   try {
     if (cmd === "graduate") {
-      const r = await graduateLessons(db, pool, embedder, opt.lessons, signingKey, source);
-      if (r.locked) {
-        process.stdout.write(
-          "loop-memory: lessons \u2014 skipped (\uB3D9\uC2DC \uC878\uC5C5 \uC9C4\uD589 \uC911, \uB2E4\uC74C \uC138\uC158\uC774 \uC774\uC5B4\uAC10)\n"
-        );
-      } else {
-        process.stdout.write(
-          `loop-memory: graduated ${r.added} new lesson(s), ${r.skipped} already present, ${r.stubbed} stubbed (retired), ${r.purged} purged (rejected/no-longer-verified)
-`
-        );
+      const repository = repositoryIdentity(process.cwd());
+      if (!repository.writable) {
+        process.stdout.write(JSON.stringify({ schema_version: 1, command: "graduate", outcome: "skipped", reason: "worktree_read_only" }) + "\n");
+        return;
       }
-      if (opt.knowledge) {
-        const k = await graduateKnowledge(db, pool, embedder, opt.knowledge, source);
-        printKnowledgeResult("ADR", k);
-      }
-      if (opt.context) {
-        const c = await graduateContext(db, pool, embedder, opt.context, source);
-        printKnowledgeResult("CONTEXT", c);
-      }
-      if (opt.research) {
-        const r2 = await graduateMarkdownDir(
-          db,
-          pool,
-          embedder,
-          opt.research,
-          RESEARCH_TAG,
-          opt.research,
-          source
-        );
-        printKnowledgeResult("research", r2);
-        for (const s of r2.skipped) {
-          process.stdout.write(`loop-memory: knowledge (research) skip ${s.file} \u2014 ${s.reason}
+      const canonicalLessons = join6(repository.current, ".loop", "lessons");
+      if ((existsSync3(opt.lessons) ? realpathSync4(opt.lessons) : resolve5(opt.lessons)) !== canonicalLessons) throw new MemoryError("lesson_source_not_canonical");
+      const r = existsSync3(canonicalLessons) ? await graduateLessons(db, pool, embedder, sourcePath(canonicalLessons), signingKey, source) : { added: 0, updated: 0, skipped: 0, stubbed: 0, purged: 0, missing: true };
+      const knowledge2 = {};
+      if (opt.knowledge) knowledge2.adr = await graduateKnowledge(db, pool, embedder, sourcePath(opt.knowledge), source);
+      if (opt.context) knowledge2.context = await graduateContext(db, pool, embedder, sourcePath(opt.context), source);
+      if (opt.research) knowledge2.research = await graduateMarkdownDir(db, pool, embedder, sourcePath(opt.research), RESEARCH_TAG, "research", source);
+      if (opt.design) knowledge2.design = await graduateMarkdownDir(db, pool, embedder, sourcePath(opt.design), DESIGN_TAG, "design", source);
+      const results = [r, ...Object.values(knowledge2)];
+      const locked = results.filter((result) => "locked" in result && result.locked).length;
+      const missing = "missing" in r;
+      const omitted = Object.values(knowledge2).some((result) => "skipped" in result && Array.isArray(result.skipped) && result.skipped.length > 0 || result.incomplete);
+      const outcome = locked === results.length ? "locked" : locked || missing || omitted ? "partial" : "synced";
+      if (opt.json) process.stdout.write(JSON.stringify({
+        schema_version: 1,
+        command: "graduate",
+        outcome,
+        reason: locked ? "lock_busy" : missing ? "lesson_source_missing" : "ok",
+        lessons: r,
+        knowledge: knowledge2
+      }) + "\n");
+      else {
+        process.stdout.write(`loop-memory: ${outcome} \u2014 graduated ${r.added} new lesson(s), ${r.updated} updated, ${r.skipped} already present, ${r.stubbed} stubbed, ${r.purged} purged
 `);
-        }
-      }
-      if (opt.design) {
-        const d = await graduateMarkdownDir(
-          db,
-          pool,
-          embedder,
-          opt.design,
-          DESIGN_TAG,
-          opt.design,
-          source
-        );
-        printKnowledgeResult("design", d);
-        for (const s of d.skipped) {
-          process.stdout.write(`loop-memory: knowledge (design) skip ${s.file} \u2014 ${s.reason}
+        for (const [name, value] of Object.entries(knowledge2)) {
+          printKnowledgeResult(name, value);
+          if ("skipped" in value && Array.isArray(value.skipped)) for (const item of value.skipped) process.stdout.write(`  skipped ${sanitizeMemory(item.file)}: ${item.reason}
 `);
         }
       }
       return;
     }
-    let q = opt.query;
-    if (!q && opt.queryFile) q = readFileSync4(opt.queryFile, "utf8");
-    q = q.trim();
+    let q = opt.queryStdin ? readFileSync7(0, "utf8") : opt.query;
+    if (!q && opt.queryFile) q = readFileSync7(opt.queryFile, "utf8");
+    q = sanitizeMemory(q, 2048).trim();
     if (!q) {
       process.stderr.write("loop-memory: recall needs --query or --query-file\n");
       process.exit(2);
@@ -13731,7 +14175,7 @@ async function main() {
       recallKnowledge(db, memo, q, opt.k)
     ]);
     if (opt.json) {
-      process.stdout.write(`${JSON.stringify({ lessons, knowledge })}
+      process.stdout.write(`${JSON.stringify({ schema_version: 1, command: "recall", outcome: "ok", lessons, knowledge })}
 `);
       return;
     }
@@ -13750,7 +14194,9 @@ async function main() {
   }
 }
 main().catch((e) => {
-  process.stderr.write(`loop-memory: ${e instanceof Error ? e.message : String(e)}
+  const reason = e instanceof MemoryError ? e.code : "runtime_error";
+  if (opt.json) process.stdout.write(JSON.stringify({ schema_version: 1, command: cmd, outcome: "error", reason }) + "\n");
+  process.stderr.write(`loop-memory: ${reason}
 `);
   process.exit(1);
 });

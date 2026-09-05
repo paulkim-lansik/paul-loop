@@ -50,9 +50,7 @@ import { dirname, join } from 'node:path';
 const MAX_CONSECUTIVE_DENIES = 3; // 연속 3회 차단 후 4번째 시도에서 탈출(AC8 — 설계 판단 3~5 중 최소값)
 
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: Claude Code가 런타임에 주입하는 훅 변수.
-const root = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-const SENTINEL = join(root, '.loop', 'looping');
-const STATE = join(root, '.loop', 'verdict-state.json');
+let root = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
 
 // red-events 로거는 동적 import(fire-and-forget) — 정적 import는 로거 파일 부재/문법 오류 시 이
 // 모듈 전체를 exit 1(Stop 계약상 비차단)로 즉사시켜 게이트를 조용히 무력화한다(리뷰 H1).
@@ -70,6 +68,16 @@ try {
 } catch {
   /* 파싱 실패 → payload=null. 센티넬 무장 중이면 fail-closed로 계속(아래 judge가 차단). */
 }
+// Resolve the execution worktree only after reading the payload. Unrelated repos cannot reroot.
+try {
+  const { stopWorkspaceRoot } = await import('../lib/loop-workspace.mjs');
+  root = stopWorkspaceRoot(root, payload?.cwd);
+} catch (e) {
+  console.error(`[gate-stop-verdict] worktree resolver failed: ${e.message}`);
+  process.exit(2);
+}
+const SENTINEL = join(root, '.loop', 'looping');
+const STATE = join(root, '.loop', 'verdict-state.json');
 const stopHookActive = payload?.stop_hook_active === true;
 const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : 'unknown';
 // 카운터는 세션 단위 파일(리뷰 I4): 한 파일을 공유하면 같은 워크트리의 무장 세션 2개가 번갈아
@@ -95,6 +103,10 @@ const short = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : String(sha))
 
 // fresh PASS면 null, 아니면 {code, why, hint} — code는 red-events 텔레메트리 사유 코드.
 function judge() {
+  // A running/abandoned lease is not a completed verification, even if an inner command wrote PASS.
+  if (existsSync(join(root, '.loop', 'lifecycle', 'lease'))) {
+    return { code: 'stop-loop-active', why: 'loop execution still owns the workspace lease', hint: 'Wait for completion or explicitly recover the interrupted run; an inner PASS does not finish the loop' };
+  }
   if (!existsSync(STATE)) {
     return {
       code: 'stop-verdict-missing',

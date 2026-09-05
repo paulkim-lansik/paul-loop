@@ -19,3 +19,24 @@
 # narrower entries above and would otherwise go undetected by the pinned-baseline check. This
 # entry closes that — the whole tools/loop-engine/ subtree is sensitive, however it's organised.
 /tools/loop-engine/        @paulkim-lansik
+
+# Packaging transforms hook/role contracts; workflow drivers and setup/policy templates define gates.
+# These additions take effect when this CODEOWNERS becomes the review's base, never retroactively.
+/scripts/                                                    @paulkim-lansik
+/tools/ship-flow/workflows/                                   @paulkim-lansik
+/tools/ship-flow/templates/branch-protect.sh                   @paulkim-lansik
+/tools/ship-flow/templates/branch-protect.mjs                  @paulkim-lansik
+/tools/ship-flow/templates/setup-loop-engine.action.yml.template @paulkim-lansik
+
+# Memory admission, repository ownership, signed recall and the bundle actually executed by hooks.
+# Sensitivity triggers the pinned engine suite; it does not pin or replace the memory test suite.
+/tools/loop-memory/src/provenance.ts                          @paulkim-lansik
+/tools/loop-memory/src/store.ts                               @paulkim-lansik
+/tools/loop-memory/src/lessons.ts                             @paulkim-lansik
+/tools/loop-memory/src/knowledge.ts                           @paulkim-lansik
+/tools/loop-memory/src/ops.ts                                 @paulkim-lansik
+/tools/loop-memory/src/cli.ts                                 @paulkim-lansik
+/tools/loop-memory/src/schema/memory.ts                       @paulkim-lansik
+/tools/loop-memory/hooks/                                     @paulkim-lansik
+/tools/loop-memory/dist/cli.js                                @paulkim-lansik
+/tools/loop-memory/test/                                      @paulkim-lansik

@@ -1,0 +1,59 @@
+name: runtime packaging
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: verify adapters, resolver, executable modes and setup isolation (no model calls)
+        run: node --test tools/loop-engine/test/plugin-path.test.mjs tools/loop-engine/test/apply-patch-runtime.test.mjs tools/loop-engine/test/runtime-packages.test.mjs
+      - name: verify skill lock and generate both runtime packages
+        run: |
+          node scripts/refresh-skill-lock.mjs --check
+          node scripts/generate-runtime-packages.mjs
+          node scripts/generate-runtime-packages.mjs --check
+      - name: upload reviewable packages and provenance (not a marketplace install)
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-packages
+          path: build/runtime-packages
+          include-hidden-files: true
+          retention-days: 14
+  claude-schema:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Pinned schema baseline plus moving compatibility canary. Neither is a live agent session.
+        claude: ['2.1.261', 'latest']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g "@anthropic-ai/claude-code@${{ matrix.claude }}"
+      - run: |
+          node scripts/generate-runtime-packages.mjs
+          claude plugin validate --strict build/runtime-packages/claude
+          for plugin in build/runtime-packages/claude/plugins/*; do
+            claude plugin validate --strict "$plugin"
+          done

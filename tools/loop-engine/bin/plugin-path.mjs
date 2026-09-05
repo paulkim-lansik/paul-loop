@@ -1,128 +1,115 @@
 #!/usr/bin/env node
-// plugin-path.mjs — resolves the on-disk root of a paul-loop plugin (loop-engine, ship-flow,
-// loop-memory) for a consuming repo (BAC-753 — ported from glucofit-partners' repo-local
-// tools/plugin-path.mjs, originally BAC-699/706/766). Bundled here so a repo with ONLY these
-// plugins installed (no repo-local copy of its own) still has a working resolver, closing the
-// dangling reference that upstream ship-feature/retrospect/deps-audit skills used to have when
-// they hardcoded a consuming repo's own `tools/plugin-path.mjs` path.
-//
-// Two real jobs this script does that bare PATH resolution (a live session's plugin `bin/`,
-// auto-registered on load) can't:
-//   1. CI / any headless invocation outside a live Claude Code session — nothing is on PATH there,
-//      so a caller needs a literal path. A consuming repo's CI clones the tagged plugin release
-//      (this repo's own setup-loop-engine/setup-ship-flow composite actions, BAC-753) and sets the
-//      env var below; this script picks it up.
-//   2. Resolving a *different* installed plugin's path from within one plugin's own skill/hook —
-//      e.g. a ship-flow skill needing loop-engine's install path, or anything needing ship-flow's
-//      or loop-memory's path for a read (version check), since only loop-engine ships bin/ scripts
-//      that land on PATH at all.
-//
-// Resolution order (per plugin):
-//   1. An explicit env var override — LOOP_ENGINE_PATH / SHIP_FLOW_PATH / LOOP_MEMORY_PATH. CI sets
-//      these after a pinned `git clone` (GitHub Actions is a plain shell process, outside the Claude
-//      Code plugin-cache mechanism entirely — see docs/adr/0078 addendum in glucofit-partners). A
-//      human can also point one at a local paul-loop checkout when working on a plugin itself.
-//   2. ~/.claude/plugins/installed_plugins.json — the live Claude Code plugin cache, matched by
-//      `projectPath === this repo's root` (via `git rev-parse --show-toplevel`), not blindly the
-//      first array entry — a machine can have a plugin installed for several projects/worktrees at
-//      different versions, and taking entries[0] could silently resolve a stale or wrong-project
-//      install.
-//
-// No match anywhere is a loud failure (exit 1), not a silent fallback — a caller that swallowed this
-// and proceeded without the harness would be worse than one that stops.
-//
-// Usage:
-//   node plugin-path.mjs resolve [plugin]                     # print the resolved plugin root, or exit 1
-//   node plugin-path.mjs exec <relative-bin> [args]            # resolve loop-engine, run <root>/<relative-bin>
-// [plugin] defaults to loop-engine. `exec` only ever targets loop-engine: it's the only one of the
-// three that ships bin/ scripts to run — ship-flow is skills/agents/workflows and loop-memory is
-// hooks/a CLI of its own, both resolved by path only (`resolve <plugin>`, not `exec`).
-
+// Runtime-neutral path contract. A resolvable artifact is NOT proof of activation or hook trust.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const PLUGINS = {
-  'loop-engine': { key: 'loop-engine@paul-loop', envVar: 'LOOP_ENGINE_PATH' },
-  'ship-flow': { key: 'ship-flow@paul-loop', envVar: 'SHIP_FLOW_PATH' },
-  'loop-memory': { key: 'loop-memory@paul-loop', envVar: 'LOOP_MEMORY_PATH' },
+  'loop-engine': { env: 'LOOP_ENGINE_PATH', minimum: '0.15.0' },
+  'ship-flow': { env: 'SHIP_FLOW_PATH', minimum: '0.11.0' },
+  'loop-memory': { env: 'LOOP_MEMORY_PATH', minimum: '0.7.0' },
 };
-const DEFAULT_PLUGIN = 'loop-engine';
+const canonical = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], {
+  encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000,
+}).trim();
+const versionParts = (v) => {
+  const m = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z.-]+)?$/.exec(v ?? '');
+  if (!m) throw new Error('expected a stable semantic version');
+  return m.slice(1, 4).map(Number);
+};
+const older = (a, b) => { const x = versionParts(a), y = versionParts(b); return x[0] < y[0] || (x[0] === y[0] && (x[1] < y[1] || (x[1] === y[1] && x[2] < y[2]))); };
 
-function repoRoot() {
-  return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+export function projectRoots(cwd) {
+  let top = canonical(cwd);
+  try { top = canonical(git(cwd, ['rev-parse', '--show-toplevel'])); } catch {}
+  const roots = [top];
+  try {
+    const common = canonical(resolve(top, git(top, ['rev-parse', '--git-common-dir'])));
+    // Only a main working tree with the same common git directory is eligible.
+    const main = dirname(common);
+    if (canonical(resolve(main, git(main, ['rev-parse', '--git-common-dir']))) === common &&
+        canonical(git(main, ['rev-parse', '--show-toplevel'])) === main && !roots.includes(main)) roots.push(main);
+  } catch {}
+  return roots;
 }
 
-export function resolvePluginPath({ pluginsFile, root, plugin = DEFAULT_PLUGIN } = {}) {
+export function validatePluginPath(path, { plugin = 'loop-engine', runtime = 'claude', version, minimum = PLUGINS[plugin]?.minimum } = {}) {
+  if (!PLUGINS[plugin]) throw new Error(`unknown plugin: ${plugin}`);
+  if (typeof path !== 'string' || !isAbsolute(path)) throw new Error(`${plugin}: plugin path must be absolute`);
+  const root = realpathSync(path);
+  if (!statSync(root).isDirectory()) throw new Error(`${plugin}: plugin path is not a directory`);
+  const kinds = runtime === 'shell' ? ['claude', 'codex'] : [runtime];
+  const file = kinds.map((k) => join(root, `.${k}-plugin`, 'plugin.json')).find(existsSync);
+  if (!file) throw new Error(`${plugin}: ${runtime} manifest missing`);
+  const manifest = JSON.parse(readFileSync(file, 'utf8'));
+  if (manifest.name !== plugin) throw new Error(`${plugin}: manifest name mismatch`);
+  versionParts(manifest.version);
+  if (version && version !== manifest.version) throw new Error(`${plugin}: registry/manifest version drift`);
+  if (minimum && older(manifest.version, minimum)) throw new Error(`${plugin}: requires >=${minimum}; found ${manifest.version}`);
+  return { path: root, version: manifest.version, runtime, activation: 'unknown', hookTrust: 'unknown' };
+}
+
+export function resolvePluginInstallation({ pluginsFile, root = process.cwd(), plugin = 'loop-engine', env = process.env, runtime = env.LOOP_RUNTIME || 'claude' } = {}) {
   const cfg = PLUGINS[plugin];
-  if (!cfg) throw new Error(`[plugin-path] unknown plugin shorthand: ${plugin}`);
-  // biome-ignore lint/suspicious/noUndeclaredEnvVars: CI(setup-loop-engine/setup-ship-flow action)·로컬 모두가 명시적으로 세팅하는 리졸버 오버라이드(플러그인별로 이름이 다르다).
-  if (process.env[cfg.envVar]) return process.env[cfg.envVar];
-  const file = pluginsFile || join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
+  if (!cfg) throw new Error(`unknown plugin: ${plugin}`);
+  if (!['claude', 'codex', 'shell'].includes(runtime)) throw new Error(`unsupported runtime: ${runtime}`);
+  const checked = (p, source, version) => ({ ...validatePluginPath(p, { plugin, runtime, version }), source });
+  if (env[cfg.env]) return checked(env[cfg.env], 'explicit-environment');
+  const roots = projectRoots(root);
+  // This is our documented, explicit artifact registry, not a guessed Codex cache layout.
+  // Never scan global Codex settings, credentials, or another marketplace's derivatives.
+  const registry = env.PAUL_LOOP_INSTALLATIONS || roots.map((r) => join(r, '.loop', 'plugins.json')).find(existsSync);
+  if (registry) {
+    const record = JSON.parse(readFileSync(registry, 'utf8'));
+    if (record.schemaVersion !== 1 || record.runtime !== runtime) throw new Error('runtime registry schema/runtime mismatch');
+    const entry = record.plugins?.[plugin];
+    if (entry) return checked(resolve(dirname(registry), entry.path), 'explicit-registry', entry.version);
+  }
+  if (runtime !== 'claude') return null;
+  const file = pluginsFile || join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'plugins', 'installed_plugins.json');
   if (!existsSync(file)) return null;
   let parsed;
+  try { parsed = JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
+  const entries = parsed?.plugins?.[`${plugin}@paul-loop`];
+  if (!Array.isArray(entries)) return null;
+  let match;
+  for (const r of roots) {
+    // Local wins over project at the same root. Main-root fallback never selects another project.
+    match = entries.find((e) => e.scope === 'local' && e.projectPath && canonical(e.projectPath) === r) ||
+      entries.find((e) => e.scope === 'project' && e.projectPath && canonical(e.projectPath) === r);
+    if (match) break;
+  }
+  match ||= entries.find((e) => e.scope === 'user');
+  return match ? checked(match.installPath, 'claude-registry', match.version) : null;
+}
+
+export function resolvePluginPath(options = {}) { return resolvePluginInstallation(options)?.path ?? null; }
+
+// Node normally resolves the entrypoint symlink, but --preserve-symlinks-main keeps its URL.
+// Accept either identity without changing argv or running the CLI during a plain import.
+if (process.argv[1] && (import.meta.url === pathToFileURL(process.argv[1]).href || import.meta.url === pathToFileURL(canonical(process.argv[1])).href)) {
+  const [command, ...args] = process.argv.slice(2);
+  const usage = () => { console.error('Usage: plugin-path.mjs resolve [plugin] | inspect [plugin] | exec bin/<file> [args...]'); process.exit(2); };
+  if (!['resolve', 'inspect', 'exec'].includes(command) || (command === 'exec' && !args[0])) usage();
+  const plugin = command === 'exec' ? 'loop-engine' : (args[0] || 'loop-engine');
+  if (!PLUGINS[plugin]) usage();
   try {
-    parsed = JSON.parse(readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
-  const entries = parsed?.plugins?.[cfg.key];
-  if (!Array.isArray(entries) || entries.length === 0) return null;
-  const projectRoot = root || repoRoot();
-  const match =
-    entries.find((e) => e.projectPath === projectRoot) ?? entries.find((e) => e.scope === 'user');
-  return match?.installPath ?? null;
-}
-
-function usage() {
-  process.stderr.write(
-    'Usage: plugin-path.mjs resolve [loop-engine|ship-flow|loop-memory] | exec <relative-bin-path> [args...]\n',
-  );
-  process.exit(2);
-}
-
-function fail(plugin) {
-  const cfg = PLUGINS[plugin];
-  process.stderr.write(
-    `[plugin-path] ${cfg.key}을 이 프로젝트에서 찾지 못했습니다. ` +
-      `'claude plugin install ${cfg.key} --scope user -y'를 실행하거나(세션 재시작 필요), ` +
-      `${cfg.envVar}를 로컬 paul-loop 체크아웃 경로로 설정하세요.\n`,
-  );
-  process.exit(1);
-}
-
-// import.meta.url is percent-encoded (spaces/non-ASCII → %XX); process.argv[1] is a raw OS path.
-// Comparing them as strings silently mismatches on a checkout path containing either — the CLI
-// block below then never runs, and this script exits 0 having done nothing (a caller like
-// `pnpm verdict`/require-tests.sh would read that as success). pathToFileURL() normalizes argv[1]
-// the same way before comparing (BAC-699 review, ported). 앞의 `process.argv[1] &&`는 argv[1]이
-// 없는 맥락(`node -e`, 워커)에서 pathToFileURL이 던지지 않게 한다 (BAC-792).
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [cmd, ...rest] = process.argv.slice(2);
-  if (cmd === 'resolve') {
-    const plugin = rest[0] || DEFAULT_PLUGIN;
-    if (!PLUGINS[plugin]) usage();
-    const installPath = resolvePluginPath({ plugin });
-    if (!installPath) fail(plugin);
-    process.stdout.write(`${installPath}\n`);
-  } else if (cmd === 'exec') {
-    const [relBin, ...args] = rest;
-    if (!relBin) usage();
-    const installPath = resolvePluginPath({ plugin: DEFAULT_PLUGIN });
-    if (!installPath) fail(DEFAULT_PLUGIN);
-    const target = join(installPath, relBin);
-    const interpreter = target.endsWith('.mjs')
-      ? process.execPath
-      : target.endsWith('.sh')
-        ? 'bash'
-        : null;
-    const res = interpreter
-      ? spawnSync(interpreter, [target, ...args], { stdio: 'inherit' })
-      : spawnSync(target, args, { stdio: 'inherit' });
-    process.exit(res.status === null ? 1 : res.status);
-  } else {
-    usage();
-  }
+    const found = resolvePluginInstallation({ plugin });
+    if (!found) throw new Error(`${plugin}@paul-loop not resolved; configure ${PLUGINS[plugin].env} or PAUL_LOOP_INSTALLATIONS. Installation, activation and hook trust require separate review.`);
+    if (command === 'inspect') console.log(JSON.stringify(found));
+    else if (command === 'resolve') console.log(found.path);
+    else {
+      if (!args[0].startsWith('bin/') || args[0].split(/[\\/]/).includes('..')) throw new Error('exec target must remain inside plugin bin/');
+      const target = realpathSync(join(found.path, args[0]));
+      const rel = relative(join(found.path, 'bin'), target);
+      if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('exec target escapes plugin bin/');
+      const interpreter = target.endsWith('.mjs') ? process.execPath : target.endsWith('.sh') ? 'bash' : null;
+      const result = interpreter ? spawnSync(interpreter, [target, ...args.slice(1)], { stdio: 'inherit' }) : spawnSync(target, args.slice(1), { stdio: 'inherit' });
+      if (result.error) console.error(`[plugin-path] ${result.error.code || 'spawn failed'}`);
+      process.exit(result.status ?? 1);
+    }
+  } catch (error) { console.error(`[plugin-path] ${error.message}`); process.exit(1); }
 }

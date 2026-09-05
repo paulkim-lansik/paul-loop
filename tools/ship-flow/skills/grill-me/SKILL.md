@@ -4,6 +4,8 @@ description: Interview the user relentlessly about a plan or design until reachi
 disable-model-invocation: true
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Grill me
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from

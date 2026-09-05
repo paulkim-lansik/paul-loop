@@ -34,7 +34,7 @@
 //      file reaches LOOP_LIVENESS_MAX_BYTES (default 8 MiB). Kill switch: LOOP_LIVENESS_OFF=1.
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 /** loop-engine run-ledger schema version. Same shape, same number — a foreign event in that ledger
  *  that claimed a different version would just look like corruption to its consumers. */
@@ -60,8 +60,8 @@ export function runIdFrom(sessionId) {
   );
 }
 
-export function runsDir(root) {
-  return join(root, '.loop', 'runs');
+export function runsDir(root, env = process.env) {
+  return join(resolve(root, env.LOOP_DIR || '.loop'), 'runs');
 }
 
 function maxBytes(env) {
@@ -102,12 +102,12 @@ function scrub(obj, depth = 0) {
  */
 export function recordLiveness(root, { type, sessionId, payload }, env = process.env) {
   try {
-    if (env.LOOP_LIVENESS_OFF === '1') return null;
+    if (env.LOOP_LIVENESS_OFF === '1' || env.LOOP_LEARNING_OFF === '1' || env.LOOP_MEMORY_RECALL_ONLY === '1' || env.LOOP_MEMORY_OFF === '1') return null;
     // The session_id off the hook's own stdin is the primary source; CLAUDE_CODE_SESSION_ID is the
     // fallback for a firing whose stdin carried none. Both agree with the filename loop-engine's
     // instrumentation hook uses, so events correlate without either side coordinating.
-    const runId = runIdFrom(sessionId || env.CLAUDE_CODE_SESSION_ID);
-    const dir = runsDir(root);
+    const runId = runIdFrom(env.LOOP_RUN_ID || sessionId || env.CLAUDE_CODE_SESSION_ID);
+    const dir = runsDir(root, env);
     const file = join(dir, `${runId}.jsonl`);
     try {
       if (statSync(file).size >= maxBytes(env)) return null;

@@ -21,7 +21,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readHookInput } from './lib/hook-stdin.mjs';
-import { loadDotenv } from './lib/load-dotenv.mjs';
+import { runtimeEnv } from './lib/runtime-env.mjs';
+import { parseOutcome } from './lib/cli-outcome.mjs';
+import { sanitizeMemory } from './lib/privacy.mjs';
 import { errorCode, recordLiveness } from './lib/liveness.mjs';
 import { neutralize, wrapUntrusted } from './lib/untrusted-block.mjs';
 
@@ -32,6 +34,7 @@ const dataDir = env.CLAUDE_PLUGIN_DATA || pluginRoot;
 const startedAt = Date.now();
 
 function dbg(msg) {
+  if (env.LOOP_LEARNING_OFF === '1' || env.LOOP_MEMORY_RECALL_ONLY === '1' || env.LOOP_MEMORY_OFF === '1') return;
   if (env.LOOP_RECALL_DEBUG !== '1') return;
   try {
     appendFileSync(join(dataDir, 'recall-debug.log'), `${new Date().toISOString()} ${msg}\n`);
@@ -83,7 +86,7 @@ function out(text, why, outcome, reason) {
 // hook on a second round trip; this hook's own timeout budget is already spent on the recall call
 // above, so a synchronous second call risks cutting off the real context injection).
 function recordInjected(cliPath, hits, cliEnv) {
-  if (hits.length === 0) return;
+  if (hits.length === 0 || cliEnv.LOOP_LEARNING_OFF === '1' || cliEnv.LOOP_MEMORY_RECALL_ONLY === '1') return;
   try {
     const child = spawn('node', [cliPath, 'record-recall', '--hits', JSON.stringify(hits)], {
       cwd: projectDir,
@@ -91,36 +94,18 @@ function recordInjected(cliPath, hits, cliEnv) {
       detached: true,
       env: cliEnv,
     });
+    child.on('error', () => dbg('record-recall spawn failed'));
     child.unref();
     dbg(`record-recall: spawned fire-and-forget ids=${hits.length}`);
   } catch (e) {
-    dbg(`record-recall spawn failed: ${e?.message ?? String(e)}`);
+    dbg('record-recall spawn failed');
   }
 }
 
 try {
   // Bridges Claude Code's userConfig injection (CLAUDE_PLUGIN_OPTION_<KEY>) into the plain env var
   // names the CLI reads, so the CLI itself stays plugin-agnostic.
-  const childEnv = { ...env };
-  for (const [pluginOpt, plain] of [
-    ['CLAUDE_PLUGIN_OPTION_OPENAI_API_KEY', 'OPENAI_API_KEY'],
-    ['CLAUDE_PLUGIN_OPTION_GEMINI_API_KEY', 'GEMINI_API_KEY'],
-    ['CLAUDE_PLUGIN_OPTION_LOOP_DATABASE_URL', 'LOOP_DATABASE_URL'],
-    ['CLAUDE_PLUGIN_OPTION_LOOP_MEMORY_SIGNING_KEY', 'LOOP_MEMORY_SIGNING_KEY'],
-    ['CLAUDE_PLUGIN_OPTION_LOOP_RECALL_MAX_DISTANCE', 'LOOP_RECALL_MAX_DISTANCE'],
-    ['CLAUDE_PLUGIN_OPTION_LOOP_KNOWLEDGE_MAX_DISTANCE', 'LOOP_KNOWLEDGE_MAX_DISTANCE'],
-    ['CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH', 'LOOP_DOTENV_PATH'],
-  ]) {
-    if (!childEnv[plain] && env[pluginOpt]) childEnv[plain] = env[pluginOpt];
-  }
-  // Then the repo's gitignored dotenv file, for keys neither the session env nor userConfig supplied
-  // (Claude Code passes hooks the session process env only — it does not read .env files, so a key
-  // that lives solely in .env would hit the no-key gate below and no-op silently). Runs *after* the
-  // bridge above so the file never overrides an explicit export or userConfig value.
-  const dotenv = loadDotenv(projectDir, childEnv.LOOP_DOTENV_PATH, childEnv);
-  dbg(dotenv ? `dotenv: loaded ${dotenv}` : 'dotenv: none found');
-  // Boolean only — the resolved path can be absolute and outside the repo, and the whole point of
-  // that file is that it holds secrets.
+  const { env: childEnv, dotenv } = runtimeEnv(projectDir, env);
   live.dotenv = !!dotenv;
   // Source tag (paul-loop issue #35) — self-reported, good-faith metadata for observability/debugging,
   // NOT a security or forgery-proof signal. Anyone with shell access can run the CLI directly and set
@@ -133,6 +118,7 @@ try {
   live.key = !!(childEnv.OPENAI_API_KEY || childEnv.GEMINI_API_KEY);
   dbg(`fired: key=${live.key} off=${env.LOOP_RECALL_OFF === '1'}`);
 
+  if (env.LOOP_MEMORY_OFF === '1') out('', 'memory disabled', 'skipped', 'memory_off');
   if (env.LOOP_RECALL_OFF === '1') out('', 'LOOP_RECALL_OFF=1', 'skipped', 'recall_off');
   // The store is only ever populated by a real embedder — no key means recall would also be a stub
   // query against real vectors (noise), so skip entirely.
@@ -168,7 +154,7 @@ try {
   // like a user who types two characters, hundreds of times in a row.
   const hasPromptField =
     typeof input.prompt === 'string' || typeof input.user_input === 'string';
-  const prompt = String(input.prompt ?? input.user_input ?? '').trim();
+  const prompt = sanitizeMemory(input.prompt ?? input.user_input ?? '', 2048).trim();
   live.prompt_chars = prompt.length; // length only — the prompt itself is never recorded
   if (!hasPromptField)
     out('', 'no recognised prompt field on the payload', 'skipped', 'prompt_field_missing');
@@ -179,8 +165,8 @@ try {
   // k=3 per corpus: lessons and knowledge each get their own top-3 so neither starves the other.
   const res = spawnSync(
     'node',
-    [cli, 'recall', '--query', prompt, '--json', '--k', '3', '--lessons', lessonsDir],
-    { cwd: projectDir, timeout: 6000, encoding: 'utf8', env: childEnv },
+    [cli, 'recall', '--query-stdin', '--json', '--k', '3', '--lessons', lessonsDir],
+    { cwd: projectDir, input: prompt, timeout: 6000, encoding: 'utf8', env: childEnv },
   );
   if (res.status !== 0 || !res.stdout) {
     // `status` is null on timeout/signal — the ledger keeps that distinction (`cli_status: null` vs a
@@ -189,22 +175,9 @@ try {
     out('', `cli status=${res.status} (pgvector down / embed fail / timeout)`, 'error', 'cli_failed');
   }
 
-  // The CLI emits a single-line JSON object `{lessons, knowledge}` with --json. Scan for that line
-  // in case other output is mixed in.
-  let hits = null;
-  for (const line of res.stdout.split('\n')) {
-    const t = line.trim();
-    if (t.startsWith('{')) {
-      try {
-        hits = JSON.parse(t);
-        break;
-      } catch {
-        /* keep scanning */
-      }
-    }
-  }
-  const lessons = Array.isArray(hits?.lessons) ? hits.lessons : [];
-  const knowledge = Array.isArray(hits?.knowledge) ? hits.knowledge : [];
+  const hits = parseOutcome(res.stdout, 'recall');
+  if (!hits || hits.outcome === 'error') out('', 'invalid cli protocol', 'error', 'cli_protocol_error');
+  const { lessons, knowledge } = hits;
   live.lessons.candidates = lessons.length;
   live.knowledge.candidates = knowledge.length;
   // `no_match`, not `error`: the CLI answered, the embedder and pgvector both worked, the corpus
@@ -265,7 +238,7 @@ try {
   // docs) but is treated as *untrusted data* (prompt-injection defense in depth). The neutralise +
   // wrap pair lives in lib/untrusted-block.mjs, which states the invariant it maintains — the
   // delimiter is unforgeable — and carries the test seam for it.
-  const sanitize = (s) => neutralize(s);
+  const sanitize = (s) => neutralize(sanitizeMemory(s));
   const fmt = (arr) =>
     arr.map((h) => `  - ${sanitize(h.content)} (distance ${Number(h.distance).toFixed(3)})`).join('\n');
 
@@ -285,7 +258,7 @@ try {
     'injected',
   );
 } catch (e) {
-  dbg(`catch: ${e?.message ?? String(e)}`);
+  dbg('exception');
   // The error *code* only — a pg/undici message can embed the connection URL, credentials included.
   live.error_code = errorCode(e);
   out('', 'exception', 'error', 'exception'); // fail-open no matter what breaks

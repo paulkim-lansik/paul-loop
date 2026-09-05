@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createLoopDb } from '../src/client';
+import { createLoopDb } from './helpers/postgres-fixture';
 import { type Embedder, stubEmbedder } from '../src/embedding';
 import {
   ADR_TAG,
@@ -59,6 +59,7 @@ function countingEmbedder(base: Embedder = stubEmbedder()): {
   let singleInvocations = 0;
   const embedder: Embedder = {
     dimensions: base.dimensions,
+    identity: base.identity,
     embed: (text: string) => {
       calls += 1;
       singleInvocations += 1;
@@ -92,6 +93,13 @@ async function findNote(key: string): Promise<NoteRow | undefined> {
     .orderBy(sql`${memoryNote.createdAt} desc`)
     .limit(1);
   return row;
+}
+
+async function tombstone(id: string) {
+  const [row] = await db.select().from(memoryNote).where(eq(memoryNote.id, id));
+  expect(row).toMatchObject({ content: '', embedding: null, provenance: null, keywords: [] });
+  expect(row?.deletedAt).not.toBeNull();
+  return row!;
 }
 
 async function mustFindNote(key: string): Promise<NoteRow> {
@@ -143,7 +151,7 @@ describe('syncKnowledge — 미러-싱크 4-op + 원장 + recall', () => {
       deleted: 0,
       noop: 2,
     });
-    expect(await opsFor(decId)).toContain('NOOP');
+    expect(await opsFor(decId)).not.toContain('NOOP'); // unchanged refresh must not append audit rows
 
     // 3) UPDATE — 결정 섹션 본문만 편집(새 hash) → 그 노트만 UPDATE, 컨텍스트는 NOOP.
     const decisionV2 = chunk(
@@ -169,7 +177,7 @@ describe('syncKnowledge — 미러-싱크 4-op + 원장 + recall', () => {
       deleted: 1,
       noop: 1,
     });
-    expect((await mustFindNote(ctx.key)).deletedAt).not.toBeNull();
+    await tombstone(ctxId);
     expect(await opsFor(ctxId)).toContain('DELETE');
 
     // 5) recall — 결정 내용과 가까운 질의로 tag 필터 recall하면 결정 노트가 잡히고, 삭제된 컨텍스트는 빠진다.
@@ -360,6 +368,8 @@ describe('graduateKnowledge — 파일 읽기 end-to-end + 폐기 제외', () =>
         `# ADR-${stableId}: 안정\n\n- **상태**: accepted\n\n## 결정\n\n유지.\n`,
       );
       await graduateKnowledge(db, pool, embedder, dir);
+      const ctxId = (await mustFindNote(`kb:adr:${flipId}#컨텍스트`)).id;
+      const decisionId = (await mustFindNote(`kb:adr:${flipId}#결정`)).id;
       expect((await mustFindNote(`kb:adr:${flipId}#컨텍스트`)).deletedAt).toBeNull();
 
       // 같은 파일 상태를 폐기로 뒤집는다(지정자 폐기됨) → 다음 graduate에서 desired에서 빠진다.
@@ -373,8 +383,8 @@ describe('graduateKnowledge — 파일 읽기 end-to-end + 폐기 제외', () =>
       await graduateKnowledge(db, pool, embedder, dir);
 
       // 뒤집힌 ADR의 두 노트는 soft-delete, 안정 ADR은 유지.
-      expect((await mustFindNote(`kb:adr:${flipId}#컨텍스트`)).deletedAt).not.toBeNull();
-      expect((await mustFindNote(`kb:adr:${flipId}#결정`)).deletedAt).not.toBeNull();
+      await tombstone(ctxId);
+      await tombstone(decisionId);
       expect((await mustFindNote(`kb:adr:${stableId}#결정`)).deletedAt).toBeNull();
     } finally {
       const mine = await db
@@ -413,7 +423,7 @@ describe('graduateKnowledge — 파일 읽기 end-to-end + 폐기 제외', () =>
         '# ADR-0000: 템플릿\n\n## 컨텍스트\n\n제외.\n',
       );
       const result = await graduateKnowledge(db, pool, embedder, emptyDir);
-      expect(result).toEqual({ added: 0, updated: 0, deleted: 0, noop: 0 });
+      expect(result).toEqual({ added: 0, updated: 0, deleted: 0, noop: 0, incomplete: true });
 
       // 3) 가드가 없었다면 이 노트가 "desired에 없다"로 오인돼 soft-delete됐을 것 — 살아있어야 한다.
       expect((await mustFindNote(seedChunk.key)).deletedAt).toBeNull();
@@ -475,8 +485,7 @@ describe('graduateContext — CONTEXT.md 파일 읽기 end-to-end', () => {
 
       // 헤딩만 있고 **용어**: 정의가 하나도 없음 → parseContextChunks가 [] → desired=[].
       writeFileSync(contextPath, `# repo\n\n## 헤딩만 있음\n\n용어 정의 없는 프리앰블 프로즈뿐.\n`);
-      const result = await graduateContext(db, pool, embedder, contextPath);
-      expect(result).toEqual({ added: 0, updated: 0, deleted: 0, noop: 0 });
+      await expect(graduateContext(db, pool, embedder, contextPath)).rejects.toThrow('source_format_unrecognized');
       expect((await mustFindNote(seedKey)).deletedAt).toBeNull();
       expect(seedId).toBe((await mustFindNote(seedKey)).id);
     } finally {

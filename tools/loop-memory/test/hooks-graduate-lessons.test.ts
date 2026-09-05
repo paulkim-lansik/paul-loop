@@ -54,7 +54,7 @@ describe('hooks/graduate-lessons.mjs — LOOP_GRADUATE_DEBUG logging (BAC-371)',
     rmSync(join(pluginRoot, '..'), { recursive: true, force: true });
   });
 
-  it('logs exit code + stderr on CLI failure when LOOP_GRADUATE_DEBUG=1, hook still exits 0, stdout stays empty', () => {
+  it('logs only exit code, never raw stderr on CLI failure when LOOP_GRADUATE_DEBUG=1, hook still exits 0, stdout stays empty', () => {
     writeFakeCli(
       'process.stderr.write("boom: simulated graduate CLI failure\\n"); process.exit(1);',
     );
@@ -63,7 +63,7 @@ describe('hooks/graduate-lessons.mjs — LOOP_GRADUATE_DEBUG logging (BAC-371)',
     expect(res.stdout).toBe('');
     const log = readFileSync(logPath, 'utf8');
     expect(log).toContain('status=1');
-    expect(log).toContain('boom: simulated graduate CLI failure');
+    expect(log).not.toContain('boom: simulated graduate CLI failure');
   });
 
   it('stays silent and fail-open with no debug flag, writes no log file', () => {

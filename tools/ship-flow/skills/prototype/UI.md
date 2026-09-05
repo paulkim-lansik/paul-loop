@@ -97,7 +97,9 @@ Surface the URL (and the `?variant=` keys). The user will flip through whenever 
 
 ### 6. Capture the answer and clean up
 
-Once a variant has won, write down which one and why (commit message, ADR, issue, or a `NOTES.md` next to the prototype if running AFK and the user hasn't responded yet). Then:
+Record the selected variant and rationale within the permitted artifact scope. AFK silence is not
+user design approval; an agent recommendation stays proposed. Only when production implementation
+and owned-artifact cleanup are authorized, perform the relevant next step with real tests/review:
 
 - **Sub-shape A** — delete the losing variants and the switcher; fold the winner into the existing page.
 - **Sub-shape B** — promote the winning variant to a real route, delete the throwaway route and the switcher.

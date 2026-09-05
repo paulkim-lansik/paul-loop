@@ -33,7 +33,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # 중첩 조합(이 래퍼가 이 래퍼를 감싸는 passthrough — loop-fix가 pnpm verdict를 감싸는 실전 경로)
 # 에서 같은 검증이 원장에 두 번 남으면 Q2(재작업 지표)가 중첩 깊이만큼 부푼다(리뷰 실측 2건).
 # 최상위 래퍼만 원장에 append한다 — 진입 시 표식을 읽고, 하위 호출 전파용으로 세운다.
-# verdict-state.json 기록은 기존대로 모든 층이 쓴다(last-writer-wins, 기존 계약 불변).
+# Each layer records the same validated verdict; the outer layer is authoritative.
 _LEDGER_NESTED="${VERDICT_RUN_LEDGER_NESTED:-}"
 export VERDICT_RUN_LEDGER_NESTED=1
 
@@ -97,22 +97,9 @@ CMD_STR="$*"
 json_esc() { printf '%s' "$1" | tr '\n\t' '  ' | tr -d '[:cntrl:]' | cut -c1-500 | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 write_state() {
   _v="$1"; _c="$2"
-  _sha="$(git rev-parse HEAD 2>/dev/null)" || _sha=""
-  if [ -z "$_sha" ]; then _sha="unknown"; _dirty=true    # 비-git = 신선도 판단 불가 → fail-closed
-  elif _st="$(git status --porcelain 2>/dev/null)"; then
-    if [ -n "$_st" ]; then _dirty=true; else _dirty=false; fi
-  else
-    _dirty=true   # status 실패(index.lock 경합 등) = 신선도 불명 → rev-parse와 대칭으로 fail-closed (리뷰 M3)
-  fi
-  mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
-  if ! printf '{"verdict":"%s","exit":%s,"sha":"%s","dirty":%s,"finished_at":"%s","cmd":"%s","log":"%s"}\n' \
-    "$_v" "$_c" "$_sha" "$_dirty" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
-    "$(json_esc "$CMD_STR")" "$(json_esc "$LOG_ABS")" > "$STATE_FILE" 2>/dev/null; then
-    # 쓰기 실패를 완전 무음으로 두면 직전 fresh PASS가 잔존해 최신 FAIL을 덮는 stale-green이 된다
-    # (리뷰 M4). 이전 상태 제거를 시도(fail-closed — 게이트가 미기록으로 차단)하고 경고만 남긴다 —
-    # verdict 판정·exit code는 불변(best-effort 계약 유지).
+  if ! node "$HERE/../lib/verdict-state.mjs" write "$STATE_FILE" "$_v" "$_c" "$START_CONTEXT" "$LOG_ABS" "$CMD_STR" "$3"; then
     rm -f "$STATE_FILE" 2>/dev/null || true
-    echo "verdict-run: warning — verdict 상태 기록 실패($STATE_FILE); 이전 상태를 제거해 fail-closed로 둔다" >&2
+    echo "verdict-run: warning — state/receipt write failed; previous state removed" >&2
   fi
   # 런 이벤트 원장 append(BAC-570) — verdict.passed/failed의 *정본* 산출기. 이 파일은
   # protect.globs 등재라 무장 중 편집이 deny되지만, 원장 파일 자체는 미보호·gitignore라
@@ -151,25 +138,16 @@ now_ms() {
 # git 명령이 하나라도 실패하면(unborn HEAD·index.lock 경합 등) rc!=0 — 호출부가 fail-closed
 # 처리한다(무음 강등 금지: status-only로 조용히 좁아지는 fail-open 차단).
 workspace_digest() {
-  _t="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || return 1
-  {
-    git rev-parse HEAD \
-      && git status --porcelain=v1 -z \
-      && git diff HEAD
-  } >> "$_t" 2>/dev/null || { rm -f "$_t"; return 1; }
-  _loopdir="${LOOP_DIR:-.loop}"
-  git ls-files -o --exclude-standard -z 2>/dev/null \
-    | while IFS= read -r -d '' _f; do
-        case "$_f" in "$_loopdir"/*) continue ;; esac
-        [ "$(pwd)/$_f" = "$LOG_ABS" ] && continue
-        printf '== %s ==\n' "$_f" >> "$_t"
-        cat "$_f" >> "$_t" 2>/dev/null
-      done
-  _dig="$( { shasum -a 256 "$_t" 2>/dev/null || sha256sum "$_t" 2>/dev/null; } | awk '{print $1}')"
-  rm -f "$_t"
-  [ -n "$_dig" ] || return 1
-  printf '%s' "$_dig"
+  node "$HERE/../lib/verdict-state.mjs" digest "$LOG_ABS"
 }
+START_CONTEXT="$(node "$HERE/../lib/verdict-state.mjs" start "$LOG_ABS" "$@")" || {
+  rm -f "$STATE_FILE" 2>/dev/null || true
+  echo 'verdict-run.sh: cannot capture verification target' >&2
+  exit 2
+}
+# A cancelled/failed invocation must not leave the previous PASS usable.
+rm -f "$STATE_FILE" 2>/dev/null || { echo 'verdict-run.sh: cannot invalidate prior verdict state' >&2; exit 2; }
+
 if [ "$GUARD_MUT" -eq 1 ]; then
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # --protect 0매치와 같은 fail-closed 철학: 가드를 켜 달라 했는데 잴 수 없으면 거부한다.
@@ -215,23 +193,23 @@ if [ "${LOOP_SANITIZE_OFF:-}" != "1" ]; then
   fi
 fi
 
-# Passthrough: if the command ALREADY emitted a Verdict Contract block (e.g. eval-gate.mjs),
-# don't re-wrap it — that would bury its richer VERDICT/SUMMARY/FAIL lines in the log and emit a
-# generic block. Echo its block verbatim and mirror its exit code.
+# A nested verifier may retain richer summaries, but must satisfy the whole contract.
+# Process exits are normalized even for nested blocks: exit 2 belongs only to wrapper setup.
+CONTRACT_ERROR=""
 if [ "$(head -n1 "$LOG" 2>/dev/null)" = "=== VERDICT ===" ]; then
-  if [ "$MUTATED" -eq 1 ]; then
-    # 변조 시 내부 블록을 재방출하지 않는다 — 블록 2개 방출은 계약 위반(delimiter 추출 모호성).
-    # 자체 FAIL 블록으로 대체하고 내부 블록은 LOG에 남긴다.
-    write_state FAIL 1
-    printf '=== VERDICT ===\nVERDICT: FAIL\nEXIT: 1\n'
-    printf 'SUMMARY: passed= failed= skipped= duration_ms=%s\n' "$dur"
-    printf 'FAIL: workspace mutated during verify (--guard-mutation) — verify must not change git-visible state\n'
-    printf 'LOG: %s\n=== END VERDICT ===\n' "$LOG_ABS"
-    exit 1
+  if [ "$MUTATED" -eq 0 ]; then
+    if nested="$(node "$HERE/../lib/verdict-state.mjs" validate "$LOG" "$code" 2>&1)"; then
+      nested_verdict="${nested%% *}"
+      nested_exit="${nested#* }"
+      nested_block="$(cat "$LOG")"
+      write_state "$nested_verdict" "$nested_exit" "$nested_block"
+      printf '%s\n' "$nested_block"
+      [ "$nested_verdict" = PASS ] && exit 0 || exit 1
+    else
+      CONTRACT_ERROR="$(printf '%s' "$nested" | head -n 1 | cut -c1-200)"
+      code=1
+    fi
   fi
-  if [ "$code" -eq 0 ]; then write_state PASS "$code"; else write_state FAIL "$code"; fi
-  cat "$LOG"
-  exit "$code"
 fi
 
 # ---- best-effort count extraction (advisory only; never affects VERDICT) ----
@@ -269,8 +247,6 @@ fi
 
 # ---- verdict from exit code (ground truth) ----
 if [ "$code" -eq 0 ]; then verdict="PASS"; else verdict="FAIL"; fi
-write_state "$verdict" "$code"
-
 # ---- extract greppable failure lines (only when failing) ----
 # Curated, framework-native per-failure markers — kept narrow so FAIL lines stay a clean
 # steering signal (not stack-trace noise). Adjacent duplicates are collapsed. Generic 'Error:'
@@ -284,12 +260,14 @@ if [ "$verdict" = "FAIL" ]; then
     | head -n "$MAX_FAILS")"
 fi
 
-# ---- emit the contract block ----
+# ---- render once so stdout and the receipt bind the same bytes ----
+render_verdict() {
 printf '=== VERDICT ===\n'
 printf 'VERDICT: %s\n' "$verdict"
 printf 'EXIT: %s\n' "$code"
 printf 'SUMMARY: passed=%s failed=%s skipped=%s duration_ms=%s\n' "$passed" "$failed" "$skipped" "$dur"
 if [ "$verdict" = "FAIL" ]; then
+  [ -n "$CONTRACT_ERROR" ] && printf 'FAIL: invalid nested verdict contract: %s\n' "$CONTRACT_ERROR"
   # BAC-626 ④: 변조 FAIL 줄을 맨 앞에 — 마커 부재 시의 generic 줄은 이 줄이 대신한다
   # (명령 자체는 0으로 끝났을 수 있어 "command exited 1"은 오독을 낳는다).
   [ "$MUTATED" -eq 1 ] && printf 'FAIL: workspace mutated during verify (--guard-mutation) — verify must not change git-visible state\n'
@@ -303,6 +281,10 @@ if [ "$verdict" = "FAIL" ]; then
 fi
 printf 'LOG: %s\n' "$LOG_ABS"
 printf '=== END VERDICT ===\n'
+}
+rendered="$(render_verdict)"
+write_state "$verdict" "$code" "$rendered"
+printf '%s\n' "$rendered"
 
 # mirror the verdict in our own exit code so verdict-run.sh composes
 [ "$verdict" = "PASS" ] && exit 0 || exit 1

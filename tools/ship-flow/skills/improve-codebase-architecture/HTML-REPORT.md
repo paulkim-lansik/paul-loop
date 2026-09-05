@@ -1,12 +1,16 @@
 # HTML Report Format
 
+This temporary artifact is allowed within a repository-read-only review's requested reporting scope;
+it does not edit the audited repository. If the user forbids this write or all writes anywhere, return
+the report in the conversation instead. Use an isolated temporary location for associated browser caches.
+
 The architectural review is rendered as a single self-contained HTML file in the OS temp directory. Tailwind and Mermaid both come from CDNs. Mermaid handles graph-shaped diagrams reliably; hand-built divs and inline SVG handle the more editorial visuals (mass diagrams, cross-sections). Mix the two — don't lean on Mermaid for everything, it'll start to look generic.
 
 ## Scaffold
 
 ```html
 <!doctype html>
-<html lang="en">
+<html lang="{{outputLanguage}}">
   <head>
     <meta charset="utf-8" />
     <title>Architecture review — {{repo name}}</title>
@@ -39,7 +43,7 @@ Repo name, date, and a compact legend: solid box = module, dashed line = seam, r
 
 ## Candidate card
 
-The diagrams carry the weight. Prose is sparse, plain, and uses the glossary terms ([LANGUAGE.md](LANGUAGE.md)) without ceremony.
+The diagrams carry the weight. Prose is sparse, plain, and uses the shared [architecture vocabulary](../codebase-design/LANGUAGE.md) consistently in the resolved output language.
 
 Each candidate is one `<article>`:
 
@@ -105,9 +109,14 @@ One larger card. Candidate name, one sentence on why, anchor link to its card. T
 
 ## Tone
 
-Plain English, concise — but the architectural nouns and verbs come straight from [LANGUAGE.md](LANGUAGE.md). Concision is not an excuse to drift.
+Use the caller's resolved `outputLanguage`, sourced from `.claude/ship-flow.config.json`; if absent or
+unreadable, use the user's language. Write report prose in that language, including labels and diagram
+captions; keep code, commands, identifiers and quoted evidence verbatim. Use the architectural concepts
+defined in the shared [architecture vocabulary](../codebase-design/LANGUAGE.md) and the consuming repo's
+existing domain glossary. Translate conceptual terms consistently; the English examples below do not
+override the output-language rule.
 
-**Use exactly:** module, interface, implementation, depth, deep, shallow, seam, adapter, leverage, locality.
+**Keep these concepts distinct:** module, interface, implementation, depth, deep, shallow, seam, adapter, leverage, locality.
 
 **Never substitute:** component, service, unit (for module) · API, signature (for interface) · boundary (for seam) · layer, wrapper (for module, when you mean module).
 
@@ -120,4 +129,4 @@ Plain English, concise — but the architectural nouns and verbs come straight f
 
 **Wins bullets** name the gain in glossary terms: *"locality: bugs concentrate in one module"*, *"leverage: one interface, N call sites"*, *"interface shrinks; implementation absorbs the wrappers"*. Don't write *"easier to maintain"* or *"cleaner code"* — those terms aren't in the glossary and don't earn their place.
 
-No hedging, no throat-clearing, no "it's worth noting that…". If a sentence could be a bullet, make it a bullet. If a bullet could be cut, cut it. If a term isn't in [LANGUAGE.md](LANGUAGE.md), reach for one that is before inventing a new one.
+No hedging, no throat-clearing, no "it's worth noting that…". If a sentence could be a bullet, make it a bullet. If a bullet could be cut, cut it. Prefer concepts already defined in the shared [architecture vocabulary](../codebase-design/LANGUAGE.md) before inventing a new one.

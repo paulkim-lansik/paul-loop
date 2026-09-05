@@ -3,6 +3,8 @@ name: domain-modeling
 description: Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Domain Modeling
 
 > **Where the two format files live.** `CONTEXT-FORMAT.md` and `ADR-FORMAT.md` still sit under
@@ -80,7 +82,9 @@ When the user states how something works, check whether the code agrees. If you 
 
 ### Update CONTEXT.md inline
 
-When a term is resolved, update `CONTEXT.md` right there. Don't batch these up — capture them as they happen. Use the format in [CONTEXT-FORMAT.md](../grill-with-docs/CONTEXT-FORMAT.md).
+When a term is resolved, update `CONTEXT.md` as it happens if documentation is authorized. Reuse
+that authorization; in a read-only or proposal-only call, return concrete proposed wording instead.
+Mark unsettled proposals as drafts. Use [CONTEXT-FORMAT.md](../grill-with-docs/CONTEXT-FORMAT.md).
 
 `CONTEXT.md` should be totally devoid of implementation details. Do not treat `CONTEXT.md` as a spec, a scratch pad, or a repository for implementation decisions. It is a glossary and nothing else.
 
@@ -96,8 +100,10 @@ If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](
 
 ### Reopening a settled ADR
 
-If the plan reverses or overrides an existing ADR, that's the same grounded-reopen bar retrospect
-applies to lessons: the user must cite the ADR by id and bring evidence that didn't exist when it was
-written — not "on reflection" or a plain change of preference. Missing either, point back to the
-existing ADR's rationale and ask what the plan does differently. A genuine reversal gets a new ADR that
-supersedes the old one and links back to it — don't rewrite the old ADR in place.
+Find the relevant ADR yourself and explain its rationale and the proposed change's consequences.
+A factual reversal needs new evidence; an authorized user's explicit change of goal or priority is
+a legitimate decision change and must be recorded as such, not misrepresented as new empirical proof.
+Do not require the user to supply a discoverable ADR id or let an old ADR veto their new goal.
+Create a new ADR that supersedes and links the old one within the authorized documentation scope;
+never erase the old reasoning. This does not authorize implementation, verifier weakening, merge,
+deployment, or sends. Those actions retain their own applicable approval and evidence requirements.

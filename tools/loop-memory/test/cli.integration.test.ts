@@ -1,20 +1,22 @@
-import { spawnSync } from 'node:child_process';
+import { lessonJSON } from './helpers/postgres-fixture';
+import { spawnSync } from './helpers/postgres-fixture';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createLoopDb, LOOP_DATABASE_URL } from '../src/client';
+import { createLoopDb, LOOP_DATABASE_URL } from './helpers/postgres-fixture';
 import { stubEmbedder } from '../src/embedding';
 import { LESSON_TAG } from '../src/lessons';
-import { addNote, softDeleteNote } from '../src/ops';
+import { softDeleteNote } from '../src/ops';
+import { addNote } from './helpers/postgres-fixture';
 import { signContent } from '../src/provenance';
 import { memoryNote, memoryOp } from '../src/schema/memory';
 
 // 통합(docker pgvector): 실제 CLI 서브프로세스를 굴려 graduate/recall JSON 계약을 end-to-end 증명한다.
 // 훅이 의존하는 것은 정확히 이 argv 파싱 + stdout JSON shape이므로, 라이브러리 함수가 아니라 CLI를 스폰한다.
-const { db, pool } = createLoopDb();
+const { db, pool } = createLoopDb(() => SIGNING_KEY);
 
 // 이 회차만의 고유 표식 — 질의 토큰과 ADR 번호에 심어, DB에 다른 kb:adr/lesson 잔여가 있어도 내 노트가
 // 유일 최근접이 되게. (게다가 내 fixture는 in-test stub 임베드, 실 코퍼스는 Gemini 임베드 → stub 질의 대비
@@ -57,7 +59,7 @@ const adrDir = mkdtempSync(join(tmpdir(), 'loop-cli-adr-'));
 for (const [i, id] of lessonIds.entries()) {
   writeFileSync(
     join(lessonsDir, `${id}.json`),
-    JSON.stringify({
+    lessonJSON({
       id,
       title: `withTenant 누락 RLS 교훈${i} ${run}`,
       fix: 'withTenant 트랜잭션 스코프 주입',
@@ -96,7 +98,7 @@ afterAll(async () => {
 describe('cli — graduate/recall knowledge 결선 (서브프로세스 end-to-end)', () => {
   it('graduate --knowledge는 lessons와 ADR 코퍼스를 둘 다 졸업하고 폐기 ADR은 제외한다', () => {
     const r = runCli(['graduate', '--lessons', lessonsDir, '--knowledge', adrDir, '--allow-stub']);
-    expect(r.status).toBe(0);
+    expect(r.status, r.stderr).toBe(0);
     // lessons 카운트 라인(4건).
     expect(r.stdout).toMatch(/graduated 4 new lesson/);
     // knowledge 카운트 라인 — 채택 ADR의 4섹션만 ADD(폐기 ADR의 섹션이 세어졌다면 5가 된다 → 제외 증명).
@@ -115,7 +117,7 @@ describe('cli — graduate/recall knowledge 결선 (서브프로세스 end-to-en
       '3',
       '--allow-stub',
     ]);
-    expect(r.status).toBe(0);
+    expect(r.status, r.stderr).toBe(0);
     const line = r.stdout.split('\n').find((l) => l.trim().startsWith('{'));
     expect(line, `expected a JSON object line, got: ${r.stdout}`).toBeDefined();
     const parsed = JSON.parse(line as string) as {
@@ -140,7 +142,7 @@ describe('cli — graduate/recall knowledge 결선 (서브프로세스 end-to-en
     const emptyDir = mkdtempSync(join(tmpdir(), 'loop-cli-empty-'));
     try {
       const r = runCli(['graduate', '--lessons', emptyDir, '--allow-stub']);
-      expect(r.status).toBe(0);
+      expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toMatch(/graduated 0 new lesson/);
       expect(r.stdout).not.toMatch(/knowledge/i); // knowledge 라인 없음
     } finally {
@@ -169,7 +171,7 @@ describe('cli — graduate/recall knowledge 결선 (서브프로세스 end-to-en
         researchDir,
         '--allow-stub',
       ]);
-      expect(r.status).toBe(0);
+      expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toMatch(/knowledge \(research\) — 1 added/);
       // 실제 AC 표면 — 사유 포함 skip 줄이 stdout에 있어야 한다(라이브러리 skipped[] 값이 아니라).
       expect(r.stdout).toContain(`${run}-report.html`);
@@ -200,7 +202,7 @@ describe('cli — LOOP_MEMORY_SOURCE env → memory_op.payload.source (issue #35
     const dir = mkdtempSync(join(tmpdir(), 'loop-cli-source-tagged-'));
     writeFileSync(
       join(dir, `${id}.json`),
-      JSON.stringify({
+      lessonJSON({
         id,
         title: `source env 확인 교훈 ${run}`,
         fix: 'LOOP_MEMORY_SOURCE=hook',
@@ -215,7 +217,7 @@ describe('cli — LOOP_MEMORY_SOURCE env → memory_op.payload.source (issue #35
         env: { ...cliEnv, LOOP_MEMORY_SOURCE: 'hook' },
         timeout: 30000,
       });
-      expect(r.status).toBe(0);
+      expect(r.status, r.stderr).toBe(0);
       const [note] = await db
         .select({ id: memoryNote.id })
         .from(memoryNote)
@@ -242,7 +244,7 @@ describe('cli — LOOP_MEMORY_SOURCE env → memory_op.payload.source (issue #35
     const dir = mkdtempSync(join(tmpdir(), 'loop-cli-source-absent-'));
     writeFileSync(
       join(dir, `${id}.json`),
-      JSON.stringify({
+      lessonJSON({
         id,
         title: `source 부재 확인 교훈 ${run}`,
         fix: '수동 CLI 호출은 LOOP_MEMORY_SOURCE를 안 심는다',
@@ -253,7 +255,7 @@ describe('cli — LOOP_MEMORY_SOURCE env → memory_op.payload.source (issue #35
     );
     try {
       const r = runCli(['graduate', '--lessons', dir, '--allow-stub']); // cliEnv에는 LOOP_MEMORY_SOURCE가 ''(falsy)
-      expect(r.status).toBe(0);
+      expect(r.status, r.stderr).toBe(0);
       const [note] = await db
         .select({ id: memoryNote.id })
         .from(memoryNote)
@@ -288,8 +290,8 @@ describe('cli — record-recall (계측, 임베더 불필요)', () => {
         { id: noteA.id, distance: 0.123, corpus: 'lessons' },
         { id: noteB.id, distance: 0.045, corpus: 'knowledge' },
       ];
-      const r = runCli(['record-recall', '--hits', JSON.stringify(hits)]);
-      expect(r.status).toBe(0);
+      const r = runCli(['record-recall', '--hits', lessonJSON(hits)]);
+      expect(r.status, r.stderr).toBe(0);
 
       const rows = await db
         .select()
@@ -299,8 +301,8 @@ describe('cli — record-recall (계측, 임베더 불필요)', () => {
         );
       expect(rows).toHaveLength(2);
       const byNote = new Map(rows.map((row) => [row.noteId, row.payload]));
-      expect(byNote.get(noteA.id)).toEqual({ distance: 0.123, corpus: 'lessons' });
-      expect(byNote.get(noteB.id)).toEqual({ distance: 0.045, corpus: 'knowledge' });
+      expect(byNote.get(noteA.id)).toEqual({ distance: 0.123, corpus: noteA.corpus });
+      expect(byNote.get(noteB.id)).toEqual({ distance: 0.045, corpus: noteB.corpus });
     } finally {
       await softDeleteNote(db, noteA.id, 'test cleanup');
       await softDeleteNote(db, noteB.id, 'test cleanup');
@@ -314,18 +316,18 @@ describe('cli — record-recall (계측, 임베더 불필요)', () => {
     const note = await addNote(db, stub, { content: `record-recall source 태그 대상 ${run}` });
     try {
       const hits = [{ id: note.id, distance: 0.2, corpus: 'lessons' }];
-      const r = spawnSync(tsx, [cli, 'record-recall', '--hits', JSON.stringify(hits)], {
+      const r = spawnSync(tsx, [cli, 'record-recall', '--hits', lessonJSON(hits)], {
         encoding: 'utf8',
         env: { ...cliEnv, LOOP_MEMORY_SOURCE: 'hook' },
         timeout: 30000,
       });
-      expect(r.status).toBe(0);
+      expect(r.status, r.stderr).toBe(0);
       const rows = await db
         .select()
         .from(memoryOp)
         .where(and(eq(memoryOp.op, 'RECALL'), eq(memoryOp.noteId, note.id)));
       expect(rows).toHaveLength(1);
-      expect(rows[0]?.payload).toEqual({ distance: 0.2, corpus: 'lessons', source: 'hook' });
+      expect(rows[0]?.payload).toEqual({ distance: 0.2, corpus: note.corpus, source: 'hook' });
     } finally {
       await softDeleteNote(db, note.id, 'test cleanup');
     }
@@ -333,7 +335,7 @@ describe('cli — record-recall (계측, 임베더 불필요)', () => {
 
   it('--hits가 없거나 빈 배열이면 아무 것도 쓰지 않고 exit 0(no-op, fail-open과 일관)', () => {
     const r = runCli(['record-recall', '--hits', '[]']);
-    expect(r.status).toBe(0);
+    expect(r.status, r.stderr).toBe(0);
   });
 });
 
@@ -366,7 +368,7 @@ describe('cli — consolidate (sleep-time consolidation, 서브프로세스 end-
     });
     try {
       const r = runCli(['consolidate', '--json']);
-      expect(r.status).toBe(0);
+      expect(r.status, r.stderr).toBe(0);
       const line = r.stdout.split('\n').find((l) => l.trim().startsWith('{'));
       expect(line, `expected a JSON object line, got: ${r.stdout}`).toBeDefined();
       const report = JSON.parse(line as string) as {
@@ -390,18 +392,9 @@ describe('cli — consolidate (sleep-time consolidation, 서브프로세스 end-
       env: envNoKey,
       timeout: 30000,
     });
-    expect(r.status).toBe(0);
-    expect(r.stderr).toMatch(/LOOP_MEMORY_SIGNING_KEY not set/);
-    const line = (r.stdout ?? '').split('\n').find((l) => l.trim().startsWith('{'));
-    expect(line, `expected a JSON object line, got: ${r.stdout}`).toBeDefined();
-    const report = JSON.parse(line as string) as {
-      duplicates: unknown[];
-      promotionSignals: unknown[];
-    };
-    // DB에 실제로 어떤 signed duplicate가 있든(다른 테스트가 동시에 심었더라도) signingKey 없으면
-    // consolidateLessonMemory가 아예 아무것도 안 읽으므로 결과는 항상 빈 배열이다.
-    expect(report.duplicates).toEqual([]);
-    expect(report.promotionSignals).toEqual([]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/signing_key_missing/);
+    expect(JSON.parse(r.stdout)).toMatchObject({ command: 'consolidate', outcome: 'error', reason: 'signing_key_missing' });
   });
 });
 
@@ -468,11 +461,11 @@ describe('cli — recall --decay (서브프로세스 end-to-end)', () => {
     const oldLastSeen = new Date(Date.now() - 90 * 86_400_000).toISOString();
     writeFileSync(
       join(decayLessonsDir, `${idOld}.json`),
-      JSON.stringify({ id: idOld, title: 'old', verified: true, count: 0, last_seen: oldLastSeen }),
+      lessonJSON({ id: idOld, title: 'old', verified: true, count: 0, last_seen: oldLastSeen }),
     );
     writeFileSync(
       join(decayLessonsDir, `${idRecent}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: idRecent,
         title: 'recent',
         verified: true,
@@ -502,7 +495,7 @@ describe('cli — recall --decay (서브프로세스 end-to-end)', () => {
       };
       const hitOld = parsed.lessons.find((h) => h.id === noteOld.id);
       const hitRecent = parsed.lessons.find((h) => h.id === noteRecent.id);
-      expect(hitOld, `expected idOld in lessons, got: ${JSON.stringify(parsed.lessons)}`).toBeDefined();
+      expect(hitOld, `expected idOld in lessons, got: ${lessonJSON(parsed.lessons)}`).toBeDefined();
       expect(hitRecent).toBeDefined();
       // raw distance는 idOld가 더 작다(더 가깝다)지만, decayed score는 뒤집힌다.
       expect(hitOld?.distance).toBeLessThan(hitRecent?.distance ?? Number.POSITIVE_INFINITY);

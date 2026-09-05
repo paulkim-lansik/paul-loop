@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "adapterVersion": "1.0.0",
+  "requirements": {
+    "node": ">=22",
+    "shell": "bash >=3.2 plus POSIX sh",
+    "platforms": [
+      "linux",
+      "darwin"
+    ],
+    "commands": [
+      "git",
+      "bash",
+      "sh",
+      "pgrep"
+    ]
+  },
+  "common": [
+    "verdict-exit-code",
+    "fix-command",
+    "lesson-files",
+    "risk-cli",
+    "explicit-plugin-registry",
+    "authoritative-state-protection"
+  ],
+  "claude": {
+    "skills": "native",
+    "roles": "native-agents",
+    "workflows": "native-when-enabled",
+    "hooks": "native",
+    "configuration": "userConfig-and-environment",
+    "unsupportedEvents": [],
+    "liveEndToEnd": "not-verified",
+    "workflowCancellation": "host-dependent-not-attested"
+  },
+  "codex": {
+    "skills": "generated",
+    "roles": "role-skills-and-project-agent-templates",
+    "workflows": "unsupported-native-workflow-js",
+    "hooks": "generated-adapter-requires-host-trust",
+    "configuration": "explicit-environment-and-allowlisted-dotenv",
+    "unsupportedEvents": [
+      "PermissionDenied",
+      "InstructionsLoaded",
+      "PostToolUseFailure"
+    ],
+    "unsupportedDecisions": [
+      "ask"
+    ],
+    "askFallback": "deny-and-request-separate-human-review",
+    "liveEndToEnd": "not-verified",
+    "workflowCancellation": "unsupported-hard-cancellation-not-claimed",
+    "workflowFallback": "skill-documented-equivalent-preserving-gates-and-required-independence",
+    "askRecovery": "identical-retry-remains-denied; separate-review-does-not-record-approval; use-an-explicitly-authorized-supported-host-route"
+  },
+  "shell": {
+    "skills": "reference-only",
+    "roles": "caller-owned",
+    "workflows": "caller-owned",
+    "hooks": "unsupported",
+    "configuration": "explicit-environment",
+    "unsupportedEvents": [
+      "all-host-lifecycle-events"
+    ],
+    "liveEndToEnd": "not-applicable",
+    "workflowCancellation": "caller-owned"
+  }
+}

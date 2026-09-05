@@ -20,7 +20,8 @@
     "stats": "tsx src/cli.ts stats",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.config.integration.ts",
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire}from 'module';const require=createRequire(import.meta.url);\" --outfile=dist/cli.js"
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire}from 'module';const require=createRequire(import.meta.url);\" --outfile=dist/cli.js",
+    "test:postgres-fixture": "node test/run-postgres-fixture.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
@@ -30,9 +31,15 @@
     "@types/node": "^22.10.0",
     "@types/pg": "^8.20.0",
     "drizzle-kit": "^0.31.10",
-    "esbuild": "^0.24.2",
+    "esbuild": "^0.25.12",
     "tsx": "^4.22.4",
     "typescript": "^5.7.3",
-    "vitest": "^2.1.9"
+    "vitest": "^3.2.6"
+  },
+  "overrides": {
+    "vite": "^6.4.3",
+    "@esbuild-kit/core-utils": {
+      "esbuild": "$esbuild"
+    }
   }
 }

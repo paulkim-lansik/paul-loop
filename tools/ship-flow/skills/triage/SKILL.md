@@ -3,6 +3,8 @@ name: triage
 description: Triage issues through a state machine driven by triage roles. Use when user wants to create an issue, triage issues, review incoming bugs or feature requests, prepare issues for an AFK agent, or manage issue workflow.
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Triage
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -39,11 +41,15 @@ Five **state** roles:
 - `ready-for-human` — needs human implementation
 - `wontfix` — will not be actioned
 
-Every triaged issue should carry exactly one category role and one state role. If state roles conflict, flag it and ask the maintainer before doing anything else.
+Every triaged issue should carry exactly one category role and one state role. If state roles conflict, investigate and draft a correction first. An explicit requested state resolves
+the choice; otherwise ask before changing roles, while continuing independent read-only work.
 
-These are canonical role names — the actual label strings used in the issue tracker may differ. The mapping should have been provided to you; call the Skill tool with "setup" if not.
+These are canonical role names — the actual label strings used in the issue tracker may differ. Resolve the mapping from the caller, config `trackerDoc`, established integration docs and actual
+tracker labels. If a required mapping is unknown, return a concrete mapping proposal before mutation;
+do not launch setup, invent labels or block an otherwise useful local review.
 
-State transitions: an unlabeled issue normally goes to `needs-triage` first; from there it moves to `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. `needs-info` returns to `needs-triage` once the reporter replies. The maintainer can override at any time — flag transitions that look unusual and ask before proceeding.
+State transitions: an unlabeled issue normally goes to `needs-triage` first; from there it moves to `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. `needs-info` returns to `needs-triage` once the reporter replies. The maintainer can override at any time. Honor an explicit target transition without a second
+confirmation; flag a conflicting choice only when the intended target remains unclear.
 
 ## Invocation
 
@@ -68,13 +74,18 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
 
 1. **Gather context.** Read the full issue (body, comments, labels, reporter, dates). Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue.
 
-2. **Recommend.** Tell the maintainer your category and state recommendation with reasoning, plus a brief codebase summary relevant to the issue. Wait for direction.
+2. **Reproduce (bugs only).** Before any grilling, attempt reproduction: read the reporter's steps, trace the relevant code, run tests or commands. Report what happened — successful repro with code path, failed repro, or insufficient detail (a strong `needs-info` signal). A confirmed repro makes a much stronger agent brief.
 
-3. **Reproduce (bugs only).** Before any grilling, attempt reproduction: read the reporter's steps, trace the relevant code, run tests or commands. Report what happened — successful repro with code path, failed repro, or insufficient detail (a strong `needs-info` signal). A confirmed repro makes a much stronger agent brief.
+3. **Recommend and draft.** Prepare category/state rationale and the actual proposed brief/comment
+   after investigation. Review/read requests stop with this material; they do not authorize posting.
 
-4. **Grill (if needed).** If the issue needs fleshing out, run a `/ship-flow:grill-with-docs` session.
+4. **Grill only a blocking decision.** Use `/ship-flow:grill-with-docs` in bounded caller mode with
+   resolved facts, the specific question and allowed documentation scope. Do not restart discovery.
 
-5. **Apply the outcome:**
+5. **Apply the authorized outcome.** Reuse exact requested state/comment/close scope; where absent,
+   show the concrete mutation before asking. A role-change request alone does not authorize extra
+   comments, local rejection records or closure. Confirm each completed action and retain failed
+   dependent actions as incomplete. Within that scope:
    - `ready-for-agent` — post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)).
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info` — post triage notes (template below).
@@ -84,7 +95,9 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
 
 ## Quick state override
 
-If the maintainer says "move #42 to ready-for-agent", trust them and apply the role directly. Confirm what you're about to do (role changes, comment, close), then act. Skip grilling. If moving to `ready-for-agent` without a grilling session, ask whether they want to write an agent brief.
+If the maintainer says "move #42 to ready-for-agent", trust them and apply the role directly. Apply the requested role change without a redundant confirmation. Skip grilling. Prepare a brief if
+useful, but post it or close the issue only when those additional actions are authorized. AFK means
+bounded implementation readiness; it does not grant merge, deployment or external-send permission.
 
 ## Needs-info template
 

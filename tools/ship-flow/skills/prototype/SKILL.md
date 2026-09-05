@@ -3,6 +3,8 @@ name: prototype
 description: Build a throwaway prototype to flesh out a design before committing to it. Routes between two branches — a runnable terminal app for state/business-logic questions, or several radically different UI variations toggleable from one route. Use when the user wants to prototype, sanity-check a data model or state machine, mock up a UI, explore design options, or says "prototype this", "let me play with it", "try a few designs".
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Prototype
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -29,7 +31,10 @@ The two branches produce very different artifacts — getting this wrong wastes 
 3. **No persistence by default.** State lives in memory. Persistence is the thing the prototype is _checking_, not something it should depend on. If the question explicitly involves a database, hit a scratch DB or a local file with a clear "PROTOTYPE — wipe me" name.
 4. **Skip the polish.** No tests, no error handling beyond what makes the prototype _runnable_, no abstractions. The point is to learn something fast and then delete it.
 5. **Surface the state.** After every action (logic) or on every variant switch (UI), print or render the full relevant state so the user can see what changed.
-6. **Delete or absorb when done.** When the prototype has answered its question, either delete it or fold the validated decision into the real code — don't leave it rotting in the repo.
+6. **Close out within scope.** Record the answer and identify prototype artifacts. Remove only owned
+   throwaway files when cleanup is authorized. A selected design does not itself authorize production
+   implementation or deletion of user work; promotion needs implementation scope and the real verifier,
+   review and release gates. Do not apply the prototype's no-tests shortcut to production code.
 
 ## When done
 

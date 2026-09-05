@@ -17,7 +17,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
-L() { node "$LESSONS" "$@" --lessons "$DIR"; }
+L() { node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" "$@" --lessons "$DIR"; }
 
 # record the same verified lesson 3× → recurring (count=3), clears the promote floor (min-count 3)
 for i in 1 2 3; do
@@ -56,7 +56,9 @@ L record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --ver
   || fail "re-record with new content failed"
 SOUT2="$(L stats 2>&1)"
 printf '%s' "$SOUT2" | grep -q "retired=0" || fail "content change must clear retirement (retired=0): $SOUT2"
-printf '%s' "$SOUT2" | grep -q "open_candidates=1" || fail "cleared lesson must re-enter the pool (open_candidates=1): $SOUT2"
+printf '%s' "$SOUT2" | grep -q "open_candidates=0" || fail "changed content must earn new independent confirmations: $SOUT2"
+for i in 1 2; do L record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --verified --fix "DIFFERENT fix now" --title "widget boot fix v2" >/dev/null || fail "fresh v2 confirmation failed"; done
+L stats | grep -q "open_candidates=1" || fail "three confirmations of v2 must re-enter promotion"
 
 # 7) a REJECTED recurring lesson is NOT counted as an open candidate — the skeptic decided no, so it is
 #    terminal (not actionable), same as retired. loop-doctor's "승격 후보" must not nag about it.
@@ -72,10 +74,10 @@ printf '%s' "$SOUT3" | grep -q "open_candidates=1" || fail "rejected lesson must
 
 # 8) BAC-580 — retired/reject 교훈은 pgvector 회상 계층으로 애초에 졸업(ADD)되지 않고, 이미 졸업된
 #    노트는 회수(퇴역→스텁 대체, 기각→soft-delete)된다. loop-memory는 docker pgvector가 필요하지만
-#    (verify:loop는 docker 0 원칙) 이 판정은 packages/loop-memory/src/lessons.ts의 순수 함수
+#    (verify:loop는 docker 0 원칙) 이 판정은 tools/loop-memory/src/lessons.ts의 순수 함수
 #    (readVerifiedLessons/decideLessonReap)라 DB 없이도 실행·검증 가능 — tsx로 직접 불러 확인한다.
-TSX="$ROOT/packages/loop-memory/node_modules/.bin/tsx"
-LESSONS_TS="$ROOT/packages/loop-memory/src/lessons.ts"
+TSX="$ROOT/tools/loop-memory/node_modules/.bin/tsx"
+LESSONS_TS="$ROOT/tools/loop-memory/src/lessons.ts"
 if [ -x "$TSX" ] && [ -f "$LESSONS_TS" ]; then
   BAC580_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
   BAC580_LESSONS_DIR="$BAC580_DIR/lessons"
@@ -83,8 +85,9 @@ if [ -x "$TSX" ] && [ -f "$LESSONS_TS" ]; then
   BAC580_PROBE="$BAC580_DIR/probe.mjs"
   cat > "$BAC580_PROBE" <<EOF
 import { readVerifiedLessons, decideLessonReap, lessonStub } from '$LESSONS_TS';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { backedLesson } from '$ROOT/tools/loop-engine/test/helpers/backed-lesson.mjs';
 
 const dir = '$BAC580_LESSONS_DIR';
 writeFileSync(join(dir, 'active.json'), JSON.stringify({ id: 'active', verified: true, title: 'active lesson' }));
@@ -96,8 +99,15 @@ writeFileSync(join(dir, 'rejected.json'), JSON.stringify({
   id: 'rejected', verified: true, title: 'rejected lesson', challenge: { verdict: 'reject' },
 }));
 
+// Authoritative fixture files back every positive summary; actual verifier issuance is separate.
+for (const id of ['active', 'retired', 'rejected']) {
+  const p = join(dir, id + '.json');
+  const l = JSON.parse(readFileSync(p, 'utf8'));
+  writeFileSync(p, JSON.stringify(backedLesson(l, dir)));
+}
+
 // (a) ADD 대상 필터 — retired/rejected는 애초에 졸업되지 않는다.
-const ids = readVerifiedLessons(dir).map((l) => l.id).sort();
+const ids = readVerifiedLessons(dir, { root: dir }).map((l) => l.id).sort();
 if (JSON.stringify(ids) !== JSON.stringify(['active'])) {
   console.error('FAIL: readVerifiedLessons must exclude retired/rejected, got ' + JSON.stringify(ids));
   process.exit(1);
@@ -134,11 +144,12 @@ EOF
   rm -rf "$BAC580_DIR" "$BAC580_PROBE"
   [ "$PROBE_RC" = "0" ] && printf '%s' "$PROBE_OUT" | grep -q "^OK$" \
     || fail "BAC-580 loop-memory graduation gate: $PROBE_OUT"
+  echo "PASS: BAC-580 loop-memory graduation gate (tools/loop-memory)"
 else
   # loop-engine-selftest CI job은 순수 bash+node로 pnpm install 없이 돈다(ci.yml 주석) — tsx가
   # 없는 건 회귀가 아니라 그 설계의 정상 결과이므로 hard fail이 아니라 soft-skip으로 처리한다.
-  echo "SKIP: BAC-580 probe needs tsx+lessons.ts (packages/loop-memory) — run 'pnpm install' first" >&2
+  echo "SKIP: BAC-580 probe needs tsx+lessons.ts (tools/loop-memory) — run 'pnpm install' first" >&2
 fi
 
-echo "PASS: lessons retire — fail-closed before accept, retires from listing/--codify/stats, content-change re-opens, rejected not counted, and (BAC-580) retired/reject lessons are excluded from loop-memory graduation + already-graduated notes are reaped"
+echo "PASS: lessons retire — receipt-bound file lifecycle assertions passed; BAC-580 status reported separately above"
 exit 0

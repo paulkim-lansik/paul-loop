@@ -3,6 +3,8 @@ name: write-a-skill
 description: Create new agent skills with proper structure, progressive disclosure, and bundled resources. Use when user wants to create, write, or build a new skill.
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Writing Skills
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -13,21 +15,15 @@ description: Create new agent skills with proper structure, progressive disclosu
 
 ## Process
 
-1. **Gather requirements** - ask user about:
-   - What task/domain does the skill cover?
-   - What specific use cases should it handle?
-   - Does it need executable scripts or just instructions?
-   - Any reference materials to include?
-
-2. **Draft the skill** - create:
-   - SKILL.md with concise instructions
-   - Additional reference files if content exceeds 500 lines
-   - Utility scripts if deterministic operations needed
-
-3. **Review with user** - present draft and ask:
-   - Does this cover your use cases?
-   - Anything missing or unclear?
-   - Should any section be more/less detailed?
+1. **Reuse requirements** from the user/caller and accepted promotion evidence. Identify task, use
+   cases, scripts and references from that context; ask only for a missing material decision.
+2. **Draft or implement within scope.** Produce concise SKILL.md instructions and bundled resources.
+   Prefer a small entry point (roughly 100 lines); split substantial or rarely used detail into named
+   references. This is a readability target, not an automatic approval stop or a separate 500-line rule.
+3. **Validate and return the concrete result.** Check references, routing and bounded behavior. A
+   requested draft remains a draft. An authorized implementation completes without a redundant review
+   question; installation, publication or expanded authority requires its own scope. Preserve the
+   accepted lesson's evidence and verification protections when rewriting it as a procedure.
 
 ## Skill Structure
 
@@ -107,7 +103,7 @@ Scripts save tokens and improve reliability vs generated code.
 
 Split into separate files when:
 
-- SKILL.md exceeds 100 lines
+- SKILL.md is hard to scan (roughly 100 lines is a useful splitting signal)
 - Content has distinct domains (finance vs sales schemas)
 - Advanced features are rarely needed
 
@@ -116,8 +112,9 @@ Split into separate files when:
 After drafting, verify:
 
 - [ ] Description includes triggers ("Use when...")
-- [ ] SKILL.md under 100 lines
+- [ ] Entry point is concise; substantial or rarely used detail is split into named references
 - [ ] No time-sensitive info
 - [ ] Consistent terminology
 - [ ] Concrete examples included
-- [ ] References one level deep
+- [ ] References are resolvable and declared; shared bundled contracts and scoped consumer-file
+      operations are allowed, while undeclared traversal and out-of-scope writes are not

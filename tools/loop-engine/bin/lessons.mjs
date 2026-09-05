@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // lessons.mjs — Phase 3 of loop-engine: a verified-lessons memory (the learning layer).
 //
-// The loop (Phase 1) and gate (Phase 2) make one run converge. This makes runs get SMARTER over
-// time: failures become reusable lessons (Reflexion), recurring lessons become skill candidates
-// (Voyager), and a retro surfaces loop-efficiency. The discipline from Phases 0-2 holds:
+// The loop and gate produce local verification evidence. This records reusable observations and
+// recurring candidates; their counts do not establish causal learning gains. The discipline holds:
 //
 //   ONLY the verifier decides what is a lesson. A lesson (and its fix/title/source) is trusted as
 //   `verified` only when ground truth (the verifier passing after a fix) confirmed it — never the
@@ -13,8 +12,8 @@
 //
 // Store: one JSON file per lesson under <lessons-dir>/, keyed by a normalized failure signature
 // (git-diffable, merge-friendly). The store is HARDENED against hand-edited / merge-corrupted files:
-// every lesson is coerced to sane types on load, and `verified` is authoritative only when it is
-// the boolean `true`. NOTE: concurrent writers to ONE shared dir are serialized with a best-effort
+// every lesson is coerced on load, and `verified` requires a content-bound producer seal plus the
+// original local FAIL/PASS receipts. Concurrent writers to ONE shared dir are serialized with a
 // lock; if you run many loops in parallel against one committed dir, prefer per-run dirs + merge.
 //
 // Commands:
@@ -55,9 +54,8 @@
 //                   if verified) and promote (candidates listing / --codify). --superseded-by (optional)
 //                   fail-closed-checks the target id exists before writing.
 //   lessons mark-clean --gate "<verify cmd>" [--lessons <dir>]
-//                   Exit-code-derived counter: bump clean_pass_count on every lesson attributed to --gate
-//                   (via gate_history) that is neither invalidated nor retired — how many times that gate
-//                   has passed CLEANLY, i.e. without this lesson's fix being needed again. `record`'s
+//                   Count later observed PASS runs bound to the same verified command and gate.
+//                   A later PASS does not establish whether this lesson's fix was needed. `record`'s
 //                   fail-recurrence path resets it to 0 (a recurrence means the lesson is NOT stable yet).
 //                   `promote`'s listing annotates lessons crossing CLEAN_RETIRE_THRESHOLD as retirement
 //                   candidates — informational only, never auto-invalidates/retires.
@@ -70,6 +68,8 @@
 // Exit: 0 ok, 2 usage error.
 
 import { createHash } from 'node:crypto'
+import { lessonState, lessonContentHash } from '../lib/lesson-state.mjs'
+import { lessonReceipt, lessonVerification, sealLessonVerification } from '../lib/lesson-evidence.mjs'
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmdirSync, existsSync, renameSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { sanitizeText } from '../lib/sanitize.mjs'   // BAC-628 기록 시점 redaction
@@ -116,7 +116,9 @@ const argv = process.argv.slice(2)
 const cmd = argv.shift()
 if (!cmd || !['record', 'recall', 'promote', 'stats', 'challenge', 'retire', 'invalidate', 'mark-clean'].includes(cmd)) usage(`unknown or missing command ${JSON.stringify(cmd || '')}`)
 
-const opt = { lessons: process.env.LESSONS_DIR || '.loop/lessons', sigFile: '', sig: '', fix: '', title: '', source: '', category: '', iterations: null, verified: false, minCount: 3, includeUnverified: false, id: '', verdict: '', reason: '', by: '', ref: '', codify: false, gate: '', runs: '', supersededBy: '' }
+if (process.env.LOOP_LEARNING_OFF === '1' && ['record', 'challenge', 'retire', 'invalidate', 'mark-clean'].includes(cmd)) usage('learning_off: lesson mutations disabled');
+
+const opt = { lessons: process.env.LESSONS_DIR || join(process.env.LOOP_DIR || '.loop', 'lessons'), sigFile: '', sig: '', fix: '', title: '', source: '', category: '', iterations: null, verified: false, minCount: 3, includeUnverified: false, id: '', verdict: '', reason: '', by: '', ref: '', codify: false, gate: '', runs: '', supersededBy: '', receipt: '', failureReceipt: '' }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
   const val = () => { if (i + 1 >= argv.length) usage(`${a} requires a value`); return argv[++i] }
@@ -130,6 +132,8 @@ for (let i = 0; i < argv.length; i++) {
     case '--source': opt.source = val(); break
     case '--category': { const v = val(); if (v !== 'engineering' && v !== 'domain') usage('--category must be "engineering" or "domain"'); opt.category = v; break }
     case '--iterations': opt.iterations = posInt('--iterations', /^\d+$/); break
+    case '--receipt': opt.receipt = val(); break
+    case '--failure-receipt': opt.failureReceipt = val(); break
     case '--verified': opt.verified = true; break
     case '--min-count': opt.minCount = posInt('--min-count', /^[1-9]\d*$/); break
     case '--include-unverified': opt.includeUnverified = true; break
@@ -203,7 +207,13 @@ function signatureOf() {
 // ---- store helpers (every read coerces to sane types: corrupt/hand-edited files cannot mislead) ----
 function coerce(l) {
   if (!l || typeof l !== 'object') return null
-  l.verified = l.verified === true
+  const state = lessonState(l)
+  l.legacy_verified = l.verified === true && !state.verified
+  l.verified = state.verified
+  l.verified_count = state.receipts.length
+  l.verification = { version: 1, content_hash: l.verification?.content_hash || '', receipts: state.receipts }
+  l.clean_receipts = Array.isArray(l.clean_receipts) ? [...new Set(l.clean_receipts.filter(x => typeof x === 'string'))] : []
+  l.clean_seen_runs = [...new Set([...(Array.isArray(l.clean_seen_runs) ? l.clean_seen_runs.filter(x => typeof x === 'string') : []), ...l.clean_receipts])]
   l.count = Number.isInteger(l.count) && l.count >= 0 ? l.count : 0
   l.iterations = Array.isArray(l.iterations) ? l.iterations.filter(n => Number.isFinite(n)) : []
   if (typeof l.title !== 'string') l.title = ''
@@ -240,10 +250,10 @@ function coerce(l) {
   l.invalid_reason = typeof l.invalid_reason === 'string' ? l.invalid_reason : ''
   l.superseded_by = typeof l.superseded_by === 'string' ? l.superseded_by : ''
   l.invalidated_by = typeof l.invalidated_by === 'string' ? l.invalidated_by : ''
-  // clean_pass_count: exit-code-derived counter (`mark-clean`) of how many times this lesson's gate
-  // passed WITHOUT this lesson's fix being needed again. Missing/corrupt coerces to 0 — read-time
+  // clean_pass_count: observed later PASS runs (`mark-clean`), not evidence that a fix was unnecessary.
+  // Missing/corrupt coerces to 0 — read-time
   // default, no migration needed for pre-existing lessons.
-  l.clean_pass_count = Number.isInteger(l.clean_pass_count) && l.clean_pass_count >= 0 ? l.clean_pass_count : 0
+  l.clean_pass_count = l.clean_receipts.length
   return l
 }
 function ensureDir() { mkdirSync(opt.lessons, { recursive: true }) }
@@ -272,7 +282,7 @@ function withLock(fn) {
     try { mkdirSync(lock) } catch (e) { if (e.code === 'EEXIST') { sleepMs(20); continue } throw e }
     try { return fn() } finally { try { rmdirSync(lock) } catch { /* noop */ } }
   }
-  return fn()   // last resort: proceed unlocked rather than fail the caller's loop
+  throw new Error('lessons lock busy — record not written')
 }
 const nowIso = () => new Date().toISOString()
 const avg = a => a.length ? (a.reduce((x, y) => x + y, 0) / a.length) : null
@@ -287,14 +297,21 @@ if (cmd === 'record') {
   // verdict/log artifact on disk). Unverified records (no --verified) are unaffected — this is a
   // constraint on the VERIFIED claim only, not on record() in general.
   if (opt.verified && !opt.sigFile) usage('refusing --verified record without --signature-file — hand-typed --signature text is not acceptable evidence for a verified lesson (fail-closed, evidence must be a file). Use --signature-file <path> instead, or drop --verified.')
+  let evidence = null
+  if (opt.verified) {
+    try { evidence = lessonVerification(opt.receipt, opt.failureReceipt, opt.sigFile) }
+    catch (e) { usage(e.message) }
+  }
   const msg = withLock(() => {
     const existing = readLesson(s.key)
+    if (evidence && existing?.verification.receipts.some(r => r.run_id === evidence.run_id)) return `duplicate verification ${evidence.id} ignored`
     if (existing) {
       existing.count += 1
       existing.last_seen = nowIso()
       // fail-recurrence: this signature came back, so any "clean since" streak (mark-clean) is no
       // longer true — a recurrence is evidence the lesson is NOT yet stable. Reset to 0.
       existing.clean_pass_count = 0
+      existing.clean_receipts = []
       existing.verified = existing.verified || opt.verified
       if (opt.iterations != null) existing.iterations.push(opt.iterations)
       // Trust fix/title/source updates only from a VERIFIED record (or while the lesson is not yet
@@ -308,6 +325,7 @@ if (cmd === 'record') {
       // emit un-reviewed content under the old accept. Fail closed: any content change forces a fresh
       // `lessons challenge` (and, if re-codified, a fresh `lessons retire`).
       const contentChanged = nextFix !== existing.fix || nextTitle !== existing.title
+      if (contentChanged) existing.verification.receipts = []
       if (existing.challenge && contentChanged) existing.challenge = null
       if (existing.retired && contentChanged) existing.retired = null
       existing.fix = nextFix
@@ -333,6 +351,11 @@ if (cmd === 'record') {
           enumerable: true, writable: true, configurable: true,
         })
       }
+      if (evidence) {
+        existing.verification.receipts.push(sealLessonVerification(existing, lessonContentHash(existing), evidence,
+          { gate: opt.gate, ...(opt.iterations != null ? { iterations: opt.iterations } : {}) }))
+        existing.verification.content_hash = lessonContentHash(existing)
+      }
       writeLesson(existing)
       return `updated ${s.key} (count=${existing.count}, verified=${existing.verified})`
     }
@@ -344,6 +367,9 @@ if (cmd === 'record') {
       gate_history: opt.gate ? { [opt.gate]: { count: 1, first_seen: nowIso(), last_seen: nowIso() } } : {},
       first_seen: nowIso(), last_seen: nowIso(),
     }
+    l.verification = { version: 1, content_hash: lessonContentHash(l),
+      receipts: evidence ? [sealLessonVerification(l, lessonContentHash(l), evidence,
+        { gate: opt.gate, ...(opt.iterations != null ? { iterations: opt.iterations } : {}) })] : [] }
     writeLesson(l)
     return `recorded ${s.key} (verified=${opt.verified})`
   })
@@ -423,17 +449,23 @@ if (cmd === 'invalidate') {
 }
 
 if (cmd === 'mark-clean') {
-  // Exit-code-derived counter: the caller (loop-fix / a gate wrapper) tells us --gate passed CLEANLY
-  // this run, so every lesson attributed to that gate (gate_history) that is still an ACTIVE candidate
-  // (not already invalidated, not already retired) gets its clean_pass_count bumped. `record`'s
-  // fail-recurrence path resets this to 0, so this is genuinely "consecutive clean passes since the
-  // last recurrence" — not a lifetime total.
+  // Count a later stable PASS for an active lesson's verified command. Its verification must start
+  // after the last recorded recurrence/recovery. Lifetime dedup survives streak resets; historical
+  // or out-of-order delivery cannot reconstruct a retirement candidate. This is observational only.
   if (!opt.gate) usage('mark-clean needs --gate "<verify cmd>"')
+  let receipt
+  try { receipt = lessonReceipt(opt.receipt, 'PASS') } catch (e) { usage(e.message) }
   const n = withLock(() => {
     let marked = 0
     for (const l of allLessons()) {
-      if (Object.hasOwn(l.gate_history, opt.gate) && !l.invalid_at && !l.retired) {
-        l.clean_pass_count += 1
+      const recurrence = Math.max(Date.parse(l.last_seen), ...l.verification.receipts.map(r => Date.parse(r.finished_at)))
+      if (l.verified && Number.isFinite(recurrence) && Date.parse(receipt.started_at) > recurrence &&
+          Object.hasOwn(l.gate_history, opt.gate) && !l.invalid_at && !l.retired &&
+          l.verification.receipts.some(r => r.gate === opt.gate && r.command_hash === receipt.command_hash && r.root_hash === receipt.root_hash) &&
+          !l.clean_seen_runs.includes(receipt.run_id) && !l.verification.receipts.some(r => r.run_id === receipt.run_id)) {
+        l.clean_receipts.push(receipt.run_id)
+        l.clean_seen_runs.push(receipt.run_id)
+        l.clean_pass_count = l.clean_receipts.length
         writeLesson(l)
         marked++
       }
@@ -468,7 +500,7 @@ if (cmd === 'recall') {
     process.stderr.write(`lessons: lesson ${s.key} exists but category is "${l.category}", not "${opt.category}"\n`)
     process.exit(0)   // filtered out by --category
   }
-  const a = avg(l.iterations)
+  const a = avg(l.verification.receipts.map(r => r.iterations).filter(n => Number.isInteger(n) && n >= 0))
   const out = [`Past lesson for this failure (${l.verified ? 'verified' : 'UNVERIFIED'}, seen ${l.count}×):`, `- ${l.title}`]
   if (l.fix) out.push(`  what worked before: ${l.fix}`)
   if (a != null) out.push(`  typically converges in ~${a.toFixed(1)} iteration(s)`)
@@ -485,7 +517,7 @@ const CLEAN_RETIRE_THRESHOLD = 5
 if (cmd === 'promote') {
   // The deterministic FLOOR for the candidate pool: verified (ground-truth) + recurring (count>=N).
   const pool = allLessons()
-    .filter(l => l.count >= opt.minCount && (l.verified || opt.includeUnverified))
+    .filter(l => (l.verified ? l.verified_count : opt.includeUnverified ? l.count : 0) >= opt.minCount)
     .sort((a, b) => b.count - a.count)
   // Retired lessons have already been codified into a skill/CLAUDE.md (right but superseded) — they
   // must not re-surface as candidates (listing) nor be re-emitted for codification (--codify).
@@ -512,7 +544,7 @@ if (cmd === 'promote') {
       process.exit(0)
     }
     process.stdout.write(`lessons: ${accepted.length} candidate(s) cleared to codify (write-a-skill / CLAUDE.md):\n`)
-    for (const l of accepted) process.stdout.write(`  ${l.id}  [${l.count}×] ${l.title}${l.fix ? `  → ${l.fix}` : ''}  (accepted by ${l.challenge.by || 'skeptical-evaluator'}${l.challenge.reason ? `: ${l.challenge.reason}` : ''})\n`)
+    for (const l of accepted) process.stdout.write(`  ${l.id}  [${l.verified_count} verified runs] ${l.title}${l.fix ? `  → ${l.fix}` : ''}  (accepted by ${l.challenge.by || 'skeptical-evaluator'}${l.challenge.reason ? `: ${l.challenge.reason}` : ''})\n`)
     process.stdout.write('After folding each into a skill/CLAUDE.md, RETIRE it so it stops re-emitting:\n')
     for (const l of accepted) process.stdout.write(`  lessons retire --id ${l.id} --ref "<skill or CLAUDE.md#section>"\n`)
     process.exit(0)
@@ -564,7 +596,7 @@ if (cmd === 'promote') {
     const status = !l.challenge ? 'UNCHALLENGED — needs skeptical review'
       : l.challenge.verdict === 'accept' ? `ACCEPTED by ${l.challenge.by || 'skeptical-evaluator'}${l.challenge.reason ? `: ${l.challenge.reason}` : ''}`
       : `REJECTED by ${l.challenge.by || 'skeptical-evaluator'}${l.challenge.reason ? `: ${l.challenge.reason}` : ''}`
-    process.stdout.write(`  ${l.id}  [${l.count}×] ${l.title}${l.fix ? `  → ${l.fix}` : ''}\n      [${status}]\n`)
+    process.stdout.write(`  ${l.id}  [${l.verified_count} verified runs] ${l.title}${l.fix ? `  → ${l.fix}` : ''}\n      [${status}]\n`)
     // Per-candidate regression annotation — a SEPARATE line so it is visually distinct from the [N×]
     // recurrence count (AC②). Matches on the lesson's gate_history keys ∩ regressed gates.
     // own-property 검사 필수 — truthy 검사는 위조 원장의 게이트명 "constructor"/"toString"이
@@ -578,7 +610,7 @@ if (cmd === 'promote') {
     // annotation above: a signal for a human/skeptic to act on via `lessons invalidate`, never an
     // automatic delete/invalidate.
     if (l.clean_pass_count >= CLEAN_RETIRE_THRESHOLD) {
-      process.stdout.write(`      [RETIREMENT CANDIDATE: clean_pass_count=${l.clean_pass_count} — gate가 이 교훈 없이도 ${l.clean_pass_count}회 깨끗하게 통과함. superseded/무관해졌다면 "lessons invalidate"로 표시할 것]\n`)
+      process.stdout.write(`      [RETIREMENT CANDIDATE: clean_pass_count=${l.clean_pass_count} — 이 교훈의 최근 재발 이후 같은 gate의 독립 PASS receipt ${l.clean_pass_count}건. 인과적 효과 측정 아님. superseded/무관해졌다면 "lessons invalidate"로 표시할 것]\n`)
     }
   }
   writeRegSection()
@@ -609,15 +641,15 @@ if (cmd === 'stats') {
   // invalidated, or rejected, instead of the raw recurring count that never falls (a permanent
   // false-nag pre-retire). A rejected lesson re-opens automatically if it recurs with changed content
   // (record clears the stale verdict), so excluding it here loses nothing.
-  const openCandidates = all.filter(l => l.verified && l.count >= 2 && !l.retired && !l.invalid_at && !(l.challenge && l.challenge.verdict === 'reject'))
-  const iters = verified.flatMap(l => l.iterations)
+  const openCandidates = all.filter(l => l.verified && l.verified_count >= 3 && !l.retired && !l.invalid_at && !(l.challenge && l.challenge.verdict === 'reject'))
+  const iters = verified.flatMap(l => l.verification.receipts.map(r => r.iterations).filter(n => Number.isInteger(n) && n >= 0))
   const a = avg(iters)
   process.stdout.write('=== lessons stats ===\n')
   process.stdout.write(`total=${all.length} verified=${verified.length} recurring(>=2x)=${recurring.length} retired=${retired.length} invalidated=${invalidated.length} open_candidates=${openCandidates.length} total_recurrences=${all.reduce((x, l) => x + l.count, 0)}\n`)
   process.stdout.write(`by_category: engineering=${byCategory.engineering} domain=${byCategory.domain}\n`)
   process.stdout.write(`avg_iterations_to_green=${a == null ? 'n/a' : a.toFixed(2)} (over ${iters.length} verified convergence(s))\n`)
   const top = all.slice().sort((a, b) => b.count - a.count).slice(0, 5)
-  if (top.length) { process.stdout.write('top recurring blockers:\n'); for (const l of top) process.stdout.write(`  [${l.count}×]${l.verified ? '' : ' (unverified)'} ${l.title}\n`) }
+  if (top.length) { process.stdout.write('top recurring blockers:\n'); for (const l of top) process.stdout.write(`  [${l.verified_count} verified runs]${l.verified ? '' : ' (unverified)'} ${l.title}\n`) }
   process.stdout.write('=== end stats ===\n')
   process.exit(0)
 }

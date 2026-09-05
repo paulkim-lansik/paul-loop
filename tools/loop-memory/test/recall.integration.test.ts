@@ -1,8 +1,9 @@
 import { and, eq } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createLoopDb } from '../src/client';
+import { createLoopDb } from './helpers/postgres-fixture';
 import { stubEmbedder } from '../src/embedding';
-import { addNote, recall, recordRecall, softDeleteNote } from '../src/ops';
+import { recall, recordRecall, softDeleteNote } from '../src/ops';
+import { addNote } from './helpers/postgres-fixture';
 import { memoryOp } from '../src/schema/memory';
 
 // 통합 테스트(docker pgvector 필요): 4-op + pgvector recall + soft-delete 를 end-to-end로 증명.
@@ -44,7 +45,7 @@ describe('loop-memory recall (pgvector)', () => {
       .from(memoryOp)
       .where(and(eq(memoryOp.noteId, note.id), eq(memoryOp.op, 'RECALL')));
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.payload).toEqual({ distance: 0.123, corpus: 'lessons' });
+    expect(rows[0]?.payload).toEqual({ distance: 0.123, corpus: note.corpus });
     // 이슈 #35: source를 안 넘기면 payload에 그 키 자체가 없어야 한다(오도하는 기본값 금지) — jsonb
     // 왕복(JSON.stringify가 undefined 값을 드롭)까지 거친 뒤의 실제 컬럼 값으로 확인한다.
     expect(Object.hasOwn((rows[0]?.payload ?? {}) as object, 'source')).toBe(false);
@@ -68,7 +69,7 @@ describe('loop-memory recall (pgvector)', () => {
       .from(memoryOp)
       .where(and(eq(memoryOp.noteId, note.id), eq(memoryOp.op, 'RECALL')));
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.payload).toEqual({ distance: 0.045, corpus: 'knowledge', source: 'hook' });
+    expect(rows[0]?.payload).toEqual({ distance: 0.045, corpus: note.corpus, source: 'hook' });
 
     await softDeleteNote(db, note.id, 'test cleanup');
   });

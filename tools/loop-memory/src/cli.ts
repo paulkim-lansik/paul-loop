@@ -1,66 +1,15 @@
 #!/usr/bin/env node
 /**
- * loop-memory CLI — the deterministic wiring the Claude Code hooks call (방향 A, 훅 기반 구동).
- *
- * `claude -p`(헤드리스 에이전트, M5)를 쓰지 않으므로, 의미 recall은 *훅*이 이 CLI를 호출해 굴린다:
- *   SessionStart  → `graduate` : 검증된 파일 교훈(.loop/lessons)을 pgvector 의미층으로 졸업(멱등).
- *   UserPromptSubmit → `recall` : 현재 프롬프트/실패를 임베드해 의미적으로 가까운 교훈 top-k를 회상.
- *
- * 임베더: 키(OPENAI_API_KEY / GEMINI_API_KEY — plugin hooks inject these from userConfig; a
- * standalone CLI invocation reads them straight from the shell, no .env file involved)가 있으면
- * `apiEmbedder`, 없으면 기본은 **거부(exit 1)** — 스토어가 실 임베더로 채워졌는데 stub으로 질의/졸업하면
- * 결과가 비어 있는 게 아니라 조용히 틀린 값이 되기 때문. 명시적으로 stub을 쓰려면
- * `--allow-stub`(오프라인 수동 배선 점검 전용, 경고를 낸다).
- * ⚠️ graduate와 recall은 **같은 임베더**여야 거리가 유의미하다(stub 저장 + API 질의 = 쓰레기).
- * 그래서 훅은 *키가 있을 때만* 이 CLI를 부른다 — pgvector 스토어는 실 임베더로만 채워진다.
- *
- * Commands:
- *   loop-memory graduate      [--lessons <dir>] [--knowledge <adrDir>] [--context <file>]
- *                             [--research <dir>] [--design <dir>] [--allow-stub]
- *   loop-memory recall        (--query "<text>" | --query-file <f>) [--k N] [--json] [--decay] [--allow-stub]
- *                             --decay: lessons 코퍼스만 decay 랭킹(오래되고 최근 재발 없는 교훈은 감쇠)
- *                             으로 재정렬 — knowledge 코퍼스는 영향 없음(파일 count/lastSeen 개념이 없다).
- *   loop-memory consolidate   [--json]   — sleep-time consolidation 배치(BAC/paul-loop #12, read-only):
- *                             dedup 병합 후보 + 승격 사전 채점 신호를 한 번에 스캔해 보고한다. 실시간
- *                             훅 경로가 아니라 사람/주기 실행 전용 — 아무것도 쓰지 않는다(자동 병합·삭제
- *                             ·승격 없음, 후보만 표시).
- *   loop-memory stats         [--json]   — 읽기 전용 스토어 요약(임베더/키 불필요). loop-doctor가 호출.
- *   loop-memory liveness      [--json] [--runs N] [--root DIR] [--assert]
- *                             — 훅이 *실제로 발동했는지*를 loop-engine 런 원장(.loop/runs/*.jsonl)의
- *                             `memory.recall`/`memory.graduate` 이벤트로 사후 확인한다(paul-loop 이슈
- *                             #35). DB·임베더·키 전부 불필요(순수 파일시스템) — 스토어가 죽어 있어도
- *                             답이 나온다. `--assert`는 스캔 창 안에 recall 발동이 **한 건도 없으면**
- *                             exit 1(= "한 번도 안 켜졌다" 상태만 실패로 본다 — 자기게이팅/무매치는
- *                             정상 발동이다). ⚠️ 원장은 gitignore된 위조 가능한 로컬 텔레메트리다
- *                             (loop-engine run-ledger와 같은 신뢰 경계) — 관측용이지 게이트 입력 아님.
- *   loop-memory record-recall --hits <json>  — 훅이 실제 주입 확정한 노트를 memory_op에 RECALL 행으로
- *                             남긴다(계측, BAC-586). --hits는 [{id, distance?, corpus?}, ...] JSON
- *                             배열. 임베더 불필요(키 없이도 동작) — 이미 확정된 값을 그대로 적을 뿐.
- *
- * knowledge 코퍼스는 4개 소스(BAC-355) — ADR(kb:adr)·CONTEXT.md 글로서리(kb:context)·
- * docs/research(kb:research)·docs/product/design(kb:design). 각자 독립 플래그, 안 주면 그 소스는
- * 건너뛴다. recall은 **코퍼스별로 분리**해 낸다(ADR-0033 §5): lessons(tag=lesson)와 knowledge(4개
- * kb:* 태그 합집합)를 각자 top-k 질의해 `{lessons, knowledge}`로 반환 — 단일 top-k는 한 코퍼스가
- * 독식한다. 거리컷오프·untrusted 프레이밍은 호출자(훅)가 코퍼스별로 적용한다.
- *
- * Exit: 0 ok · 2 usage · 1 runtime(연결/임베드 실패). 호출자(훅)는 nonzero/빈 출력을 "회상 없음"으로
- * 보고 그냥 진행한다(fail-open) — 메모리 인프라가 없거나 죽어도 세션을 절대 막지 않는다.
- *
- * `LOOP_MEMORY_SOURCE`(paul-loop 이슈 #35): graduate/record-recall이 쓰는 memory_op 행의 `payload.source`
- * 로 그대로 남는 호출 출처 태그. hooks/*.mjs가 이 CLI를 spawn할 때만 `hook`으로 심는다 — 수동 CLI
- * 호출·테스트는 안 심으므로 생략(payload에 키 자체가 안 남는다).
- * ⚠️ 이건 **자기신고(self-reported) 관측용 메타데이터**일 뿐, 보안/위조방지 신호가 아니다. 셸 접근이
- * 있는 누구나(사람이 디버깅 중이든, CI 스크립트든, 테스트든, 다른 에이전트든, 손으로
- * `LOOP_MEMORY_SOURCE=hook`을 export해두고 잊었든) `node dist/cli.js graduate ...`를 직접 돌려 이
- * env를 손으로 심으면 실제 훅 발동과 바이트 단위로 구분 불가능한 행이 남는다 — DB를 직접 질의하는 것과
- * 같은 신뢰 수준이다. 이 값이 있고 없고가 증명하는 건 "훅 코드 경로에서 왔다고 명시적으로 표시됨" 대
- * "표시 안 됨" 뿐이다. "실제 라이브 세션에서 훅이 발동했다"는 더 강한 주장은 이걸로 증명되지 않는다.
- * 그 축은 이제 `liveness`(위)가 맡는다 — 훅 발동마다 항상 남는 원장 기록이라 사후에 독립 확인이
- * 가능하다. 다만 그 원장도 같은 신뢰 경계(gitignore·위조 가능)이므로, 강화되는 건 *증거의 존재*이지
- * *증거의 위조 불가능성*이 아니다.
+ * Optional memory CLI. CLI/hooks share runtime-env precedence, repository ownership, model identity,
+ * signing, privacy and evaluation write guards. See HARDENING.md and MIGRATION-0.7.md.
+ * graduate: canonical source synchronization; recall: sanitized query (prefer --query-stdin).
+ * stats/consolidate: authenticated reads; record-recall: minimal observed telemetry; liveness: local logs.
+ * --json emits schema_version:1/command/outcome for graduate/recall/errors. Lock/partial is not synced.
+ * Exit 0 preserves hook compatibility, 1 runtime/configuration, 2 usage. Hooks preserve sessions but
+ * distinguish an error from an honest empty result. No-key and malformed output never become success.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, realpathSync, existsSync } from 'node:fs';
+import { join, relative, resolve, isAbsolute } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { createLoopDb } from './client';
 import { type Embedder, stubEmbedder } from './embedding';
@@ -85,6 +34,29 @@ import {
 import { formatLiveness, RECALL_TYPE, summarizeLiveness } from './liveness';
 import { recordRecall } from './ops';
 import { signingKeyFromEnv } from './provenance';
+import { bindStore, repositoryIdentity, MemoryError, memoryAccess } from './store';
+import { runtimeEnv } from '../hooks/lib/runtime-env.mjs';
+import { sanitizeMemory } from '../hooks/lib/privacy.mjs';
+
+const runtime = runtimeEnv(process.cwd());
+Object.assign(process.env, runtime.env);
+async function openBound(embeddingId = '') {
+  const repository = repositoryIdentity(process.cwd());
+  const signingKey = signingKeyFromEnv();
+  if (!signingKey) throw new MemoryError('signing_key_missing');
+  const connection = createLoopDb();
+  try {
+    await bindStore(connection.db, connection.pool, { ...repository, embeddingId, signingKey });
+    return connection;
+  } catch (e) { await connection.pool.end(); throw e; }
+}
+function sourcePath(value: string) {
+  const root = realpathSync(process.cwd());
+  const target = realpathSync(resolve(root, value));
+  const rel = relative(root, target);
+  if (rel.startsWith('..') || isAbsolute(rel)) throw new MemoryError('source_outside_repository');
+  return target;
+}
 
 /** 키가 있으면 실 임베더. 없으면 기본은 거부(fail closed) — 스토어가 실 임베더로 채워졌는데 stub으로
  *  질의/졸업하면 결과가 *비어 있는* 게 아니라 *조용히 틀린* 값이 되기 때문(ADR-0062 결정 9). 명시적
@@ -93,29 +65,23 @@ import { signingKeyFromEnv } from './provenance';
 function pickEmbedder(allowStub: boolean): Embedder {
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
   const hasGemini = !!process.env.GEMINI_API_KEY;
+  const requested = process.env.LOOP_EMBED_PROVIDER;
+  if (requested && requested !== 'openai' && requested !== 'gemini') throw new MemoryError('embedding_provider_invalid');
+  if ((requested === 'openai' && !hasOpenAI) || (requested === 'gemini' && !hasGemini)) throw new MemoryError('embedding_provider_key_missing');
   if (!hasOpenAI && !hasGemini) {
     if (!allowStub) {
       process.stderr.write(
         'loop-memory: no embedding API key (OPENAI_API_KEY/GEMINI_API_KEY) — refusing to run with a stub embedder against a store built with a real one (results would look valid but be meaningless). Pass --allow-stub to force it anyway.\n',
       );
-      process.exit(1);
+      throw new MemoryError('embedding_key_missing');
     }
     process.stderr.write(
       'loop-memory: no embedding API key (OPENAI_API_KEY/GEMINI_API_KEY) — using stub (--allow-stub); recall is NOT semantic.\n',
     );
     return stubEmbedder();
   }
-  // LOOP_EMBED_PROVIDER는 *그 프로바이더의 키가 있을 때만* 존중한다. 스테일/오타 값(또는 키와 불일치)이면
-  // 실제 존재하는 키로 추론 — 안 그러면 키가 멀쩡한데 키없는 프로바이더로 빌드돼 throw→훅이 영영 no-op.
-  const requested = process.env.LOOP_EMBED_PROVIDER;
-  const provider: EmbedProvider =
-    requested === 'openai' && hasOpenAI
-      ? 'openai'
-      : requested === 'gemini' && hasGemini
-        ? 'gemini'
-        : hasOpenAI
-          ? 'openai'
-          : 'gemini';
+  if (!requested && hasOpenAI && hasGemini) throw new MemoryError('embedding_provider_ambiguous');
+  const provider: EmbedProvider = requested as EmbedProvider || (hasOpenAI ? 'openai' : 'gemini');
   return apiEmbedder({ provider });
 }
 
@@ -125,6 +91,7 @@ function memoizeEmbedder(base: Embedder): Embedder {
   const cache = new Map<string, Promise<number[]>>();
   return {
     dimensions: base.dimensions,
+    identity: base.identity,
     embed(text: string): Promise<number[]> {
       let p = cache.get(text);
       if (!p) {
@@ -162,6 +129,7 @@ const opt = {
   design: '', // docs/product/design 디렉토리(BAC-355). 비면 graduate가 건너뛴다.
   query: '',
   queryFile: '',
+  queryStdin: false,
   k: 5,
   json: false,
   allowStub: false,
@@ -210,6 +178,9 @@ for (let i = 0; i < argv.length; i++) {
     case '--query':
       opt.query = val();
       break;
+    case '--query-stdin':
+      opt.queryStdin = true;
+      break;
     case '--query-file':
       opt.queryFile = val();
       break;
@@ -252,7 +223,7 @@ for (let i = 0; i < argv.length; i++) {
 /** stats: 관측 전용 — pgvector 스토어의 현재 상태를 요약한다(임베더/키 불필요, 읽기만). loop-doctor가
  *  raw SQL 대신 이걸 호출한다. graduate/recall과 달리 embedder를 만들지 않는다(키 없어도 동작). */
 async function runStats(json: boolean): Promise<void> {
-  const { db, pool } = createLoopDb();
+  const { db, pool } = await openBound();
   try {
     const notesRes = await db.execute(sql`
       select count(*)::int as total,
@@ -303,7 +274,7 @@ async function runStats(json: boolean): Promise<void> {
     );
     process.stdout.write(`  corpora (active): ${fmtCorpora}\n`);
     process.stdout.write(`  ops: ${fmtOps}\n`);
-    process.stdout.write(`  last graduate op: ${lastOpAt ?? '(never)'}\n`);
+    process.stdout.write(`  last memory op: ${lastOpAt ?? '(never)'}\n`);
   } finally {
     await pool.end();
   }
@@ -321,7 +292,7 @@ async function runRecordRecall(hitsJson: string, source: string | undefined): Pr
     process.exit(2);
   }
   if (!Array.isArray(hits) || hits.length === 0) return;
-  const { db, pool } = createLoopDb();
+  const { db, pool } = await openBound();
   try {
     for (const h of hits as Array<{ id?: string; distance?: number; corpus?: string }>) {
       if (!h?.id) continue;
@@ -339,7 +310,7 @@ async function runRecordRecall(hitsJson: string, source: string | undefined): Pr
  *  write-path provenance(BAC-619) — `signingKey` 없으면 lesson 코퍼스를 fail-closed로 아무것도 못
  *  읽어(consolidateLessonMemory 참고) duplicates/promotionSignals 둘 다 항상 빈 배열로 나온다. */
 async function runConsolidate(json: boolean, signingKey: string | undefined): Promise<void> {
-  const { db, pool } = createLoopDb();
+  const { db, pool } = await openBound();
   try {
     const report: ConsolidationReport = await consolidateLessonMemory(db, signingKey);
     if (json) {
@@ -371,6 +342,7 @@ async function runConsolidate(json: boolean, signingKey: string | undefined): Pr
 }
 
 async function main(): Promise<void> {
+  if (cmd !== 'liveness') memoryAccess(cmd === 'graduate' || cmd === 'record-recall');
   if (cmd === 'stats') {
     await runStats(opt.json);
     return;
@@ -396,14 +368,8 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === 'consolidate') {
-    // write-path provenance(BAC-619) — graduate/recall과 같은 경고: 없으면 lesson 코퍼스 읽기가
-    // fail-closed로 항상 빈 결과다(runConsolidate 참고). knowledge 코퍼스 개념은 consolidate에 없다.
     const signingKey = signingKeyFromEnv();
-    if (!signingKey) {
-      process.stderr.write(
-        'loop-memory: LOOP_MEMORY_SIGNING_KEY not set — consolidate returns empty (fail-closed, BAC-619 write-path provenance)\n',
-      );
-    }
+    if (!signingKey) throw new MemoryError('signing_key_missing');
     await runConsolidate(opt.json, signingKey);
     return;
   }
@@ -414,77 +380,46 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   const embedder = pickEmbedder(opt.allowStub);
-  // write-path provenance(BAC-619) — LOOP_MEMORY_SIGNING_KEY 없으면 graduate는 서명 없이 쓰고(쓰기는
-  // 막지 않음), recall은 아무것도 검증할 수 없어 lesson 코퍼스가 fail-closed로 항상 빈 결과다(README
-  // "위협모델"). knowledge 코퍼스(ADR/CONTEXT/research/design)는 이 secret과 무관 — 계속 정상 동작.
   const signingKey = signingKeyFromEnv();
-  if (!signingKey) {
-    process.stderr.write(
-      'loop-memory: LOOP_MEMORY_SIGNING_KEY not set — lesson writes are unsigned and lesson recall returns 0 (fail-closed, BAC-619 write-path provenance; knowledge corpus unaffected)\n',
-    );
-  }
-  const { db, pool } = createLoopDb();
+  if (!signingKey) throw new MemoryError('signing_key_missing');
+  const { db, pool } = await openBound(embedder.identity);
   try {
     if (cmd === 'graduate') {
-      const r = await graduateLessons(db, pool, embedder, opt.lessons, signingKey, source);
-      // locked를 "0 added, 0 skipped"와 구분해 찍는다(BAC-372, printKnowledgeResult와 동일 이유) —
-      // 동시 졸업 중이라 이번엔 아무 것도 안 봤다는 뜻이지 "이미 최신"이 아니다.
-      if (r.locked) {
-        process.stdout.write(
-          'loop-memory: lessons — skipped (동시 졸업 진행 중, 다음 세션이 이어감)\n',
-        );
-      } else {
-        process.stdout.write(
-          `loop-memory: graduated ${r.added} new lesson(s), ${r.skipped} already present, ${r.stubbed} stubbed (retired), ${r.purged} purged (rejected/no-longer-verified)\n`,
-        );
+      const repository = repositoryIdentity(process.cwd());
+      if (!repository.writable) {
+        process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome: 'skipped', reason: 'worktree_read_only' }) + '\n');
+        return;
       }
-      // knowledge 코퍼스(BAC-355: ADR·CONTEXT·research·design 4개 소스, 각자 독립 플래그가 주어질
-      // 때만). 전부 멱등(증분 재임베드) — syncKnowledge 미러-싱크 위에 얹혀 있다.
-      if (opt.knowledge) {
-        const k = await graduateKnowledge(db, pool, embedder, opt.knowledge, source);
-        printKnowledgeResult('ADR', k);
-      }
-      if (opt.context) {
-        const c = await graduateContext(db, pool, embedder, opt.context, source);
-        printKnowledgeResult('CONTEXT', c);
-      }
-      if (opt.research) {
-        const r2 = await graduateMarkdownDir(
-          db,
-          pool,
-          embedder,
-          opt.research,
-          RESEARCH_TAG,
-          opt.research,
-          source,
-        );
-        printKnowledgeResult('research', r2);
-        // silent truncation 금지(BAC-355 AC) — .md 아닌 항목(HTML 리포트 등)은 사유와 함께 드러낸다.
-        for (const s of r2.skipped) {
-          process.stdout.write(`loop-memory: knowledge (research) skip ${s.file} — ${s.reason}\n`);
-        }
-      }
-      if (opt.design) {
-        const d = await graduateMarkdownDir(
-          db,
-          pool,
-          embedder,
-          opt.design,
-          DESIGN_TAG,
-          opt.design,
-          source,
-        );
-        printKnowledgeResult('design', d);
-        for (const s of d.skipped) {
-          process.stdout.write(`loop-memory: knowledge (design) skip ${s.file} — ${s.reason}\n`);
+      const canonicalLessons = join(repository.current, '.loop', 'lessons');
+      if ((existsSync(opt.lessons) ? realpathSync(opt.lessons) : resolve(opt.lessons)) !== canonicalLessons) throw new MemoryError('lesson_source_not_canonical');
+      const r = existsSync(canonicalLessons)
+        ? await graduateLessons(db, pool, embedder, sourcePath(canonicalLessons), signingKey, source)
+        : { added: 0, updated: 0, skipped: 0, stubbed: 0, purged: 0, missing: true };
+      const knowledge: Record<string, KnowledgeSyncResult> = {};
+      if (opt.knowledge) knowledge.adr = await graduateKnowledge(db, pool, embedder, sourcePath(opt.knowledge), source);
+      if (opt.context) knowledge.context = await graduateContext(db, pool, embedder, sourcePath(opt.context), source);
+      if (opt.research) knowledge.research = await graduateMarkdownDir(db, pool, embedder, sourcePath(opt.research), RESEARCH_TAG, 'research', source);
+      if (opt.design) knowledge.design = await graduateMarkdownDir(db, pool, embedder, sourcePath(opt.design), DESIGN_TAG, 'design', source);
+      const results = [r, ...Object.values(knowledge)];
+      const locked = results.filter(result => 'locked' in result && result.locked).length;
+      const missing = 'missing' in r;
+      const omitted = Object.values(knowledge).some(result => ('skipped' in result && Array.isArray(result.skipped) && result.skipped.length > 0) || result.incomplete);
+      const outcome = locked === results.length ? 'locked' : locked || missing || omitted ? 'partial' : 'synced';
+      if (opt.json) process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome,
+        reason: locked ? 'lock_busy' : missing ? 'lesson_source_missing' : 'ok', lessons: r, knowledge }) + '\n');
+      else {
+        process.stdout.write(`loop-memory: ${outcome} — graduated ${r.added} new lesson(s), ${r.updated} updated, ${r.skipped} already present, ${r.stubbed} stubbed, ${r.purged} purged\n`);
+        for (const [name, value] of Object.entries(knowledge)) {
+          printKnowledgeResult(name, value);
+          if ('skipped' in value && Array.isArray(value.skipped)) for (const item of value.skipped) process.stdout.write(`  skipped ${sanitizeMemory(item.file)}: ${item.reason}\n`);
         }
       }
       return;
     }
     // recall — 코퍼스별 분리(ADR-0033 §5). 두 질의는 독립이라 병렬로 돌린다.
-    let q = opt.query;
+    let q = opt.queryStdin ? readFileSync(0, 'utf8') : opt.query;
     if (!q && opt.queryFile) q = readFileSync(opt.queryFile, 'utf8');
-    q = q.trim();
+    q = sanitizeMemory(q, 2048).trim();
     if (!q) {
       process.stderr.write('loop-memory: recall needs --query or --query-file\n');
       process.exit(2);
@@ -502,7 +437,7 @@ async function main(): Promise<void> {
     ]);
     if (opt.json) {
       // 신 shape: 훅이 코퍼스별 거리컷오프·프레이밍을 하도록 두 배열을 구분해 낸다.
-      process.stdout.write(`${JSON.stringify({ lessons, knowledge })}\n`);
+      process.stdout.write(`${JSON.stringify({ schema_version: 1, command: 'recall', outcome: 'ok', lessons, knowledge })}\n`);
       return;
     }
     const fmt = (h: { distance: number; content: string }) =>
@@ -523,6 +458,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((e: unknown) => {
-  process.stderr.write(`loop-memory: ${e instanceof Error ? e.message : String(e)}\n`);
+  const reason = e instanceof MemoryError ? e.code : 'runtime_error';
+  if (opt.json) process.stdout.write(JSON.stringify({ schema_version: 1, command: cmd, outcome: 'error', reason }) + '\n');
+  process.stderr.write(`loop-memory: ${reason}\n`);
   process.exit(1);
 });

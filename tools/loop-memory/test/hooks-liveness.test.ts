@@ -64,13 +64,18 @@ function writeFakeCli(mode = 'hit') {
     [
       "const mode = process.env.CLI_MODE || 'hit';",
       "if (mode === 'fail') process.exit(3);",
+      "if (mode === 'privacy' && process.argv[2] === 'recall') { const q = require('node:fs').readFileSync(0, 'utf8'); if (!process.argv.includes('--query-stdin') || process.argv.includes('--query') || /sensitive@example.com|fixture-prompt-secret/.test(q)) process.exit(3); }",
+      "if (mode === 'malformed') { process.stdout.write('not JSON'); process.exit(0); }",
+      "if (mode === 'locked') { process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome: 'locked' })); process.exit(0); }",
+      "if (mode === 'partial') { process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome: 'partial' })); process.exit(0); }",
       "if (process.argv[2] === 'recall') {",
       "  const far = { lessons: [{ id: 'l1', content: 'a far lesson', distance: 0.9 }], knowledge: [] };",
       "  const near = { lessons: [{ id: 'l1', content: 'a recalled lesson', distance: 0.1 }], knowledge: [] };",
       "  const empty = { lessons: [], knowledge: [] };",
       "  const body = mode === 'far' ? far : mode === 'empty' ? empty : near;",
-      "  process.stdout.write(JSON.stringify(body) + '\\n');",
+      "  process.stdout.write(JSON.stringify({ schema_version: 1, command: 'recall', outcome: 'ok', ...body }) + '\\n');",
       '}',
+      "if (process.argv[2] === 'graduate') process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome: 'synced' }));",
       'process.exit(0);',
     ].join('\n'),
   );
@@ -526,4 +531,34 @@ describe('summarizeLiveness — what a loop-doctor-style consumer asserts on', (
     expect(summarizeLiveness(projectDir, { runs: 1 }).runsScanned).toBe(1);
     expect(summarizeLiveness(projectDir).runsScanned).toBe(2);
   });
+});
+
+
+describe('typed outcomes and frozen hook semantics', () => {
+  it('malformed successful stdout is error, never no_match or synced', () => {
+    runRecall({ GEMINI_API_KEY: 'fixture', CLI_MODE: 'malformed' });
+    expect(only('memory.recall').payload).toMatchObject({ outcome: 'error', reason: 'cli_protocol_error' });
+    runGraduate({ GEMINI_API_KEY: 'fixture', CLI_MODE: 'malformed' });
+    expect(only('memory.graduate').payload).toMatchObject({ outcome: 'error', reason: 'cli_protocol_error' });
+  });
+  it('graduate distinguishes lock contention and partial work from synced', () => {
+    runGraduate({ GEMINI_API_KEY: 'fixture', CLI_MODE: 'locked' });
+    expect(only('memory.graduate').payload).toMatchObject({ outcome: 'skipped', reason: 'lock_busy' });
+  });
+  it('graduate reports partial', () => {
+    runGraduate({ GEMINI_API_KEY: 'fixture', CLI_MODE: 'partial' });
+    expect(only('memory.graduate').payload).toMatchObject({ outcome: 'partial', reason: 'partial_sync' });
+  });
+  it('frozen recall injects but writes no liveness/debug files; off injects nothing', () => {
+    const r = runRecall({ GEMINI_API_KEY: 'fixture', LOOP_LEARNING_OFF: '1', LOOP_MEMORY_RECALL_ONLY: '1', LOOP_RECALL_DEBUG: '1' });
+    expect(r.stdout).toContain('a recalled lesson');expect(existsSync(runsDir())).toBe(false);
+    expect(existsSync(join(dataDir, 'recall-debug.log'))).toBe(false);
+    const off=runRecall({ GEMINI_API_KEY: 'fixture', LOOP_MEMORY_OFF: '1' });expect(off.stdout).toBe('');
+  });
+});
+
+it('passes sanitized prompt on stdin, not argv', () => {
+  const r=runRecall({GEMINI_API_KEY:'fixture',CLI_MODE:'privacy'}, {session_id:SESSION,user_input:'please recall sensitive@example.com token=fixture-prompt-secret'});
+  expect(r.stdout).toContain('a recalled lesson');
+  expect(only('memory.recall').payload.outcome).toBe('injected');
 });

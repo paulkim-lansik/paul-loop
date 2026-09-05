@@ -1,20 +1,22 @@
+import { lessonJSON } from './helpers/postgres-fixture';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createLoopDb } from '../src/client';
+import { createLoopDb } from './helpers/postgres-fixture';
 import { stubEmbedder } from '../src/embedding';
 import { LOCK_NAMESPACE } from '../src/knowledge';
 import { graduateLessons, LESSON_TAG, lessonStub, recallLessons } from '../src/lessons';
-import { addNote, softDeleteNote } from '../src/ops';
+import { softDeleteNote } from '../src/ops';
+import { addNote } from './helpers/postgres-fixture';
 import { signContent } from '../src/provenance';
 import { memoryNote, memoryOp } from '../src/schema/memory';
 
 // 통합 테스트(docker pgvector 필요): lessons → loop-memory 졸업을 end-to-end로 증명한다.
 // 검증된 교훈만 올라가고(검증기=천장), 재실행은 멱등이며, 의미검색으로 다시 건져진다.
-const { db, pool } = createLoopDb();
+const { db, pool } = createLoopDb(() => SIGNING_KEY);
 const embedder = stubEmbedder();
 // write-path provenance(BAC-619) — 이 테스트 전용 고정 secret. 실 운영 secret과 무관(테스트는 항상
 // stubEmbedder처럼 결정적·오프라인 값을 쓴다).
@@ -31,7 +33,7 @@ beforeAll(() => {
   // 검증된 교훈 — 졸업 대상.
   writeFileSync(
     join(dir, `${verifiedId}.json`),
-    JSON.stringify({
+    lessonJSON({
       id: verifiedId,
       title: 'withTenant 누락 시 RLS 격리 테스트 RED',
       fix: 'withTenant()로 트랜잭션 스코프에 app.current_tenant_id 주입',
@@ -43,7 +45,7 @@ beforeAll(() => {
   // 미검증 교훈 — 졸업 금지(verified !== true).
   writeFileSync(
     join(dir, `${unverifiedId}.json`),
-    JSON.stringify({ id: unverifiedId, title: '자기보고 수정(미검증)', verified: false }),
+    lessonJSON({ id: unverifiedId, title: '자기보고 수정(미검증)', verified: false }),
   );
   // 손상 파일 — 조용히 무시.
   writeFileSync(join(dir, 'corrupt.json'), '{ not valid json');
@@ -72,13 +74,13 @@ describe('lessons → loop-memory graduation', () => {
   it('graduates only verified lessons, idempotently, and recalls them semantically', async () => {
     // 1) 검증된 1건만 졸업.
     const first = await graduateLessons(db, pool, embedder, dir, SIGNING_KEY);
-    expect(first).toEqual({ added: 1, skipped: 0, stubbed: 0, purged: 0 });
+    expect(first).toEqual({ added: 1, updated: 0, skipped: 0, stubbed: 0, purged: 0 });
     expect(await countByKeyword(`lesson:${verifiedId}`)).toBe(1);
     expect(await countByKeyword(`lesson:${unverifiedId}`)).toBe(0); // 미검증은 안 올라간다
 
     // 2) 멱등 — 재실행해도 중복 노트를 만들지 않는다.
     const second = await graduateLessons(db, pool, embedder, dir, SIGNING_KEY);
-    expect(second).toEqual({ added: 0, skipped: 1, stubbed: 0, purged: 0 });
+    expect(second).toEqual({ added: 0, updated: 0, skipped: 1, stubbed: 0, purged: 0 });
     expect(await countByKeyword(`lesson:${verifiedId}`)).toBe(1);
 
     // 3) 의미검색 — 시그니처로 질의해도(정확한 content 아님) 졸업된 교훈이 잡힌다.
@@ -130,7 +132,7 @@ describe('graduateLessons — 회수(reap) 패스, 이미 졸업된 노트를 �
   const writeRetired = (ref: string) =>
     writeFileSync(
       join(reapDir, `${retiredId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: retiredId,
         title: '퇴역 예정 교훈',
         fix: '이제는 CLAUDE.md와 상충하는 낡은 지시',
@@ -147,7 +149,7 @@ describe('graduateLessons — 회수(reap) 패스, 이미 졸업된 노트를 �
     // 처음엔 아직 퇴역/기각 전 — 정상 졸업되도록 verified만 켠 상태로 시작.
     writeFileSync(
       join(reapDir, `${retiredId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: retiredId,
         title: '퇴역 예정 교훈',
         fix: '이제는 CLAUDE.md와 상충하는 낡은 지시',
@@ -158,7 +160,7 @@ describe('graduateLessons — 회수(reap) 패스, 이미 졸업된 노트를 �
     );
     writeFileSync(
       join(reapDir, `${rejectedId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: rejectedId,
         title: '기각 예정 교훈',
         fix: '회의적 평가가 reject할 예정',
@@ -187,7 +189,7 @@ describe('graduateLessons — 회수(reap) 패스, 이미 졸업된 노트를 �
     const preDir = mkdtempSync(join(tmpdir(), 'loop-lessons-pre-'));
     writeFileSync(
       join(preDir, `${preRetiredId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: preRetiredId,
         title: '이미 퇴역된 채로 등장',
         verified: true,
@@ -196,7 +198,7 @@ describe('graduateLessons — 회수(reap) 패스, 이미 졸업된 노트를 �
     );
     writeFileSync(
       join(preDir, `${preRejectedId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: preRejectedId,
         title: '이미 기각된 채로 등장',
         verified: true,
@@ -256,7 +258,7 @@ describe('graduateLessons — 회수(reap) 패스, 이미 졸업된 노트를 �
 
     writeFileSync(
       join(reapDir, `${rejectedId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: rejectedId,
         title: '기각 예정 교훈',
         fix: '회의적 평가가 reject할 예정',
@@ -296,7 +298,7 @@ describe('graduateLessons — 동시 졸업 advisory-lock 가드(BAC-372)', () =
     const lockDir = mkdtempSync(join(tmpdir(), 'loop-lessons-lock-'));
     writeFileSync(
       join(lockDir, `${lockLessonId}.json`),
-      JSON.stringify({ id: lockLessonId, title: '잠금 테스트 전용 교훈', verified: true }),
+      lessonJSON({ id: lockLessonId, title: '잠금 테스트 전용 교훈', verified: true }),
     );
 
     try {
@@ -313,7 +315,7 @@ describe('graduateLessons — 동시 졸업 advisory-lock 가드(BAC-372)', () =
           expect(rows[0]?.locked).toBe(true); // 선점 성공 — "다른 세션이 먼저 락을 쥔 상태"를 실제로 재현
 
           const result = await graduateLessons(db, pool, embedder, lockDir, SIGNING_KEY);
-          expect(result).toEqual({ added: 0, skipped: 0, stubbed: 0, purged: 0, locked: true });
+          expect(result).toEqual({ added: 0, updated: 0, skipped: 0, stubbed: 0, purged: 0, locked: true });
           expect(await countByKeyword(lockKey)).toBe(before); // 정말 아무 것도 안 씀(skip, 부분수행 아님)
 
           await client.query('select pg_advisory_unlock($1, hashtext($2))', [
@@ -332,7 +334,7 @@ describe('graduateLessons — 동시 졸업 advisory-lock 가드(BAC-372)', () =
       // 락 해제 후 재호출하면 정상 진행된다 — mirror: knowledge.integration.test.ts의 syncKnowledge
       // 락 테스트에도 있는 동일한 post-unlock 재확인(전용 픽스처라 결과 shape까지 정확히 단정 가능).
       const after = await graduateLessons(db, pool, embedder, lockDir, SIGNING_KEY);
-      expect(after).toEqual({ added: 1, skipped: 0, stubbed: 0, purged: 0 });
+      expect(after).toEqual({ added: 1, updated: 0, skipped: 0, stubbed: 0, purged: 0 });
     } finally {
       const mine = await db
         .select({ id: memoryNote.id })
@@ -413,7 +415,7 @@ describe('recallLessons — write-path provenance 방어(BAC-619, SMSR arXiv:260
     const dir2 = mkdtempSync(join(tmpdir(), 'loop-lessons-provenance-'));
     writeFileSync(
       join(dir2, `${id}.json`),
-      JSON.stringify({
+      lessonJSON({
         id,
         title: '정상 졸업 대조군',
         fix: 'signingKey로 서명된 정상 경로',
@@ -465,7 +467,7 @@ describe('graduateLessons — source 태그가 memory_op에 남는다(issue #35,
     taggedDir = mkdtempSync(join(tmpdir(), 'loop-lessons-source-tagged-'));
     writeFileSync(
       join(taggedDir, `${taggedId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: taggedId,
         title: 'source 태그 대상 교훈',
         fix: 'graduateLessons(..., source) 스레딩 확인',
@@ -477,7 +479,7 @@ describe('graduateLessons — source 태그가 memory_op에 남는다(issue #35,
     untaggedDir = mkdtempSync(join(tmpdir(), 'loop-lessons-source-untagged-'));
     writeFileSync(
       join(untaggedDir, `${untaggedId}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: untaggedId,
         title: 'source 미지정 교훈',
         fix: 'source 생략 시 payload에 키가 없어야 함',

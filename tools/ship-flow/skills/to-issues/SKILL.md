@@ -3,6 +3,8 @@ name: to-issues
 description: Break a plan, spec, or PRD into independently-grabbable issues on the project issue tracker using tracer-bullet vertical slices. Use when user wants to convert a plan into issues, create implementation tickets, or break down work into issues.
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # To Issues
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -23,8 +25,9 @@ drafting anything, work out which one:
 - Check the repo for its own tracker-integration doc, if it has one — that's the source of truth for
   the exact conventions this repo expects (required fields, labels, project/team assignment, how
   dependency links work).
-- If neither exists, ask the user which tracker this repo uses and how issues should be filed there
-  before continuing. Don't guess.
+- Otherwise inspect the request, available tracker tools, and repository references for evidence.
+  Draft the useful breakdown while resolving the destination. Ask only for a required unresolved
+  publishing target or convention; do not run setup or create a tracker project merely to draft.
 
 The worked example throughout this skill (the issue-creation call, the `blockedBy` dependency link,
 the `ENG-123`-style identifier) uses Linear, because that's what this skill was originally built and
@@ -47,7 +50,10 @@ If you have not already explored the codebase, do so to understand the current s
 
 Break the plan into **tracer bullet** issues. Each issue is a thin vertical slice that cuts through ALL integration layers end-to-end, NOT a horizontal slice of one layer.
 
-Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an architectural decision or a design review. AFK slices can be implemented and merged without human interaction. Prefer AFK over HITL where possible.
+Slices may be 'HITL' or 'AFK'. HITL slices need a reserved human decision, such as product direction.
+AFK slices can be implemented, verified, and prepared for PR review without intermediate interaction
+within their authorization. AFK never authorizes merge, release, deploy, or send; human approval for
+those actions and all verifier gates remain. Prefer AFK for routine reversible implementation.
 
 <vertical-slice-rules>
 - Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
@@ -58,7 +64,7 @@ Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an
 
 **Wide refactors are the exception to vertical slicing.** A **wide refactor** is one mechanical change — rename a column, retype a shared symbol — whose **blast radius** fans across the whole codebase, so a single edit breaks thousands of call sites at once and no vertical slice can land green. Don't force it into a tracer bullet; sequence it as **expand–contract**. First expand: add the new form beside the old so nothing breaks. Then migrate the call sites over in batches sized by blast radius (per package, per directory), each batch its own issue blocked by the expand, keeping the verify command green batch to batch because the old form still exists. Finally contract: delete the old form once no caller remains, in an issue blocked by every migrate batch.
 
-### 4. Quiz the user
+### 4. Review the concrete breakdown
 
 Present the proposed breakdown as a numbered list. For each slice, show:
 
@@ -67,29 +73,32 @@ Present the proposed breakdown as a numbered list. For each slice, show:
 - **Blocked by**: which other slices (if any) must complete first
 - **User stories covered**: which user stories this addresses (if the source material has them)
 
-Ask the user:
+Reuse an already accepted breakdown. Ask only about material unresolved choices, for example:
 
 - Does the granularity feel right? (too coarse / too fine)
 - Are the dependency relationships correct?
 - Should any slices be merged or split further?
 - Are the correct slices marked as HITL and AFK?
 
-Iterate until the user approves the breakdown.
+Do not reopen settled choices. A draft-only request ends with the breakdown. If publishing is
+authorized and the breakdown fits the agreed scope, continue; otherwise present the finished issues
+and exact destination before asking for missing authorization. Approval of a draft is not an
+unstated permission to publish, merge, or implement it.
 
 ### 5. Resolve the target project
 
 Every issue you create belongs to a project (Linear's Project is the worked example; other trackers
 may call it an epic or a milestone). **Resolve which one before you create anything**, in this order:
 
-1. **The project of the PRD this plan came from.** If the source is a PRD, `to-prd` created a project
-   for it and reported the identifier — use that one. If you were handed the PRD document rather than
-   the identifier, read the document's parent project off the tracker.
-2. **What the user named**, if they specified a project.
+1. **What the user named**, if they specified a project.
+2. **The project of the PRD this plan came from**, if it was published. A draft PRD may have no
+   project; do not assume `to-prd` created one. Read a published document's parent when needed.
 3. **The repo's standing project for non-PRD work**, if its tracker-integration doc names one — the
    home for bugfixes, ops hygiene, and chores that have no PRD behind them.
 
-**If none of the three resolves, stop and ask the user.** Do not file the issues with no project, and
-do not fall back to whichever long-lived project happens to exist. Both failures look like success at
+**If the tracker requires a project and none resolves, ask before publishing.** A tracker with no
+project concept or an explicitly authorized ungrouped destination does not need an invented project.
+Do not fall back to whichever long-lived project happens to exist. Such failures look like success at
 the moment of filing and are tedious to unpick later: project-less issues become indistinguishable
 from ones that were *meant* to be unfiled, and a default catch-all silently accumulates work its name
 doesn't describe.

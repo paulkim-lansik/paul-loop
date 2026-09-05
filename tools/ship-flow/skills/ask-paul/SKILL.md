@@ -4,6 +4,8 @@ description: Ask which skill or flow fits your situation. A router over the skil
 disable-model-invocation: true
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Ask Paul
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from

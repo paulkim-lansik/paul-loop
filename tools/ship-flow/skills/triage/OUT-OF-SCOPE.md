@@ -78,12 +78,14 @@ During triage (Step 1: Gather context), read all files in `.out-of-scope/`. When
 The maintainer may:
 
 - **Confirm** — the new issue gets added to the existing file's "Prior requests" list, then closed
-- **Reconsider** — the out-of-scope file gets deleted or updated, and the issue proceeds through normal triage
+- **Reconsider** — append a dated superseding decision and rationale, preserving the prior rejection;
+  proceed through normal triage within the authorized state/comment/close scope
 - **Disagree** — the issues are related but distinct, proceed with normal triage
 
 ## When to write to `.out-of-scope/`
 
-Only when an **enhancement** (not a bug) is rejected as `wontfix`. The flow:
+Only when an **enhancement** (not a bug) is rejected as `wontfix` and the relevant local-write and
+external-update actions are authorized. A proposed rejection is review material until then. The flow:
 
 1. Maintainer decides a feature request is out of scope
 2. Check if a matching `.out-of-scope/` file already exists
@@ -96,6 +98,6 @@ Only when an **enhancement** (not a bug) is rejected as `wontfix`. The flow:
 
 If the maintainer changes their mind about a previously rejected concept:
 
-- Delete the `.out-of-scope/` file
+- Preserve the prior record and append/link the superseding decision; do not erase decision history
 - The skill does not need to reopen old issues — they're historical records
 - The new issue that triggered the reconsideration proceeds through normal triage

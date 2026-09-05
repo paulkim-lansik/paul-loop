@@ -4,6 +4,8 @@ description: Turn loop outcomes into a verified-lessons memory — record what f
 context: fork
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # retrospect — the learning layer (verified lessons)
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -30,7 +32,7 @@ docs/lessons.md (in the plugin, not this repo).
 
 ## The one rule
 
-**Only the verifier decides what is a lesson.** Record a lesson as `--verified` ONLY when ground
+**Only verifier evidence can mark a lesson verified.** Record a lesson as `--verified` ONLY when ground
 truth (tests/build/the eval gate passing) confirmed the fix — never on your own say-so. Only verified
 lessons are recalled as authoritative; only recurring ones get promoted. This keeps hallucinated
 "fixes" out of the memory and out of your guidelines.
@@ -49,7 +51,9 @@ verified lesson when it converges. Nothing else to do — just point `--lessons`
   If a past run solved this exact failure, start from that, then re-verify (don't trust the memory —
   the verifier still decides).
 - **Record after green:** once the verifier passes, `{{pluginBinPrefix}}lessons.sh record --signature-file <first-failure>
-  --fix "<what worked>" --source <loop-fix|diagnose|review> --iterations <N> --verified --gate "<verify cmd>" --lessons <dir>`.
+  --fix "<what worked>" --source <loop-fix|diagnose|review> --iterations <N> --verified --receipt <passing-receipt.json> --failure-receipt <failing-receipt.json> --gate "<verify cmd>" --lessons <dir>`.
+  Use the actual matching failure→success receipts emitted by the verifier; never fabricate them.
+  Missing receipts mean the verified record is blocked, not permission to substitute a prose claim.
   `--gate` (e.g. this repo's verify command) attributes the recurrence to that verify gate so
   `promote --runs` can annotate the candidate when the gate regresses — without it, regressions only
   show in their own section.
@@ -98,10 +102,9 @@ into `.loop/lessons` by hand, using the same recording flow as any other domain 
   --source <tool-name> --category domain --lessons <dir>
 ```
 
-Mark it `--verified` immediately only if a human directly confirmed the insight; anything merely
-observed, inferred, or model-suggested still has to clear the same recurring + `lessons challenge` bar
-as any engineering lesson before it's trusted. This is a per-repo/per-owner convenience — there's no
-plugin-standard tooling for it, and a repo without such a tool can skip this section entirely.
+A human-confirmed domain decision belongs in the decision archive or an unverified note. Human
+approval does not replace verifier receipts for `--verified`. A legitimate goal change can supersede
+an earlier ADR without being presented as an empirically verified fix.
 
 ## Retro & promotion (where self-improvement compounds)
 
@@ -145,12 +148,10 @@ decided by what kind of knowledge it is:
 - **Still ambiguous?** Default to the **more narrowly triggered** option. A CLAUDE.md guideline is read
   on every session (constant context cost); a skill only loads when its trigger fires. When in doubt,
   prefer the one that costs nothing until it's actually needed.
-- **`write-a-skill` not available in this repo** (check `ls <skills-dir>/` — e.g. this plugin's own
-  `tools/ship-flow/skills/` has no `write-a-skill` skill as of this writing): a skill-shaped candidate
-  either waits for `write-a-skill` to be added, or — only if it truly can't survive as prose — becomes a
-  CLAUDE.md guideline as a fallback. Don't force a procedure into CLAUDE.md by writing it as a numbered
-  step list; a numbered list inside a guideline is the tell that the destination was chosen wrong, and
-  it should move to skill form once `write-a-skill` lands.
+- **Skill-shaped candidates:** use the bundled `ship-flow:write-a-skill` when callable, or follow its
+  source procedure directly within the authorized edit scope. An unavailable runtime invocation does
+  not mean the source skill is absent. Do not force a procedure into CLAUDE.md or install tooling just
+  to satisfy a stale reference.
 
 ### After `write-a-skill` writes a new skill — discoverability check
 
@@ -159,15 +160,15 @@ router ever picks is dead weight. If this repo's `write-a-skill` skill already r
 itself (read its own SKILL.md to confirm), trust it and skip this; otherwise run it by hand before
 calling the promotion done:
 
-- **Trigger-first `description:`.** It opens with *when* the skill fires ("Use when...", "Trigger this
-  when...") — not a bare category label ("Handles X", "X utilities"). A category label can't be matched
-  against a request; a trigger clause can.
+- **Capability and trigger in `description:`.** Match `write-a-skill`: describe what it does, then
+  "Use when..." with specific situations. A bare category label does not supply a routing trigger.
 - **No routing collision.** Skim sibling skills' `description:` fields for overlapping trigger language.
   Two skills that both plausibly fire on the same phrasing make routing ambiguous — narrow the wording
   (or merge the skills) until each has a distinct trigger.
-- **No path escape.** Every file the skill reads or writes stays under its own skill directory
-  (`<skills-dir>/<skill-name>/...`) — no `../` reaching into a sibling skill's directory or the skills
-  root.
+- **Declared paths and scope.** Bundle skill-specific resources under its directory; shared bundled
+  contracts such as `../AUTHORIZATION.md` are valid references. Consumer source/config/docs reads and
+  writes must be explicit procedure inputs/actions within caller scope. Reject undeclared traversal
+  or writes outside that scope, not every legitimate relative reference.
 - **Valid frontmatter.** `name` and `description` are both present, `name` matches the directory name,
   and the YAML actually parses (a stray unescaped colon or unclosed quote silently breaks discovery
   without erroring loudly).
@@ -205,8 +206,8 @@ started as a genuine standing rule can calcify into a checklist-shaped procedure
 Retired lessons and `challenge --verdict reject`ed candidates are settled — "let's revisit that" on its
 own doesn't reopen them. A reopen request must:
 
-- **Cite the id.** Name the exact lesson id (or ADR number) under discussion — a vague appeal to "that
-  decision" doesn't identify a target.
+- **Resolve the id.** The agent finds the exact lesson id or ADR from available context; do not
+  require the user to memorize it. Ask only if multiple plausible targets remain.
 - **Bring new evidence.** Something the original verdict didn't have: a new failure signature, a
   verified counterexample, or a recurrence recorded with a genuinely updated `--fix`/`--title` — not
   just a repeat of the same text. `lessons record` only clears a settled `challenge`/`retired` when the
@@ -219,26 +220,23 @@ own doesn't reopen them. A reopen request must:
   superseded id in the new entry's `--fix` text. A reversal that belongs at the ADR level gets a new ADR
   that references the old one, not a rewrite of it.
 
-A reopen missing an id or missing new evidence is an automatic reject in the skeptical pass — the same
+These evidence rules govern empirical lesson claims. A user-authorized goal/priority change can create
+a superseding ADR with the new rationale and link to the old decision; it is not automatically a
+verified lesson and does not waive implementation/verifier/merge/deploy/send gates.
+
+An empirical lesson reopen missing a resolved id or new evidence is rejected in the skeptical pass — the same
 challenge gate as any promotion candidate. Verify it actually landed, too: after recording the new
 evidence, run `lessons stats`/`lessons promote` and confirm the id is back among the open candidates —
 don't take the act of re-recording alone as proof the lesson reopened.
 
 ## Tracker close-out — the issue must end up owned
 
-Before reporting, check the tracked issue(s) this session finished. **If an issue is in a done state
-with no assignee, set the assignee to the human driving this session** — the account the tracker is
-authenticated as (Linear's `me` is the worked example), never an agent identity, never left empty.
-
-This is a backstop for the claim in `ship-feature` step 0, not a replacement for it. It exists because
-the two ways an issue reaches Done have different failure modes: closing it by hand is easy to do
-without touching the assignee, and letting merge automation close it never sets one at all. Either way
-the issue lands in Done owned by nobody, which afterwards reads as "nobody did this" rather than "this
-was done" — and by then no one remembers which session it belonged to.
-
-Only touch issues this session actually worked. A blanket sweep over every unassigned done issue in
-the tracker would attribute other people's work to this session's user; if you notice a backlog of
-them, say so in the report and leave the decision to the user.
+When tracker close-out is authorized, inspect only issues this session worked. Reuse the established
+human owner from the caller or integration doc and preserve an existing assignee. An authenticated
+`me` account can be a service/shared account; do not infer that it identifies the user. If an issue is
+Done and unassigned, set the known authorized human owner only within scope; otherwise return the
+proposed assignment or missing-identity gap. A retrospect/read request alone does not authorize tracker
+updates. Do not sweep unrelated done issues or publish lesson summaries as unsolicited comments.
 
 ## Reporting
 

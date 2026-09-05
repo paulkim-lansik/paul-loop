@@ -21,8 +21,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 [ -f "$CHECK" ] || fail "check-skill-refs.mjs not found at $CHECK"
 
 DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
-INJECTED=""
-trap 'rm -rf "$DIR"; [ -n "$INJECTED" ] && git -C "$ROOT" checkout -- "$INJECTED" 2>/dev/null; true' EXIT
+trap 'rm -rf "$DIR"' EXIT
 
 # 픽스처 하나를 재사용한다 — 케이스는 순차라 host 본문만 갈아끼우면 되고, 케이스마다 트리를
 # 새로 만들면 그 I/O가 스위트 전체의 타이밍 예산을 갉아먹는다(같은 러너 안의 타이밍 민감 테스트에
@@ -99,11 +98,59 @@ mkfixture "$DIR/fx" 'This skill explains things and hands off to nobody.'
 [ "$(run "$DIR/fx")" = "2" ] || fail "zero extracted references must be fatal — a broken extractor also finds zero"
 echo "PASS: extracting zero references from real documents is fatal, not a pass"
 
-# ── 11) RED-first on the real tree: 실제 스킬 파일에 죽은 위임을 심으면 이 레포가 RED가 된다 ─
-INJECTED="tools/ship-flow/skills/ship-feature/SKILL.md"
-printf '\nCall the Skill tool with "__skill_refs_redproof__".\n' >> "$ROOT/$INJECTED"
-rc="$(run "$ROOT")"
-git -C "$ROOT" checkout -- "$INJECTED" 2>/dev/null; INJECTED=""
-[ "$rc" = "1" ] || fail "a dead handoff injected into a real skill must turn this repo RED, got exit $rc"
-[ "$(run "$ROOT")" = "0" ] || fail "the repo must be green again once the injected handoff is removed"
-echo "PASS: a dead handoff injected into a real skill turns this repo RED, and green again once removed"
+# ── 11) RED-first with the real source bytes in an isolated copy, never in the shared checkout ─
+# git checkout cleanup used to discard every uncommitted ship-feature edit (integration-1). Copy
+# the discovered provider inputs instead; preserve names, empty skill dirs and Markdown so both
+# the scanner and checker still operate on the actual repository shape and current source bytes.
+node --input-type=module - "$CHECK" "$ROOT" "$DIR/real-source" <<'JS' || fail "real-source fixture failed"
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+const [checker, inputRoot, fixture] = process.argv.slice(2);
+const root = resolve(inputRoot);
+const { findProviders, collect } = await import(pathToFileURL(resolve(checker)).href);
+const before = new Map();
+function copyFile(source) {
+  const bytes = readFileSync(source), target = join(fixture, relative(root, source));
+  before.set(source, bytes);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, bytes);
+}
+function copyMarkdownTree(source) {
+  mkdirSync(join(fixture, relative(root, source)), { recursive: true });
+  let entries;
+  try { entries = readdirSync(source); } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  for (const name of entries) {
+    const path = join(source, name);
+    if (statSync(path).isDirectory()) copyMarkdownTree(path);
+    else if (name.endsWith('.md')) copyFile(path);
+  }
+}
+for (const provider of findProviders(root)) {
+  if (provider.name) copyFile(join(provider.dir, '.claude-plugin/plugin.json'));
+  for (const sub of ['skills', 'agents', 'workflows']) copyMarkdownTree(join(provider.dir, sub));
+}
+const actual = collect(root), copied = collect(fixture);
+assert.deepEqual([...copied.known].sort(), [...actual.known].sort());
+assert.deepEqual([...copied.namespaces].sort(), [...actual.namespaces].sort());
+assert.deepEqual(copied.files.map(p => relative(fixture, p)).sort(), actual.files.map(p => relative(root, p)).sort());
+function runFixture(expected) {
+  const result = spawnSync(process.execPath, [resolve(checker), '--root', fixture], { encoding: 'utf8' });
+  assert.equal(result.status, expected, result.stderr || result.error?.message);
+  return result;
+}
+runFixture(0);
+const path = join(fixture, 'tools/ship-flow/skills/ship-feature/SKILL.md');
+const original = readFileSync(path);
+writeFileSync(path, Buffer.concat([original, Buffer.from('\nCall the Skill tool with "__skill_refs_redproof__".\n')]));
+assert.match(runFixture(1).stderr, /__skill_refs_redproof__/);
+writeFileSync(path, original);
+runFixture(0);
+for (const [path, bytes] of before) assert.deepEqual(readFileSync(path), bytes, `source changed during fixture test: ${path}`);
+JS
+echo "PASS: real-source fixture fails on a dead handoff, recovers, and preserves shared source bytes"

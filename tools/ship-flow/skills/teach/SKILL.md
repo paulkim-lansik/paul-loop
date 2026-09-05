@@ -4,6 +4,8 @@ description: Teach the user a new skill or concept, within this workspace.
 disable-model-invocation: true
 argument-hint: "What would you like to learn about?"
 ---
+
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
 > `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
 > questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,

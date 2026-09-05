@@ -1,10 +1,11 @@
+import { lessonJSON } from './helpers/postgres-fixture';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createLoopDb } from '../src/client';
+import { createLoopDb } from './helpers/postgres-fixture';
 import type { Embedder } from '../src/embedding';
 import {
   consolidateLessonMemory,
@@ -14,7 +15,8 @@ import {
   recallLessonsDecayed,
   scorePromotionCandidates,
 } from '../src/lessons';
-import { addNote, softDeleteNote } from '../src/ops';
+import { softDeleteNote } from '../src/ops';
+import { addNote } from './helpers/postgres-fixture';
 import { signContent } from '../src/provenance';
 import { memoryNote } from '../src/schema/memory';
 
@@ -22,7 +24,7 @@ import { memoryNote } from '../src/schema/memory';
 // 증명한다. 임베딩을 손으로 정확히 구성해(코사인 거리를 정확한 값으로 통제) DB에 직접 addNote로 심는다
 // — lessons.integration.test.ts처럼 graduateLessons를 거치지 않고 write-path provenance만 직접 서명해
 // "정상 졸업된 것처럼" 만든다(같은 패턴, 그 파일의 "write-path provenance" describe 참고).
-const { db, pool } = createLoopDb();
+const { db, pool } = createLoopDb(() => SIGNING_KEY);
 const DIM = 384;
 const SIGNING_KEY = 'bac-618-consolidate-test-signing-key'; // gitleaks:allow — fixed test fixture
 
@@ -59,6 +61,7 @@ async function plantLessonNote(
 // 호출될 일이 없다(호출되면 바로 throw해서 그 사실을 드러낸다).
 const stubUnused: Embedder = {
   dimensions: DIM,
+  identity: "stub:character-hash:v1:384",
   embed: () => Promise.reject(new Error('embed() should not be called — embedding was precomputed')),
   embedBatch: () =>
     Promise.reject(new Error('embedBatch() should not be called — embedding was precomputed')),
@@ -239,6 +242,7 @@ describe('recallLessonsDecayed — decay 랭킹(#2, BAC/paul-loop #12)', () => {
   // (stubEmbedder의 문자 해시 기반 근사 유사도에 기대면 raw distance를 손으로 예측하기 어렵다).
   const fixedQueryEmbedder: Embedder = {
     dimensions: DIM,
+  identity: "stub:character-hash:v1:384",
     embed: () => Promise.resolve(basis(40)),
     embedBatch: (texts) => Promise.resolve(texts.map(() => basis(40))),
   };
@@ -261,7 +265,7 @@ describe('recallLessonsDecayed — decay 랭킹(#2, BAC/paul-loop #12)', () => {
 
     writeFileSync(
       join(dir, `${idOld}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: idOld,
         title: '오래되고 최근 재발 없는 교훈',
         verified: true,
@@ -271,7 +275,7 @@ describe('recallLessonsDecayed — decay 랭킹(#2, BAC/paul-loop #12)', () => {
     );
     writeFileSync(
       join(dir, `${idRecent}.json`),
-      JSON.stringify({
+      lessonJSON({
         id: idRecent,
         title: '방금 재발한 교훈',
         verified: true,
@@ -325,6 +329,7 @@ describe('recallLessonsDecayed — 후보풀 확대(Math.max(k*4,20))가 raw top
 
   const fixedQueryEmbedder: Embedder = {
     dimensions: DIM,
+  identity: "stub:character-hash:v1:384",
     embed: () => Promise.resolve(basis(50)),
     embedBatch: (texts) => Promise.resolve(texts.map(() => basis(50))),
   };
@@ -339,13 +344,13 @@ describe('recallLessonsDecayed — 후보풀 확대(Math.max(k*4,20))가 raw top
       decoyNoteIds.push(noteId);
       writeFileSync(
         join(dir, `${id}.json`),
-        JSON.stringify({ id, title: `decoy ${i}`, verified: true, count: 0, last_seen: oldLastSeen }),
+        lessonJSON({ id, title: `decoy ${i}`, verified: true, count: 0, last_seen: oldLastSeen }),
       );
     }
     noteFar = await plantLessonNote(idFar, mix(50, 51, 0.85), 'pool far fixture — 방금 재발');
     writeFileSync(
       join(dir, `${idFar}.json`),
-      JSON.stringify({ id: idFar, title: 'far recent', verified: true, count: 0, last_seen: now.toISOString() }),
+      lessonJSON({ id: idFar, title: 'far recent', verified: true, count: 0, last_seen: now.toISOString() }),
     );
   });
 
