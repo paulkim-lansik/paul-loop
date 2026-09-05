@@ -57,6 +57,7 @@ try {
       row.event_evidence=links.map(e=>({...e,path:`${c.id}/.eval-state/native/stdout.jsonl`}));
       row.artifact_refs=Object.keys(c.files).filter(p=>existsSync(join(workspace,p))).map(p=>`${c.id}/${p}`);
       if(target.completed && target.exit===0 && !target.fault && opt['defer-grade']!=='true'){
+        try {
         const graded=await gradeTrial({workspace,stateDir,caseData:c,output:join(stateDir,'grader'),executable:opt['grader-cli']||cli,model:opt['grader-model']||opt.model,effort:opt['grader-effort']||opt.effort,budgetPath,timeoutMs:graderMs});
         row.grader={grade_status:graded.grade_status,duration_ms:graded.run.duration_ms,configured_timeout_ms:graded.run.configured_timeout_ms,effective_timeout_ms:graded.run.effective_timeout_ms,exit:graded.run.exit,completed:graded.run.completed,independence:graded.independence,model:graded.run.observed_models.length===1?graded.run.observed_models[0]:null,trace_ref:`${c.id}/.eval-state/grader/stdout.jsonl`,grade_ref:`${c.id}/.eval-state/grader/grade.json`};
         // Preserve independent measurements without upgrading a partial grade to PASS.
@@ -64,12 +65,28 @@ try {
         // Draft measurements are not promoted without reviewed, verified metric/event links.
         // Their raw values remain in grade.json for an independent auditor to assess.
         row.metrics=null;
+        } catch(e) {
+          const error=String(e.message),path=`${c.id}/.eval-state/grader/error.json`;
+          row.grader_failure={stage:'independent-grading',error,path};
+          row.reason=`independent grading incomplete: ${error}`;
+          save(join(stateDir,'grader/error.json'),row.grader_failure);
+          row.trace_refs.push(path);
+        }
       } else row.reason=target.completed && opt['defer-grade']==='true'?'completed target; independent grading explicitly deferred for trace inspection':`native target incomplete: ${target.fault||'nonzero/missing completion'}`;
       save(join(stateDir,'after-git-status.txt'),git('status','--porcelain=v1').toString());
-      cpSync(workspace,caseOut,{recursive:true,filter:p=>!relative(workspace,p).split('/').includes('.git')});
-      row.trace_refs.push(`${c.id}/.eval-state/native/target.json`,`${c.id}/.eval-state/native/stdout.jsonl`,`${c.id}/.eval-state/native/rollout.jsonl`,`${c.id}/.eval-state/before.json`,`${c.id}/.eval-state/after.json`);
     }catch(e){row.status='incomplete';row.reason=String(e.message);save(join(base,c.id+'-error.json'),{error:row.reason});row.trace_refs.push(c.id+'-error.json');}
-    finally{rmSync(workspace,{recursive:true,force:true});}
+    finally{
+      // Retain completed target evidence even when grading or later collection fails.
+      // Delete the disposable source only after its evidence snapshot succeeds.
+      let retained=false;
+      try{
+        cpSync(workspace,caseOut,{recursive:true,filter:p=>!relative(workspace,p).split('/').includes('.git')});retained=true;
+        for(const p of ['native/target.json','native/stdout.jsonl','native/rollout.jsonl','before.json','after.json'])if(existsSync(join(caseOut,'.eval-state',p)))row.trace_refs.push(`${c.id}/.eval-state/${p}`);
+      }catch(e){
+        row.status='incomplete';row.reason+=`; snapshot retention failed: ${e.message}; original workspace retained`;
+        const p=c.id+'-retention-error.json';save(join(base,p),{error:String(e.message),retained_workspace:workspace});row.trace_refs.push(p);
+      }finally{if(retained)rmSync(workspace,{recursive:true,force:true});}
+    }
     results.push(row);console.log(JSON.stringify({case_id:c.id,status:row.status,target:row.target,metrics:row.metrics,reason:row.reason}));
   }
   const report={schema_version:'native-eval/1',runtime:opt.runtime,runtime_version:version,variant:opt.variant,source:opt.source||null,configured_model:opt.model||null,configured_effort:opt.effort||null,dataset_hash:sha(bytes),k:1,memory:'off',cost_usd:null,limits:{case_ms:caseMs,grader_ms:graderMs,target_ms:1500000},target_duration_ms:results.reduce((n,r)=>n+(r.target.duration_ms||0),0),status:'INCOMPLETE',calibration:{status:'pending-independent-review'},results,evidence:paths(base).map(p=>({path:relative(base,p),sha256:sha(readFileSync(p))})),summary:{accepted:0,trials:cases.length,pass_at_k:0,pass_caret_k:0,cost_per_accepted_task:null}};

@@ -2,7 +2,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { sha, runtimeModels } from './adapter.mjs';
+import { sha, runtimeModels, parseJsonl } from './adapter.mjs';
 import { semanticEvents, matchingReceipt, draftErrors } from './proof.mjs';
 import { parseGrade, finalText } from './grader.mjs';
 import { MAX_CASE_MS } from './process.mjs';
@@ -51,6 +51,13 @@ export function validateReport(report,cases,{evidenceRoot,datasetHash}={}){
       check(row.target.duration_ms<=report.limits?.case_ms||['timeout','deadline_exceeded'].includes(row.target.fault),`${label}: deadline`);
       check(row.status!=='not_run',`${label}: executed trial labelled not_run`);
       if(target){
+        const rowTrial=row.target.trial_id??null,nativeTrial=target.trial_id??null;
+        check(rowTrial===nativeTrial,`${label}: trial ID mismatch with native target`);
+        if(nativeTrial===null)check(row.target.trial_id_status==='unavailable',`${label}: missing trial ID must be explicitly unavailable`);
+        else check(typeof nativeTrial==='string'&&nativeTrial.length>0,`${label}: invalid native trial ID`);
+        const traceErrors=[...parseJsonl(trace).errors.map(e=>({stream:'stdout',...e})),...parseJsonl(refs.get(rolloutPath)||'').errors.map(e=>({stream:'rollout',...e}))];
+        if(traceErrors.length)check(row.target.completed===false&&target.completed===false&&target.trace_status==='incomplete'&&Array.isArray(target.parse_errors)&&target.parse_errors.length===traceErrors.length,`${label}: malformed native trace cannot establish completion`);
+        if(target.parse_errors!==undefined)check(same(target.parse_errors,traceErrors),`${label}: native parse diagnostics drift`);
         check(target.exit===row.target.exit&&target.fault===row.target.fault&&target.duration_ms===row.target.duration_ms,`${label}: target facts differ from native trace`);
         if(row.target.completed!==undefined)check(target.completed===row.target.completed,`${label}: target completion drift`);
         if(target.configured_timeout_ms!==undefined){

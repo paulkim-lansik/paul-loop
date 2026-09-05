@@ -7,7 +7,16 @@ import { createHash } from 'node:crypto';
 import { bounded, caseBound, DEFAULT_CASE_MS } from './process.mjs';
 export const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 export function save(path, data) { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, typeof data === 'string' ? data : JSON.stringify(data, null, 2) + '\n', { mode: 0o600 }); }
-export const jsonl = text => text.split('\n').filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+export function parseJsonl(text) {
+  const events=[],errors=[];
+  text.split('\n').forEach((line,i)=>{if(!line.trim())return;try{events.push(JSON.parse(line));}catch(e){errors.push({line:i+1,error:e.message});}});
+  return {events,errors};
+}
+export function jsonl(text) {
+  const parsed=parseJsonl(text);
+  if(parsed.errors.length)throw Error('malformed JSONL at lines '+parsed.errors.map(e=>e.line).join(','));
+  return parsed.events;
+}
 function files(root) { return existsSync(root) ? readdirSync(root, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(join(root, e.name)) : e.isFile() ? [join(root, e.name)] : []) : []; }
 export function safeEnv() {
   const names = new Set(['PATH','HOME','TMPDIR','TMP','TEMP','SHELL','USER','LOGNAME','LANG','LC_ALL','LC_CTYPE','TERM','SystemRoot']);
@@ -15,8 +24,10 @@ export function safeEnv() {
   return { ...env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', LOOP_MEMORY_OFF: '1', LOOP_LEARNING_OFF: '1', LOOP_MEMORY_RECALL_ONLY: '1' };
 }
 export function runtimeModels(runtime, stdout, rollout) {
-  const observed = runtime === 'codex' ? jsonl(rollout).filter(e => e.type === 'turn_context').map(e => e.payload?.model)
-    : jsonl(stdout).flatMap(e => e.type === 'system' && e.subtype === 'init' ? [e.model] : e.type === 'assistant' ? [e.message?.model] : []);
+  const stdoutParsed=parseJsonl(stdout),rolloutParsed=parseJsonl(rollout);
+  if(stdoutParsed.errors.length||rolloutParsed.errors.length)return [];
+  const observed = runtime === 'codex' ? rolloutParsed.events.filter(e => e.type === 'turn_context').map(e => e.payload?.model)
+    : stdoutParsed.events.flatMap(e => e.type === 'system' && e.subtype === 'init' ? [e.model] : e.type === 'assistant' ? [e.message?.model] : []);
   return [...new Set(observed.filter(v => typeof v === 'string' && v.length))];
 }
 // Supported auth reuse: a private, short-lived Codex auth.json copy. Never copy global
@@ -53,9 +64,12 @@ export async function runNative({ runtime, executable = runtime, workspace, outp
     const rollout = runtime === 'codex' ? files(join(profile, 'sessions')).filter(p => p.endsWith('.jsonl')).map(p => readFileSync(p, 'utf8')).join('\n') : '';
     save(join(output, 'stdout.jsonl'), result.stdout); save(join(output, 'stderr.txt'), result.stderr); save(join(output, 'rollout.jsonl'), rollout);
     const models = runtimeModels(runtime, result.stdout, rollout);
-    const events = jsonl(result.stdout);
-    const completed = runtime === 'codex' ? events.some(e => e.type === 'turn.completed') && !events.some(e => e.type === 'turn.failed') : events.some(e => e.type === 'result' && !e.is_error && e.subtype === 'success');
-    const metadata = { runtime, workspace, trial_id: trialId, configured_model: model || null, configured_effort: effort || null, observed_models: models, model_status: models.length === 1 && completed ? 'observed' : 'incomplete', command: [executable, ...args], exit: result.exit, fault: result.fault, duration_ms: result.duration_ms, configured_timeout_ms: result.configured_timeout_ms, effective_timeout_ms: result.effective_timeout_ms, cleanup: result.cleanup, completed, setup, cost_usd: null, evidence: ['stdout.jsonl', 'stderr.txt', 'rollout.jsonl'].map(path => ({ path, sha256: sha(readFileSync(join(output, path))) })) };
+    const stdoutParsed=parseJsonl(result.stdout),rolloutParsed=parseJsonl(rollout);
+    const parse_errors=[...stdoutParsed.errors.map(e=>({stream:'stdout',...e})),...rolloutParsed.errors.map(e=>({stream:'rollout',...e}))];
+    const events = stdoutParsed.events;
+    const completion_observed = runtime === 'codex' ? events.some(e => e.type === 'turn.completed') && !events.some(e => e.type === 'turn.failed') : events.some(e => e.type === 'result' && !e.is_error && e.subtype === 'success');
+    const completed=completion_observed&&parse_errors.length===0;
+    const metadata = { runtime, workspace, trial_id: trialId, configured_model: model || null, configured_effort: effort || null, observed_models: models, model_status: models.length === 1 && completed ? 'observed' : 'incomplete', command: [executable, ...args], exit: result.exit, fault: result.fault || (parse_errors.length ? 'malformed_trace' : null), trace_status: completed ? 'complete' : 'incomplete', parse_errors, completion_observed, duration_ms: result.duration_ms, configured_timeout_ms: result.configured_timeout_ms, effective_timeout_ms: result.effective_timeout_ms, cleanup: result.cleanup, completed, setup, cost_usd: null, evidence: ['stdout.jsonl', 'stderr.txt', 'rollout.jsonl'].map(path => ({ path, sha256: sha(readFileSync(join(output, path))) })) };
     save(join(output, 'target.json'), metadata); return metadata;
   } finally { rmSync(profile, { recursive: true, force: true }); }
 }

@@ -28,6 +28,9 @@ marketplace 경로를 사용한다. provider Git URL을 native marketplace로 �
   잘못된 종료 코드 판별을 수정했다.
 - 두 번째 plugin 설치가 먼저 검사한 cache를 바꾸는 사례를 재현했다. 마지막 CLI
   호출 이후 두 cache의 전체 hash·mode를 다시 검사한다.
+- 채점 예외가 완료된 target 원본을 삭제하던 경로, report와 원본 trial ID 불일치,
+  손상된 JSONL 행의 조용한 누락을 수정했다. 원본 보존·ID 대조·명시적인 불완전 상태를
+  회귀 테스트로 확인한다.
 
 수정 전 실패 재현과 수정 후 통과, 독립 재리뷰를 각각 보존했다. 독립 리뷰는 구현
 세션과 분리했으며, 각 결과가 전체 테스트나 사용자 병합 승인을 대신하지 않는다.
@@ -38,7 +41,7 @@ marketplace 경로를 사용한다. provider Git URL을 native marketplace로 �
 |---|---|
 | 프로젝트 launcher | 18/18 PASS; fake native CLI 경계에서 파일 보존·경합·argv·activation·버전 검증 |
 | 일반 installer | 86/86 PASS; 공식 Codex 0.146.0의 임시 HOME clean install/재갱신 포함 |
-| native 평가 회계 | 19/19 PASS; timeout·탈출 자식의 열린 출력·잘못된 산출물·trial/trace 바인딩·완료 통계 승격 거부 |
+| native 평가 회계 | 22/22 PASS; timeout·탈출 자식의 열린 출력·잘못된 산출물·trial/trace 바인딩·원본 보존·손상 trace·완료 통계 승격 거부 |
 | packaging/resolver/adapters | 29/29 PASS; 생성물 재생성 및 `--check`, skill lock 대조 통과 |
 | manifest | Claude 2.1.229 strict catalog/plugin 4개 검사와 Codex plugin 3개 schema 검사 통과 |
 | 엔진 | 80/80 PASS; optional memory 의존성 설치 후 BAC-580/lesson retire도 별도 통과 |
@@ -61,13 +64,18 @@ Zine 포트는 [PR #12](https://github.com/reach0908/zine/pull/12)에서 별도�
 앱 소스와 root verifier를 유지한 최종 커밋에서 전체 root가 통과했다. 초기 Xcode
 sandbox 실패와 전역 DerivedData 설정 변경·복구의 한계도 해당 PR 문서에 공개했다.
 
-Digging은 별도 origin/main 기반 worktree에서 portable lock/launcher를 적용한다.
+Digging은 [PR #67](https://github.com/reach0908/digging-n-ditto/pull/67)에 별도
+origin/main 기반 worktree의 portable lock/launcher를 반영했다.
 기존 fast gate의 preflight 사유 불일치와 connection metadata 노출을 바로잡았으며,
-DB 허용 목록과 실패 조건은 유지했다. 최종 전체 검증과 증거 재생성은 소비 PR의
-검증 근거로 기록한다. 기존 26개 작업 폴더의 범위 밖 dirty 파일·index·HEAD는 보존한다.
+DB 허용 목록과 실패 조건은 유지했다. 화면 wrapper 9개를 다시 실행한 뒤 전체
+`pnpm verify`가 통과했으며, 코드 지문이 시작·종료·커밋 후 모두 일치했다. 최종
+화면 검증표도 13개 route·11개 wrapper·20개 fixture를 통과했고 독립 리뷰가 완료됐다.
+기존 26개 작업 폴더의 범위 밖 dirty 파일·index·HEAD는 보존한다.
 
 실환경 재시도의 원인·시간 예산·사례별 실행 및 채점 한계는
-[native 평가 보고서](2026-09-05-native-evaluation.md)에 기록한다. Astra 대상 사례는
-최신 앱 Codex와 사례당 최대 5분 제한으로 재시도하며, 기존 1분 timeout 기록은 유지한다.
+[native 평가 보고서](2026-09-05-native-evaluation.md)에 기록했다. 최신 앱 Codex와
+사례당 최대 5분 제한으로 Astra 지원 사례 8개와 grader 8개가 정상 종료했다.
+채점 오탐 1건의 정의를 명확히 한 뒤 해당 사례만 다시 채점했고, 원래 판단도 보존했다.
+기존 1분 timeout 기록은 유지하며, 전체 모델·리뷰 실행 예산은 1,281,675/1,500,000ms다.
 지원되지 않은 사건, 미인증 Claude, 불완전한 baseline 또는 채점 근거에서 완료율·비용
 개선 수치를 만들지 않는다.

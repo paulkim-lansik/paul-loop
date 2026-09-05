@@ -87,3 +87,35 @@ test('supervisor deadline survives a descendant escaping the group with inherite
     const start=Date.now(),r=await bounded(process.execPath,['-e',source],{timeoutMs:650});pid=Number(readFileSync(pidPath));assert.equal(r.fault,'timeout');assert.ok(Date.now()-start<1200);
   }finally{if(!pid)try{pid=Number(readFileSync(pidPath));}catch{}if(pid)try{process.kill(-pid,'SIGKILL');}catch{} }
 });
+
+function mockTransport(t,source){
+  const root=mkdtempSync(join(tmpdir(),'native-mock-transport-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const cli=join(root,'native-cli');writeFileSync(cli,'#!'+process.execPath+'\n'+source,{mode:0o700});return {root,cli};
+}
+test('Raman F3: malformed native JSONL preserves diagnostics and cannot complete',async t=>{
+  const {root,cli}=mockTransport(t,`console.log(JSON.stringify({type:'system',subtype:'init',model:'mock-model'}));console.log('{BROKEN_HOST_EVENT');console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'ok'}));`);
+  const {runNative}=await import('./adapter.mjs'),r=await runNative({runtime:'claude',executable:cli,workspace:root,output:join(root,'out'),prompt:'synthetic test',timeoutMs:2000});
+  assert.equal(r.exit,0);assert.equal(r.completed,false);assert.equal(r.completion_observed,true);assert.equal(r.fault,'malformed_trace');assert.equal(r.trace_status,'incomplete');assert.deepEqual(r.parse_errors.map(e=>[e.stream,e.line]),[['stdout',2]]);assert.equal(r.model_status,'incomplete');assert.match(readFileSync(join(root,'out/stdout.jsonl'),'utf8'),/BROKEN_HOST_EVENT/);
+});
+test('Raman F2: executed report trial must match its original target metadata',t=>{
+  const f=fixture(t),p='c/native/target.json';mkdirSync(join(f.root,'c/native'),{recursive:true});
+  f.row.target={executed:true,trial_id:'real-trial',exit:0,fault:null,duration_ms:10,completed:true};f.row.status='incomplete';f.report.target_duration_ms=10;
+  writeFileSync(join(f.root,p),JSON.stringify({...f.row.target,workspace:'/fixture'}));f.report.evidence.push({path:p,sha256:sha(readFileSync(join(f.root,p)))});f.row.trace_refs.push(p);
+  assert.deepEqual(f.check(),[]);f.row.target.trial_id='other-trial';assert.match(f.check().join(' '),/trial.*(drift|differ|mismatch)/);
+});
+test('Raman F1: grader preparation exception retains completed target trace and valid accounting',t=>{
+  const {root,cli}=mockTransport(t,`
+    const fs=require('node:fs');
+    if(process.argv.includes('--version')){console.log('mock-native 1');process.exit(0);}
+    if(process.argv.includes('auth')){console.log(JSON.stringify({loggedIn:true}));process.exit(0);}
+    fs.unlinkSync('sum.cjs');
+    console.log(JSON.stringify({type:'system',subtype:'init',model:'mock-model'}));
+    console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'synthetic completed target with missing artifact'}));
+  `);
+  const c={id:'reuse-test-approval',prompt:'synthetic fixture',files:{'sum.cjs':'module.exports=(a,b)=>a-b;','test.cjs':'require("node:assert/strict").equal(require("./sum.cjs")(2,3),5)'},required_events:['authorized-implementation','verification-completed']};
+  const dataset=join(root,'cases.jsonl'),budget=join(root,'budget.json'),out=join(root,'report');writeFileSync(dataset,JSON.stringify(c)+'\n');writeFileSync(budget,JSON.stringify({limit_ms:10000,used_ms:0}));
+  const result=spawnSync(process.execPath,[fileURLToPath(new URL('./run.mjs',import.meta.url)),'--runtime','claude','--variant','current','--dataset',dataset,'--output',out,'--budget',budget,'--cli',cli,'--plugins',root,'--model','mock-model','--case-ms','2000','--grader-ms','2000'],{encoding:'utf8',env:safeEnv(),timeout:10000});
+  assert.equal(result.status,1,result.stderr+result.stdout);
+  const report=JSON.parse(readFileSync(join(out,'report.json'))),row=report.results[0],tracePath=join(out,'reuse-test-approval/.eval-state/native/stdout.jsonl'),meta=JSON.parse(readFileSync(join(out,'reuse-test-approval/.eval-state/native/target.json')));
+  assert.equal(row.target.completed,true);assert.equal(row.target.trial_id,meta.trial_id);assert.equal(row.metrics,null);assert.equal(row.status,'incomplete');assert.match(row.reason,/grad/i);assert.ok(row.grader_failure);assert.equal(meta.evidence.find(e=>e.path==='stdout.jsonl').sha256,sha(readFileSync(tracePath)));assert.deepEqual(JSON.parse(readFileSync(join(out,'validation.json'))).errors,[]);
+});

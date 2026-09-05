@@ -112,3 +112,11 @@ means complete and consistent accounting, including unfinished and unsupported w
 `retry-collect.mjs RETRY_ROOT DATASET NEW_OUTPUT REVIEW_DIRECTORY` combines the first target,
 its snapshot grader, the remaining supported cases and the three unavailable comparison routes.
 It refuses overwrites and retains all four 20-row matrices. It does not run targets or change grades.
+
+Grader preparation/runtime exceptions retain the completed target snapshot and an explicit
+`grader_failure` record. A failed snapshot copy preserves the temporary source for recovery.
+Executed report rows must match the native trial ID; historical missing IDs need explicit
+`trial_id_status: "unavailable"`. Native JSONL parse failures retain raw bytes and stream/line
+errors, set `trace_status: "incomplete"`, and cannot establish `completed` or an observed model
+status. `completion_observed` separately retains a parsed terminal event without claiming an
+intact trace. These paths use local mock transports in focused tests; CI does not call live models.
