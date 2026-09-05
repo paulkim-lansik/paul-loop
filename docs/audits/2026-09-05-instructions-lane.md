@@ -1,8 +1,8 @@
 # 지침 lane 구현 결과 — 2026-09-05
 
-지침 충돌 11개 항목의 구현과 집중 검증을 완료했다. 엔진 교차 검토에서 재현한 3건은 부모에게 전달했으며, **이 lane의 상태는 모두 `PENDING_RECHECK`**다. 담당자의 수정 완료 통보나 다른 테스트의 PASS를 이 3건의 재검증 결과로 대신하지 않는다. 전체 통합 결과는 [부모 보고서](2026-09-05-hardening-results.md)에서 별도로 관리한다.
+지침 충돌 11개 항목의 구현과 집중 검증을 완료했다. 엔진 교차 검토에서 재현한 3건은 부모에게 전달한 뒤, **수정 commit `b4ed9d56a4dfc21affdaf7f85700496487a360da`에서 독립 재현 3/3을 통과하여 모두 `RESOLVED_RECHECKED`**로 갱신했다. 이는 아래 명시한 기능적 재현에 대한 판정이다. 전체 통합 결과는 [부모 보고서](2026-09-05-hardening-results.md)에서 별도로 관리한다.
 
-작업 위치는 `/Users/jinhokim/dev/paul-loop-hardening`, 브랜치는 `codex/harness-audit-hardening`이다. 원본 `/Users/jinhokim/dev/paul-loop`, 설치된 플러그인, 원격 설정은 변경하지 않았고 commit/push/publish도 하지 않았다. 이전 구현의 소유 범위는 ship-flow 지침 44개 파일과 협의한 테스트 2개였다. **이 보고서 작성 턴에서 허용된 쓰기는 이 새 문서 1개뿐**이며, 소스 변경이나 테스트 재실행을 포함하지 않는다.
+작업 위치는 `/Users/jinhokim/dev/paul-loop-hardening`, 브랜치는 `codex/harness-audit-hardening`이다. 이 lane은 원본 `/Users/jinhokim/dev/paul-loop`, 설치된 플러그인, 원격 설정을 변경하거나 commit/push/publish하지 않았다. 부모가 위 수정 commit을 만들었다. 이전 구현의 소유 범위는 ship-flow 지침 44개 파일과 협의한 테스트 2개였다. **보고서 작성·갱신에서 저장소에 허용된 쓰기는 이 문서 1개뿐**이다. 후속 사용자 승인과 source stable 신호를 받은 뒤 기존 엔진 결함 3건의 disposable fixture 재현만 수행했으며 소스 편집이나 전체 suite 실행은 하지 않았다.
 
 ## 근거와 읽는 방법
 
@@ -11,7 +11,7 @@
 - **원문 기준:** 구현 전 commit `39b6d87fbfcc9a0d4de442e898dee41cbbd8df27`. 아래 ‘기준 L…’는 `git show <commit>:<repo-relative-path>`로 다시 확인한 줄 번호다.
 - **변경 후 기준:** 이 문서를 작성하면서 읽은 공유 worktree의 지침 파일. ‘현재 L…’ 링크는 이 버전의 줄 번호다. 이후 다른 수정으로 줄 번호가 이동할 수 있다.
 - 파일 링크는 현재 worktree를 연다. 과거 인용문은 파일 경로와 기준 commit으로 복원해야 하며, 현재 파일의 같은 줄에 과거 문장이 남아 있다는 뜻이 아니다.
-- 테스트 표는 **앞서 실제 관측한 실행 결과**다. 문서 작성 중 재실행한 결과나 부모의 최종 전체 테스트 결과로 표현하지 않는다.
+- 지침 테스트 표는 **앞서 실제 관측한 실행 결과**다. 이 테스트들을 문서 작성 중 재실행한 결과나 부모의 최종 전체 테스트 결과로 표현하지 않는다. 후속 엔진 재현 3건은 아래에 commit·실행 시각·종료 상태를 따로 기록한다.
 
 ## 11개 충돌: 원문 → 변경 동작 → 권한 영향
 
@@ -83,23 +83,32 @@ I08의 producer/consumer 불일치는 없는 문장을 인용한 주장이 아�
 
 문서 hygiene 검사에서는 오류 0을 관측했다. 긴 source skill 4개(retrospect/setup/ship-feature/wayfinder)와 generated mirror의 길이 경고는 남았다. 문구의 의미적 일관성은 원문 대조 검토이며, 모델이 모든 상황에서 지침을 지킨다는 행동 평가 PASS는 아니다.
 
-## 독립 엔진 교차 검토 — 3건 모두 재검증 대기
+## 독립 엔진 교차 검토 — 3건 모두 수정 후 집중 재검증 완료
 
-2026-09-05 20:27–20:33 KST의 실제 격리 재현을 기록한다. 그 후 부모가 Laplace에게 전달했다고 알려왔다. **아래 파일/줄은 발견 당시 위치이며 수정 후 상태를 인증하지 않는다.** 이 문서 작성에서는 엔진을 다시 탐색하거나 수정·재실행하지 않았다. 부모가 별도로 검증한 7건의 PASS도 아래 3건에 대한 결과가 아니다.
+최초 결함은 2026-09-05 20:27–20:33 KST에 격리 재현하여 부모를 통해 Laplace에게 전달했다. **각 항목의 ‘발견 위치’와 ‘관측’은 수정 전 기록**이다. 수정 완료 통보만으로 상태를 바꾸지 않고, 부모가 source stable 및 commit `b4ed9d56a4dfc21affdaf7f85700496487a360da`를 알려준 뒤 기존 재현 3건만 다시 실행했다. 2026-09-05 **21:04:32 KST**에 3/3 assertions 통과를 확인했다. 부모의 다른 7건, Carson의 검토, Laplace의 23/17 검사 수는 이 lane의 실행 결과에 합산하지 않았다.
 
 공통 조건: 원본 엔진 `/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/bin/loop-fix.sh`를 별도 임시 cwd에서 실행했다. `LOOP_*`, `VERDICT_RUN_*`, `CLAUDE_*`, `GIT_*` 환경 영향을 분리하고 `LOOP_PROTECT_GRACE_SEC=0`으로 빠르게 재현했다. 외부 파일이라는 표현도 실제 사용자 파일이 아니라 임시 cwd 옆의 disposable fixture다. 재현 종료 후 fixture를 삭제했다.
 
+재검증은 각기 새 임시 cwd에서 아래 CLI 인수를 사용한 Python `subprocess.run(..., capture_output=True, text=True, timeout=20)`으로 실행했다. 추가 환경은 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`이다. 각 실행 후 lifecycle JSON·최종 verdict-state·파일 bytes를 읽어 assertion을 검사했다. 실행 전후 HEAD가 같은 수정 commit인지 확인했고, `loop-fix.sh`, `loop-lifecycle.mjs`, `loop-lifecycle-state.mjs`, `loop-protect-files.mjs` 4개 source SHA-256이 변하지 않았음을 확인했다.
+
+| 재검증 | 최종 종료 코드 / lifecycle | 독립 관측 결과 |
+|---|---|---|
+| E01 | **3 / protected_violation** | 외부 fixture bytes 그대로, `protect-compromised` 비어 있지 않음, 최종 verdict FAIL. |
+| E02 | **3 / protected_violation** | 자식의 실제 파일 생성 표식 확인, 새 보호 파일 제거, baseline bytes 보존, 최종 verdict FAIL. |
+| E03 | **2 / incomplete** | `evidence: []`를 완료로 처리하지 않음, 최종 verdict FAIL·reason incomplete, sentinel 해제. |
+
 ### E01 — P1: 보호 복구가 symlink를 따라 외부 파일을 덮어씀
 
-- **상태:** `PENDING_RECHECK` — 부모 전달 완료, Laplace 담당. 수정 후 이 lane 재검증 없음.
+- **상태:** `RESOLVED_RECHECKED` — Laplace 수정, 이 lane의 위 commit 독립 재현 통과.
 - **발견 위치:** [loop-fix.sh:468](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/bin/loop-fix.sh:468)의 `cp -p`와 [loop-lifecycle.mjs:43](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle.mjs:43)의 동일 hash 조기 반환. Bash 복사가 상위 symlink를 따르고, 이미 같아진 bytes 때문에 supervisor의 상위 symlink 검사까지 생략했다.
 - **작은 재현:** fixture `work/tests/check.test.sh`에 `original protected test\n`, sibling `outside/check.test.sh`에 `outside sentinel unchanged\n`를 저장한다. `work`에서 `--verify false --fix 'mv tests saved-tests; ln -s ../outside tests' --protect 'tests/*.test.sh' --max-iter 2`로 실행한다.
 - **관측:** exit 3이지만 `outside/check.test.sh`가 원본 test 내용으로 바뀌었다. `tests`는 symlink인 채 남고 `protect-compromised`는 없었다. 로그는 `restored 1 protected file(s) to their pre-run state.`라고 기록했다.
 - **재검증 기준:** 외부 fixture bytes 불변, 복사·hash 생략 전에 상위 symlink 거부, 복구 불확실성을 compromised로 기록, SUCCESS 불가. 단순 exit 3만으로 수정 완료가 아니다.
+- **수정 후 증거:** outside bytes 보존, exit 3·`protected_violation`·최종 FAIL. marker에 `reason=unsafe protected path; inspect symlink ancestors before restoring`와 `symlink in protected path: tests`가 기록됐다. [수정 commit의 worker L462](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/bin/loop-fix.sh:462)와 [supervisor L42](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle.mjs:42)가 복사·동일 hash 생략 전에 경로를 검사한다.
 
 ### E02 — P1: 마지막 검사 뒤 추가된 보호 파일로도 succeeded
 
-- **상태:** `PENDING_RECHECK` — 부모 전달 완료, Laplace 담당. 수정 후 이 lane 재검증 없음.
+- **상태:** `RESOLVED_RECHECKED` — Laplace 수정, 이 lane의 위 commit 독립 재현 통과.
 - **발견 위치:** [loop-lifecycle.mjs:155](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle.mjs:155). process-group 종료 후 기존 baseline 원소만 검사하여 새 glob 매칭 파일이 빠졌다. [loop-fix.sh:801](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/bin/loop-fix.sh:801)의 마지막 Bash 검사 뒤 lesson 명령 실행 구간에서 생성할 수 있었다.
 - **작은 재현:** fixture에 `tests/base.test.sh`와 빈 `lessons.jsonl`을 준비한다. 아래 문자열을 `--verify`의 한 인수로 전달하고 `--protect 'tests/*.test.sh' --lessons lessons.jsonl --max-iter 1`로 실행한다.
 
@@ -110,17 +119,20 @@ I08의 producer/consumer 불일치는 없는 문장을 인용한 주장이 아�
 - **관측:** Python 대기 fixture 3/3회와 위 shell fixture 1회에서 새 보호 파일이 남은 채 exit 0·`succeeded`·SUCCESS 로그를 관측했다.
 - **재현 주의:** `^iter` anchor가 필요하다. 단순 `PASS — stopping` 검색은 시작 로그에 출력된 verifier 명령 자체를 감지하여 파일을 너무 일찍 만들 수 있다. 이 잘못된 단순 검색은 exit 3으로 차단되었으며 false-PASS 근거로 세지 않았다.
 - **재검증 기준:** 자식 종료 후 glob을 다시 열거하여 경로 집합과 내용을 모두 대조하고 추가 파일도 보호 위반으로 처리한다. 늦은 파일 정리와 terminal 실패 상태를 확인해야 한다.
+- **수정 후 증거:** 같은 verifier에서 파일 작성 직후 `touch .loop/late-created`만 덧붙여 실제 자식 실행을 확인했다. 생성 표식은 존재하고 `tests/late.test.sh`는 제거됐으며 baseline bytes는 유지됐다. exit 3·`protected_violation`·최종 FAIL, stderr는 `PROTECTED FILE MODIFIED before supervisor handoff: protected paths or contents changed`였다. [수정 commit L155](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle.mjs:155)가 전체 경로 집합과 bytes를 비교한다.
+- **남는 출력 해석 한계:** worker stdout에는 내부 verifier PASS와 `=== loop-fix done: SUCCESS in 1 iteration(s) ===`가 먼저 남았다. supervisor는 이후 위반을 stderr/history에 기록하고 exit 3·최종 FAIL로 확정한다. 이번 해결 판정은 실제 보호·terminal 상태에 대한 것이며, 중간 SUCCESS 문자열이 없어졌다는 판정은 아니다. 호출자는 부분 stdout 한 줄을 전체 성공으로 읽지 않아야 한다.
 
 ### E03 — P2: receipt 저장 실패도 lifecycle 완료
 
-- **상태:** `PENDING_RECHECK` — 부모 전달 완료, Laplace 담당. 수정 후 이 lane 재검증 없음.
+- **상태:** `RESOLVED_RECHECKED` — Laplace 수정, 이 lane의 위 commit 독립 재현 통과.
 - **발견 위치:** [loop-lifecycle-state.mjs:97](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle-state.mjs:97)의 receipt 오류 무시, [loop-fix.sh:756](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/bin/loop-fix.sh:756)의 `|| true`, [loop-lifecycle.mjs:156](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle.mjs:156)의 종료 코드 기반 성공 확정.
 - **작은 재현:** fixture의 `.loop/evidence`를 **디렉터리가 아닌 일반 파일**로 만든 뒤 `--verify true --max-iter 1`로 실행한다.
 - **관측:** exit 0·`succeeded`, lifecycle `evidence: []`, `.loop/verdict-state.json` 없음, sentinel 없음, SUCCESS 로그. 실제 `true` 명령이 실패했다는 주장이 아니라 실행 증거를 저장하지 못한 lifecycle이 완료로 확정된 문제다.
 - **재검증 기준:** 원래 명령의 canonical PASS와 lifecycle 완료 가능 여부를 구분한다. 해당 run/attempt의 유효한 receipt를 확인하지 못하면 명시적 불완전 상태와 비정상 종료를 기록하며 완료 증거를 만들지 않는다. standalone verdict wrapper의 의도적인 best-effort 호환성은 별도로 설명한다.
+- **수정 후 증거:** exit 2·`incomplete`, lifecycle `evidence: []`, 최종 verdict FAIL·reason incomplete, sentinel 없음. stderr에 해당 fixture의 verdict-state 파일 부재 오류가 남았다. [checkpoint L97](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle-state.mjs:97)가 receipt 실패를 무시하지 않으며 [supervisor L163](/Users/jinhokim/dev/paul-loop-hardening/tools/loop-engine/lib/loop-lifecycle.mjs:163)가 evidence 불완전을 별도 상태로 확정한다.
 
 ## 유지된 강점과 남은 한계
 
 문서화된 publisher의 literal 파일 입력, 독립 reviewer/publisher 역할 분리, agent risk 상향만 허용하는 분류, human merge와 verifier 보호는 유지했다. 집중 실행에서는 lease 배타성, TERM 저항 자식의 취소, resume 예산/대상 보호, worktree별 Stop 분리, Shell/Node test entry snapshot이 통과했다.
 
-지침 구현 완료와 전체 하네스 검증 완료는 구분한다. E01–E03 수정 후 집중 재검증, 부모의 전체 통합 suite, 최종 generated package 검증은 이 보고서에서 완료로 선언하지 않는다. read-only 재검토 범위는 이 3건의 수정된 lifecycle/protection 경로에 한정하며 새 광범위 탐색을 시작하지 않는다.
+지침 구현 완료와 전체 하네스 검증 완료는 구분한다. **E01–E03은 위 수정 commit에서 기능적 집중 재검증 3/3 완료**다. 부모의 전체 통합 suite·pinned-baseline 결과와 최종 generated package 검증은 이 보고서에서 완료로 선언하지 않는다. E02의 중간 출력 한계도 위에 남겼다. read-only 재검토 범위는 이 3건의 수정된 lifecycle/protection 경로에 한정했으며 새 광범위 탐색을 하지 않았다.

@@ -84,7 +84,8 @@ stubEmbedder와 임시 source 파일을 사용했다. 첫 `pool.connect`에 barr
 두 순서 역전 사례를 회귀에 추가한다. 이 교차 검토는 읽기 전용이며 메모리 구현은 수정하지 않았다.
 본 문서의 재현 시점 이후 메모리 lane이 수정할 수 있으므로 부모가 최종 상태를 확인한다.
 
-**2026-09-05 11:59:58 UTC focused 재검증: 두 경로 모두 PASS, 위 P1 수정 확인.**
+**2026-09-05 12:03:39 UTC committed-source 재검증: 두 경로 모두 PASS, 위 P1 수정 확인.**
+대상 커밋은 `b4ed9d56a4dfc21affdaf7f85700496487a360da`이며 실행 전후 HEAD가 일치했다.
 lesson source 읽기는 잠금 안으로 이동했고, knowledge filesystem adapter는 잠금 안에서 실행할
 desiredSource callback을 전달한다. 기존 caller-array API에 외부 source freshness를 주장하지 않는다.
 
@@ -95,12 +96,13 @@ desiredSource callback을 전달한다. 기존 caller-array API에 외부 source
 
 초기 lesson은 현재 production reader의 backing 검증도 통과했다. 초기부터 제외되는 옛 fixture로
 통과시킨 것이 아니다. 두 첫 pool.connect barrier 재현만 실행했으며 broad scan/전체 suite는 하지 않았다.
-관련 production/helper 14개 파일의 실행 전후 SHA256이 일치했다. 검증 snapshot의 lessons.ts는
+관련 production/helper 14개 파일의 실행 전후 SHA256 및 해당 커밋의 파일 내용이 모두 일치했다.
+검증 snapshot의 lessons.ts는
 `468bb522968aa1124cf3e28e78ae1a4303d27c8997b0582355390f6a71531e50`, knowledge.ts는
 `0e1701d4f51749a85f3bda5a211f92d91af9509bc5d41772a2001f7b045a0177`이다.
 로컬 실행 코드와 전체 hash/result는 `.loop/hardening-validation/memory-snapshot-race-recheck.mjs` 및
-동명의 `.json`에 보관했다. Meitner 직접 메시지 경로는 제공되지 않아 실행 중 hash 안정성을 확인했고,
-그 이상으로 lane 간 편집 동결을 합의했다고 주장하지 않는다. 실제 DB/API/native 세션 호출은 없었다.
+동명의 `.json`에 보관했다. 이번에는 요청된 두 scratch 재현만 실행하고 이 보고서의 상태만 갱신했다.
+production/test source 변경, broad scan, 실제 DB/API/native 세션 호출은 없었다.
 
 ## 남는 경계
 
