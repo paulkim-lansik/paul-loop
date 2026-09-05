@@ -125,15 +125,33 @@ done
 grep -q hunter2 "$DIR/t14.log" && fail "T14: LOOP_SANITIZE_OFF=0 (unknown value) must still redact at the wiring level"
 grep -q '\[REDACTED\]' "$DIR/t14.log" || fail "T14: redaction marker missing under unknown switch value"
 
-# T15: 배선 fail-open — 살균기 실행 불능(node 없는 PATH) 시 경고 발화·원문 유지·exit 불변.
-# node가 시스템 경로에 있는 환경에선 시뮬레이션 불가라 건너뛴다(핵심 계약은 T7/T14가 커버).
-if ! PATH="/usr/bin:/bin" command -v node >/dev/null 2>&1; then
-  ( cd "$WK" && PATH="/usr/bin:/bin" "$VR" --log "$DIR/t15.log" -- sh -c 'echo password=hunter2; exit 1' ) >/dev/null 2>"$DIR/t15.err"
-  rc=$?
-  [ "$rc" = "1" ] || fail "T15: exit code must mirror the command on redaction failure, got rc=$rc"
-  grep -q hunter2 "$DIR/t15.log" || fail "T15: raw log must be kept on redaction failure (fail-open)"
-  grep -q 'redaction failed' "$DIR/t15.err" || fail "T15: failure warning must fire on stderr"
-fi
+# T15: fail only the sanitizer, preserving the now-required Node target/receipt capture.
+# Removing Node entirely fails BEFORE dispatch and cannot exercise post-command redaction.
+# Use the same fixture on every host instead of silently skipping systems with /usr/bin/node.
+REAL_NODE="$(command -v node)"
+mkdir -p "$DIR/redaction-bin"
+cat > "$DIR/redaction-bin/node" <<'EOF'
+#!/bin/sh
+case "$1" in */lib/sanitize.mjs) echo 'fixture sanitizer unavailable' >&2; exit 127;; esac
+exec "$REAL_NODE" "$@"
+EOF
+chmod +x "$DIR/redaction-bin/node"
+( cd "$WK" && REAL_NODE="$REAL_NODE" PATH="$DIR/redaction-bin:$PATH" "$VR" --log "$DIR/t15.log" -- sh -c 'echo dispatched; echo password=hunter2; exit 1' ) >/dev/null 2>"$DIR/t15.err"
+rc=$?
+[ "$rc" = "1" ] || fail "T15: exit code must mirror the command on redaction failure, got rc=$rc"
+grep -q '^dispatched$' "$DIR/t15.log" || fail "T15: verifier must actually execute"
+grep -q hunter2 "$DIR/t15.log" || fail "T15: raw log must be kept on redaction failure (fail-open)"
+grep -q 'redaction failed' "$DIR/t15.err" || fail "T15: failure warning must fire on stderr"
+
+# T15b: an unavailable Node runtime refuses target capture before executing any verifier.
+mkdir -p "$DIR/no-node-bin"
+printf '#!/bin/sh\nexit 127\n' > "$DIR/no-node-bin/node"
+chmod +x "$DIR/no-node-bin/node"
+( cd "$WK" && PATH="$DIR/no-node-bin:$PATH" "$VR" --log "$DIR/t15b.log" -- sh -c 'echo must-not-dispatch' ) >/dev/null 2>"$DIR/t15b.err"
+rc=$?
+[ "$rc" = "2" ] || fail "T15b: missing required Node must refuse setup, got rc=$rc"
+[ ! -s "$DIR/t15b.log" ] || fail "T15b: verifier dispatched without target capture"
+grep -q 'cannot capture verification target' "$DIR/t15b.err" || fail "T15b: missing runtime must be diagnosed"
 
 # T16: lessons --signature-file 분기(loop-fix 정본 경로)도 살균 대칭 — 저장 JSON에 시크릿 부재.
 printf 'FAIL: boom token=sigfileleak77\n' > "$DIR/sig.txt"
