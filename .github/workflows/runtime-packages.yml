@@ -26,6 +26,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: verify adapters, resolver, executable modes and setup isolation (no model calls)
         run: node --test tools/loop-engine/test/plugin-path.test.mjs tools/loop-engine/test/apply-patch-runtime.test.mjs tools/loop-engine/test/runtime-packages.test.mjs
+      - name: verify project updates, local installation and native evaluation accounting (no model calls)
+        run: node --test scripts/project-plugin.test.mjs scripts/install-codex.test.mjs scripts/native-eval/native.test.mjs
       - name: verify skill lock and generate both runtime packages
         run: |
           node scripts/refresh-skill-lock.mjs --check
