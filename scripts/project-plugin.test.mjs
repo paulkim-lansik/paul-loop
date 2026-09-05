@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, realpathSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, realpathSync, existsSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -53,6 +53,35 @@ test('doctor resolves an exact installed identity in a relocated home without wr
   assert.equal(report.plugins['loop-engine'].path, join(f.home, 'plugins/cache/fixture/loop-engine/0.15.0'));
   assert.equal(readFileSync(join(f.project, '.codex/paul-loop.lock.json'), 'utf8'), before);
 });
+
+for (const failure of ['ENOTDIR', 'ELOOP', 'EACCES']) {
+  test(`lock discovery rejects ${failure} before host calls or project writes`, t => {
+    if (failure === 'EACCES' && process.getuid?.() === 0) {
+      t.skip('root bypasses the fixture directory permissions');
+      return;
+    }
+    const f = fixture(t), other = join(f.project, '.claude');
+    const lockPath = join(f.project, '.codex/paul-loop.lock.json');
+    const before = readFileSync(lockPath);
+    if (failure === 'ENOTDIR') writeFileSync(other, 'not a configuration directory');
+    if (failure === 'ELOOP') symlinkSync('.claude', other);
+    if (failure === 'EACCES') { mkdirSync(other); chmodSync(other, 0); }
+    try {
+      for (const args of [['doctor'], ['sync'], ['exec', 'bin/probe.mjs'], ['update']]) {
+        const result = f.run(...args);
+        assert.equal(result.status, 1, `${args[0]} must reject ${failure}: ${result.stderr}`);
+        assert.match(result.stderr, new RegExp(failure));
+        assert.equal(result.stdout, '');
+        assert.equal(existsSync(join(f.root, 'trace')), false, 'no native CLI call is permitted');
+        assert.deepEqual(readFileSync(lockPath), before);
+        assert.equal(existsSync(join(f.project, '.codex/paul-loop.plugins.json')), false);
+        assert.equal(existsSync(join(f.project, '.loop')), false);
+      }
+    } finally {
+      if (failure === 'EACCES') chmodSync(other, 0o700);
+    }
+  });
+}
 
 test('exec forwards literal argv and child exit code without a shell or project writes', t => {
   const f = fixture(t);
