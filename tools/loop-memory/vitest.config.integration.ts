@@ -1,11 +1,11 @@
 import { defineConfig } from 'vitest/config';
 
-// 통합 테스트: docker pgvector 필요. `pnpm verify:memory`가 db:up→migrate→이 설정으로 실행한다.
+// 명시적으로 이름 붙인 disposable 로컬 pgvector DB만 허용한다. 자동 격리/정리는
+// npm run test:postgres-fixture가 담당하고, 각 파일도 별도의 임시 스키마를 사용한다.
 export default defineConfig({
   test: {
     include: ['**/*.integration.test.ts'],
-    // 공유 docker DB 통합테스트는 파일 순차 실행. 여럿이 같은 tag 네임스페이스(kb:adr)를 수렴시키면
-    // 병렬 시 서로의 노트를 soft-delete해 flaky해진다(knowledge/cli 미러-싱크). 파일 내 test는 원래 순차.
+    // 파일별 CLI subprocess/DDL 작업을 순차 실행해 로컬 fixture 자원 사용을 제한한다.
     fileParallelism: false,
   },
 });

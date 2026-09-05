@@ -5,6 +5,8 @@
  */
 export interface Embedder {
   readonly dimensions: number;
+  /** Stable vector-space identity; wrappers must preserve it. Missing identity fails at the store boundary. */
+  readonly identity?: string;
   embed(text: string): Promise<number[]>;
   /**
    * 여러 텍스트를 한 번에 임베드한다(배치, BAC-368) — 결과는 texts와 같은 순서·같은 길이여야 한다.
@@ -41,6 +43,7 @@ export function stubEmbedder(dimensions = 384): Embedder {
   };
   return {
     dimensions,
+    identity: `stub:character-hash:v1:${dimensions}`,
     embed,
     embedBatch: (texts) => sequentialEmbedBatch(embed, texts),
   };

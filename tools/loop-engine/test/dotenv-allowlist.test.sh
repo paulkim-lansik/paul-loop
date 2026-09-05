@@ -71,10 +71,13 @@ LOOP_WORKTREE_SESSION_GATE_OFF=1
 LOOP_VERIFY_PIPE_GATE_OFF=1
 LOOP_RECALL_OFF=1
 LOOP_LIVENESS_OFF=1
+LOOP_LEARNING_OFF=1
+LOOP_MEMORY_RECALL_ONLY=1
+LOOP_MEMORY_OFF=1
 LOOP_DOTENV_PATH=../../elsewhere/.env
 ENV
 KEYS2="$(load "$P2")"
-for k in LOOP_STOP_GATE_OFF LOOP_SANITIZE_OFF LOOP_WORKTREE_SESSION_GATE_OFF LOOP_VERIFY_PIPE_GATE_OFF LOOP_RECALL_OFF LOOP_LIVENESS_OFF LOOP_DOTENV_PATH; do
+for k in LOOP_STOP_GATE_OFF LOOP_SANITIZE_OFF LOOP_WORKTREE_SESSION_GATE_OFF LOOP_VERIFY_PIPE_GATE_OFF LOOP_RECALL_OFF LOOP_LIVENESS_OFF LOOP_LEARNING_OFF LOOP_MEMORY_RECALL_ONLY LOOP_MEMORY_OFF LOOP_DOTENV_PATH; do
   has_key "$KEYS2" "$k" && fail "(5) '$k' was settable from a repo's dotenv file — a repo could disable its own gate or redaction"
 done
 [ -z "$KEYS2" ] || fail "(5) expected nothing to load from a file of switches, got: $KEYS2"
@@ -87,14 +90,15 @@ GEMINI_API_KEY=g
 LOOP_MEMORY_SIGNING_KEY=s
 LOOP_DATABASE_URL=postgres://localhost/x
 LOOP_EMBED_PROVIDER=openai
+LOOP_EMBED_MODEL=text-embedding-3-small
 LOOP_RECALL_MAX_DISTANCE=0.5
 LOOP_KNOWLEDGE_MAX_DISTANCE=0.5
 ENV
 KEYS3="$(load "$P3")"
-for k in GEMINI_API_KEY LOOP_MEMORY_SIGNING_KEY LOOP_DATABASE_URL LOOP_EMBED_PROVIDER LOOP_RECALL_MAX_DISTANCE LOOP_KNOWLEDGE_MAX_DISTANCE; do
+for k in GEMINI_API_KEY LOOP_MEMORY_SIGNING_KEY LOOP_DATABASE_URL LOOP_EMBED_PROVIDER LOOP_EMBED_MODEL LOOP_RECALL_MAX_DISTANCE LOOP_KNOWLEDGE_MAX_DISTANCE; do
   has_key "$KEYS3" "$k" || fail "(6) allowlisted key '$k' did not load — the allowlist is over-tight"
 done
-echo "PASS: all 7 allowlisted keys load (6 here + OPENAI_API_KEY above)"
+echo "PASS: all 8 allowlisted keys load (7 here + OPENAI_API_KEY above)"
 
 # ==== 7) a relative configured path cannot walk out of the project ====
 # LOOP_DOTENV_PATH is ordinary session env, which a repo-committed .claude/settings.json can set.
@@ -124,20 +128,32 @@ ENV
 cat > "$V/payload.cjs" <<JS
 require('node:fs').writeFileSync(require('node:path').join(__dirname, 'EXECUTED'), 'x');
 JS
-# Cleared explicitly: an inherited LOOP_DOTENV_PATH (or its CLAUDE_PLUGIN_OPTION_* bridge) from the
-# developer's own session would point the loader somewhere else and this case would pass without ever
-# reading the hostile file — a false green that actually happened while investigating this bug.
-env -u LOOP_DOTENV_PATH -u CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH \
-    -u NODE_OPTIONS -u OPENAI_API_KEY -u GEMINI_API_KEY \
-    -u CLAUDE_PLUGIN_OPTION_OPENAI_API_KEY -u CLAUDE_PLUGIN_OPTION_GEMINI_API_KEY \
-    CLAUDE_PROJECT_DIR="$V" CLAUDE_PLUGIN_ROOT="$ROOT/tools/loop-memory" CLAUDE_PLUGIN_DATA="$V" \
-    LOOP_GRADUATE_DEBUG=1 \
-    node "$HOOK" --event SessionStart >/dev/null 2>&1
+# Run the real hook/loader/spawn boundary with a probe CLI, so this test never contacts a DB/API.
+# The only source of the credential is the hostile dotenv file. Check it in the actual child rather
+# than relying on optional debug prose, which deliberately no longer logs loaded paths or raw errors.
+PROBE="$DIR/probe-plugin"; mkdir -p "$PROBE/dist"
+cat > "$PROBE/dist/cli.js" <<'JS'
+const fs = require('node:fs');
+const observed = {
+  dotenvCredential: process.env.OPENAI_API_KEY === 'sk-fake-passes-the-key-gate',
+  blockedNodeOptions: process.env.NODE_OPTIONS === undefined,
+};
+fs.writeFileSync('CLI_ENV.json', JSON.stringify(observed));
+process.stdout.write(JSON.stringify({ schema_version: 1, command: 'graduate', outcome: 'synced' }));
+JS
+# env -i also removes inherited OFF flags and plugin options: a skipped hook is not an exploit test.
+env -i PATH="$PATH" \
+    CLAUDE_PROJECT_DIR="$V" CLAUDE_PLUGIN_ROOT="$PROBE" CLAUDE_PLUGIN_DATA="$V" \
+    node "$HOOK" --event SessionStart >/dev/null 2>&1 \
+    || fail "(9) SessionStart hook did not preserve its session exit contract"
 
 [ -f "$V/EXECUTED" ] && fail "(9) RCE: the SessionStart hook executed a payload named only by the repo's own .loop/.env"
-# Guard against the case passing because the file was never read at all (see the env note above).
-grep -q 'dotenv: loaded' "$V/graduate-debug.log" 2>/dev/null \
-  || fail "(9) the hostile dotenv file was never read, so this case proved nothing — check the env isolation above"
+# A missing probe, a skipped hook, a filtered credential, or leaked NODE_OPTIONS must all fail.
+node -e '
+  const o = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  if (o.dotenvCredential !== true || o.blockedNodeOptions !== true) process.exit(1);
+' "$V/CLI_ENV.json" \
+  || fail "(9) the real spawned CLI did not receive the dotenv credential with NODE_OPTIONS blocked"
 echo "PASS: end to end — a hostile repo's .loop/.env is read, and its NODE_OPTIONS payload does not run"
 
 echo "PASS: load-dotenv allowlist — repo-controlled dotenv files cannot set code-execution env vars or disable gates, relative paths stay in the project, and the real SessionStart hook survives the live exploit"

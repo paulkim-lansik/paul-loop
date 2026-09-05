@@ -60,12 +60,16 @@
 //   - Worktrees created through Claude Code's own mechanisms (`EnterWorktree`, `Agent
 //     isolation:"worktree"`) never reach a Bash PreToolUse hook — same blind spot the header above
 //     already describes for the origin/* rule.
-//   - It counts *attempts*, deduped by branch name: a `git worktree add` that later fails on its own
-//     still consumes the budget (the hook runs before the command does), while retrying the same
-//     branch name doesn't double-count.
+//   - Requests stay pending. On subsequent Bash PreToolUse calls, Git's actual worktree list must
+//     match the requested repository, branch AND physical path before it counts as confirmed.
+//     No tool_response or pending prompt is approval evidence. Failed attempts consume no slot;
+//     a successful second creation is confirmed later without pretending this hook observed approval.
+//   - This observation-based guard cannot attribute an identical creation by another process or
+//     serialize simultaneous unobserved first requests. State is local/best-effort, not authority.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
+import { observationCache, queueRequests, reconcile, requestedWorktree, saveSession, sessionState, unseenRequests } from '../lib/worktree-session-state.mjs';
 import {
   firstSubcommand,
   GIT_VALUE_GLOBAL,
@@ -117,13 +121,20 @@ const ask = (reason, code) => decide('ask', reason, code);
 
 // `git worktree add`'s own value flags — -b/-B are the new branch name, --reason is a --lock message.
 const VALUE_WORKTREE_ADD = new Set(['-b', '-B', '--reason']);
+const literal = (word) => word.length >= 2 && ['"', "'"].includes(word[0]) && word.slice(-1) === word[0] ? word.slice(1, -1) : word;
 
 // `git [global opts] worktree add [flags...] <path> [<ref>]` -> { newBranch, ref } | null (not a match).
-function parseWorktreeAdd(rawToks) {
+function parseWorktreeAdd(rawToks, cwd) {
   const toks = stripPrefix(rawToks);
   if (toks[0] !== 'git') return null;
   const wIdx = firstSubcommand(toks, 1, GIT_VALUE_GLOBAL);
   if (toks[wIdx] !== 'worktree' || toks[wIdx + 1] !== 'add') return null;
+  for (let g = 1; g < wIdx; g++) {
+    if (toks[g] === '-C') { g++; if (cwd) cwd = resolve(cwd, toks[g]); }
+    else if (cwd && toks[g].startsWith('-C') && toks[g].length > 2) cwd = resolve(cwd, toks[g].slice(2));
+    // Unmodelled explicit plumbing must never be attributed to the wrong repository.
+    else if (/^--(git-dir|work-tree)(=|$)/.test(toks[g])) cwd = null;
+  }
   let i = wIdx + 2;
   let explicitNewBranch = false;
   let detachOrOrphan = false;
@@ -153,7 +164,7 @@ function parseWorktreeAdd(rawToks) {
     : dwimNewBranch && positional[0]
       ? basename(positional[0])
       : null;
-  return { newBranch: explicitNewBranch || dwimNewBranch, ref: positional[1] ?? null, branch };
+  return { newBranch: explicitNewBranch || dwimNewBranch, ref: positional[1] ?? null, branch, path: positional[0], cwd };
 }
 
 // Per-session record of feature branches this session already opened a worktree for. Best-effort:
@@ -162,22 +173,6 @@ function parseWorktreeAdd(rawToks) {
 function sessionStatePath(sessionId) {
   const safe = String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
   return safe ? join(root, '.loop', `worktree-gate.${safe}.json`) : null;
-}
-function readSessionBranches(file) {
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8'));
-    return Array.isArray(parsed?.branches) ? parsed.branches.filter((b) => typeof b === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-function writeSessionBranches(file, branches) {
-  try {
-    if (!existsSync(dirname(file))) mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify({ branches })}\n`);
-  } catch {
-    /* best-effort — a state-write failure must not change this hook's verdict */
-  }
 }
 
 // -- Detection (fail-open: an uncertain parse / a non-target command passes) -------------------------
@@ -190,10 +185,20 @@ try {
 if (payload?.tool_name !== 'Bash') allow();
 const cmd = payload?.tool_input?.command;
 if (typeof cmd !== 'string' || !cmd) allow();
+const sid = typeof payload.session_id === 'string' ? payload.session_id : '';
+const stateFile = env.LOOP_WORKTREE_SESSION_GATE_OFF !== '1' && sid ? sessionStatePath(sid) : null;
+const observe = observationCache();
+const state = stateFile ? reconcile(sessionState(stateFile), observe) : null;
+if (stateFile) saveSession(stateFile, state); // even a later non-creation command can confirm execution
 
 let segs;
 try {
-  segs = splitSegments(stripHeredocs(cmd)).map(tokenize).map(parseWorktreeAdd).filter(Boolean);
+  let cwd = typeof payload.cwd === 'string' ? payload.cwd : root;
+  segs = splitSegments(stripHeredocs(cmd)).map((segment) => tokenize(segment).map(literal)).map((tokens) => {
+    const plain = stripPrefix(tokens);
+    if (plain[0] === 'cd' && plain.length === 2) cwd = resolve(cwd, plain[1]);
+    return parseWorktreeAdd(tokens, cwd);
+  }).filter(Boolean);
 } catch {
   allow();
 }
@@ -224,24 +229,22 @@ try {
 
   // -- Every origin/* check passed. Now the session-scope escalation (see header) ------------------
   // Deliberately after the deny checks: a command that never runs must not consume the budget.
-  if (env.LOOP_WORKTREE_SESSION_GATE_OFF !== '1') {
-    const sessionId = typeof payload?.session_id === 'string' ? payload.session_id : '';
-    const stateFile = sessionId ? sessionStatePath(sessionId) : null;
     if (stateFile) {
       const prefix = featureBranchPrefix(root);
-      const newFeatureBranches = segs
+      const requests = segs
         .filter((s) => s.newBranch && typeof s.branch === 'string' && s.branch.startsWith(prefix))
-        .map((s) => s.branch);
-      if (newFeatureBranches.length) {
-        const seen = readSessionBranches(stateFile);
-        const unseen = newFeatureBranches.filter((b) => !seen.includes(b));
+        .map(requestedWorktree).filter(Boolean);
+      if (requests.length) {
+        const unseen = unseenRequests(state, requests);
+        const requiresApproval = state.confirmed.length + unseen.length > 1;
+        queueRequests(state, requests, observe, requiresApproval);
+        saveSession(stateFile, state); // pending prompts remain pending, including denied/cancelled retries
         if (unseen.length) {
-          const after = [...seen, ...unseen];
-          writeSessionBranches(stateFile, after);
-          if (after.length > 1) {
+          if (requiresApproval) {
             ask(
-              `REQUIRE (human approval): this session already opened a ${prefix}* worktree ` +
-                `(${seen.join(', ')}), and this creates another one (${unseen.join(', ')}). One run ` +
+              `REQUIRE (human approval): this session has ${state.confirmed.length} Git-confirmed ${prefix}* branch(es) ` +
+                `(${state.confirmed.map((r) => r.branch).join(', ') || 'none'}); this command requests ` +
+                `${unseen.map((r) => r.branch).join(', ')}. One run ` +
                 `takes one issue to an open PR and stops there — starting a second feature in the ` +
                 `same session is a scope-boundary decision a human makes, not the run. Approve if ` +
                 `that's intended; otherwise finish (or hand off) the first one in a fresh session.`,
@@ -251,7 +254,6 @@ try {
         }
       }
     }
-  }
   allow();
 } catch (e) {
   deny(

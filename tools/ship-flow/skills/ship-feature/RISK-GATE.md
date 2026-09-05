@@ -27,14 +27,23 @@ changes a payment amount); never to argue a rule-matched change back down.
 deliberate:
 
 - **On the verdict channel** (what `ship-feature` uses): log the evidence — run the same
-  classification again with `--render-md` and paste the markdown block into the PR — and proceed.
+  classification again with `--render-md` and paste the markdown block into the authorized PR draft.
+  Continue only already-authorized reversible work; this is not a new publication permission.
   Human review happens at the PR/merge boundary that already exists, so the run doesn't stall
   waiting on someone.
 - **On a command-execution channel** (a `PreToolUse` hook, where one is wired): block the command
-  instead. There is no later boundary there — the command either runs or it doesn't.
+  instead. Do not switch tools or reinterpret a verdict-channel result to evade that denial.
 
 Treating exit 11 as "stop and wait for a human" on the verdict channel is a common misreading; that
 is what exit 10 (`REQUIRE`) is for.
+
+Check REQUIRE against the authorization record **before the named action**. Reuse matching approval
+for the action within its approved scope; otherwise prepare the reviewable result and ask. Necessary
+implementation edits do not consume that scope's authorization. Changed content/head/base invalidates
+only an affected reviewed or explicitly artifact-bound approval (such as a merge or reviewed publish),
+not ongoing implementation authority; refresh verification and obtain that action's approval when due.
+New effects outside approved scope still need authority. `AUTO` stays inside existing authority. A planning-only
+`--no-gate` lookup routes the work but grants nothing. Resolution/usage errors are unresolved, not AUTO.
 
 ## What the rule set typically covers
 

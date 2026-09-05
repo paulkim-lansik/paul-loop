@@ -1,3 +1,4 @@
+import { backedLesson } from '../../loop-engine/test/helpers/backed-lesson.mjs';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   decideLessonReap,
   lessonStub,
-  readLessonRecords,
-  readVerifiedLessons,
+  readLessonRecords as readRecords,
+  readVerifiedLessons as readVerified,
 } from '../src/lessons';
 
 // 순수 로직 단위 테스트(DB 불필요) — BAC-580: 승격 게이트(retired/challenge.verdict=reject)가
@@ -14,6 +15,8 @@ import {
 // 지켜지는지 증명한다.
 
 let dir: string;
+const readLessonRecords = (root: string) => readRecords(root, { root });
+const readVerifiedLessons = (root: string) => readVerified(root, { root });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'loop-lessons-unit-'));
@@ -24,7 +27,8 @@ afterEach(() => {
 });
 
 function write(id: string, patch: Record<string, unknown>) {
-  writeFileSync(join(dir, `${id}.json`), JSON.stringify({ id, verified: true, ...patch }));
+  const l = { id, verified: true, ...patch };
+  writeFileSync(join(dir, `${id}.json`), JSON.stringify(backedLesson(l, dir)));
 }
 
 describe('readVerifiedLessons — ADD 대상 필터(BAC-580)', () => {

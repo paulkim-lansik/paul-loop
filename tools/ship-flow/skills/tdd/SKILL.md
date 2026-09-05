@@ -1,7 +1,9 @@
 ---
 name: tdd
-description: Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks for test-first development.
+description: Test-driven development with a bounded red-green loop and review-stage refactoring. Use when user wants to build features or fix bugs using TDD, mentions "red-green-refactor", wants integration tests, or asks for test-first development.
 ---
+
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
 
 # Test-Driven Development
 
@@ -27,7 +29,11 @@ See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking g
 
 A **seam** is the public boundary you test at — the interface where you observe behavior without reaching inside. Tests live at seams, never against internals.
 
-**Test only at pre-agreed seams.** Before writing any test, write the seams under test down and confirm them with the user. No test is written at an unconfirmed seam. You can't test everything, so agreeing the seams up front is how testing effort lands on critical paths and complex logic instead of every edge case.
+**Test at documented seams.** Reuse the caller's plan, settled decisions, and authorization. Before
+writing a test, identify the public seam and the behavior it proves. Choose an existing or clearly
+justified reversible seam within scope without another approval round. Ask only if the choice changes
+the product contract, widens scope, or needs an approval that is not already present. Prioritize
+critical paths and complex logic; do not make the user re-approve ordinary test design.
 
 When the shape of that boundary is itself in question — how deep the module should be, where the seam belongs, what the interface should expose — call the Skill tool with "codebase-design" for the vocabulary. It owns the module/interface/depth/**seam**/adapter/leverage/locality terms, and it is a reference to consult, not a session to run. For the narrower question of shaping an interface so it can be tested at all (inject dependencies, return results instead of mutating, keep the surface small), see [interface-design.md](interface-design.md).
 
@@ -83,16 +89,16 @@ When exploring the codebase, read `CONTEXT.md` (if it exists) so that test names
 
 Before writing any code:
 
-- [ ] Confirm with user what interface changes are needed
-- [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Confirm the exact **seams** under test (see [Seams](#seams-where-tests-go)) — no test gets written at an unconfirmed seam
+- [ ] Reuse the caller's required interface changes and settled behavior priorities
+- [ ] Record the exact **seams** under test and why they prove the required behavior
+- [ ] Resolve remaining reversible choices within the authorized scope
 - [ ] Design interfaces for [testability](interface-design.md)
 - [ ] List the behaviors to test (not implementation steps)
-- [ ] Get user approval on the plan
+- [ ] Check inherited authorization; return only unresolved material decisions to the caller
 
-Ask: "What should the public interface look like? Which seams should we test, and which behaviors are most important there?"
-
-**You can't test everything.** Confirm with the user exactly which behaviors matter most. Focus testing effort on critical paths and complex logic, not every possible edge case.
+**You can't test everything.** Use the acceptance criteria to prioritize critical paths and complex
+logic. If a missing priority would materially change the result, ask that narrow question while
+continuing independent authorized work. An approved plan does not need another approval at this step.
 
 ### 2. Tracer Bullet
 

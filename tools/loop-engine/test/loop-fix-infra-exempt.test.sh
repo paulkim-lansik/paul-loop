@@ -48,22 +48,31 @@ grep -q "MAX-ITER" .loop/history.log && fail "case2: infra cap must abort before
 C="$WORK/c3"; mkdir -p "$C"; cd "$C" || fail "cd c3"
 cat > fake-verify.sh <<'EOF'
 #!/bin/sh
-n=$(cat n 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > n
+n=$(cat .loop/n 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > .loop/n
 if [ "$n" -eq 1 ]; then
   echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
   exit 1
 fi
-if [ "$n" -eq 2 ]; then
+if [ "$(cat app-state)" != fixed ]; then
   echo "FAILED src/app.test.ts > real assertion broke"
   exit 1
 fi
 echo ok
 exit 0
 EOF
-"$LOOPFIX" --verify 'sh fake-verify.sh' --fix ':' --lessons lessons --max-iter 3 >/dev/null 2>&1
+# The verifier's operational counter is ignored; only a genuine fixer change to tracked product
+# state can converge. Stable FAIL/PASS receipts must differ BETWEEN attempts, never during verify.
+printf '.loop/\nlessons/\n' > .gitignore
+printf broken > app-state
+git init -q
+git add .gitignore fake-verify.sh app-state
+git -c user.name=Fixture -c user.email=fixture@local commit -qm initial
+"$LOOPFIX" --verify 'sh fake-verify.sh' --fix 'printf fixed > app-state' --guard-mutation --lessons lessons --max-iter 3 >/dev/null 2>&1
 code=$?
 [ "$code" -eq 0 ] || fail "case3: expected PASS, got exit $code"
 ls lessons/*.json >/dev/null 2>&1 || fail "case3: expected a verified lesson to be recorded"
+grep -q '"verified": true' lessons/*.json || fail "case3: lesson must be verified by the actual FAIL-to-PASS receipt pair"
+[ "$(cat .loop/n)" = 3 ] || fail "case3: expected one infra attempt, one real failure, then PASS"
 grep -ril "docker" lessons | grep -q . && fail "case3: lesson signature polluted with infra failure text"
 
 # ── case 4: 인프라 서명 + 러너 실패 마커 공존 → 인프라 아님(코드 실패 — fixer 디스패치) ─────

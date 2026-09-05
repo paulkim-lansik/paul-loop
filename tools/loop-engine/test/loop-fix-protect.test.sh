@@ -491,7 +491,7 @@ cmp -s guard-file.txt original-guard-file.txt \
 # ── case 15: round-6 — VERDICT-RUN-ERROR (exit 2) is a seventh abort point that used to skip ────
 # check_protected_on_abort() entirely (adversarial review found six call sites had it, this one
 # didn't). Fixer synchronously destroys the git worktree in the SAME iteration it backgrounds a
-# delayed protected-file mutation; the next iteration's --guard-mutation hits verdict-run's own
+# protected-file mutation waiting for the next guard rejection; --guard-mutation hits verdict-run's own
 # fail-closed rejection ("needs a git worktree") before the mutation would otherwise be noticed by
 # anything else. Must still restore + warn, while VERDICT-RUN-ERROR (2) stays 2, not 0 or 3.
 C="$WORK/c15"; mkdir -p "$C"; cd "$C" || fail "cd c15"
@@ -509,7 +509,18 @@ cat > fake-fix-delay-and-break-git.sh <<'EOF'
 #!/bin/sh
 if [ ! -f armed.marker ]; then
   touch armed.marker
-  ( sleep 0.4; printf 'CHEAT-STRING-c15\n' > guard-file.txt ) &
+  (
+    # Order against the actual rejection, not process-startup latency: durable checkpoints and
+    # the runner's loader can legitimately make a fixed sleep fire at the earlier fixer check.
+    # The stderr observation appears before check_protected_on_abort's grace-period recheck.
+    tries=0
+    until grep -q 'needs a git worktree' .loop/verdict-run.err 2>/dev/null; do
+      tries=$((tries + 1)); [ "$tries" -lt 1000 ] || exit 1
+      sleep 0.01
+    done
+    printf 'CHEAT-STRING-c15\n' > guard-file.txt
+    touch mutation-observed.marker
+  ) &
   rm -rf .git
 fi
 EOF
@@ -517,6 +528,7 @@ EOF
 LOOP_PROTECT_GRACE_SEC=0.2 "$LOOPFIX" --verify 'sh fake-verify-fail.sh' --fix 'sh fake-fix-delay-and-break-git.sh' --protect 'guard-file.txt' --guard-mutation --max-iter 3 >/dev/null 2>&1
 code=$?
 [ "$code" -eq 2 ] || fail "case15: expected exit 2 (VERDICT-RUN-ERROR, its own reason — the missing git worktree) got $code"
+[ -f mutation-observed.marker ] || fail "case15: protected mutation did not occur after the observed guard rejection"
 grep -q "done: VERDICT-RUN-ERROR" .loop/history.log || fail "case15: expected the run to still report VERDICT-RUN-ERROR, unchanged by the protect hygiene check"
 grep -q "done: PROTECTED-VIOLATION" .loop/history.log \
   && fail "case15: must NOT reclassify the exit reason — VERDICT-RUN-ERROR stays VERDICT-RUN-ERROR"

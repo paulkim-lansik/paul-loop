@@ -4,6 +4,8 @@ description: Maintenance check for installed Claude Code extensions (marketplace
 context: fork
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # deps-audit — extension maintenance dashboard
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -34,7 +36,15 @@ plugin's path. `deps-audit.mjs` takes **no `--` separator** — its flags go dir
 {{pluginBinPrefix}}deps-audit.mjs --refresh-provenance  # regenerate the sidecar (run after `npx skills update`)
 ```
 
-If `CLAUDE_PROJECT_DIR` isn't set, it treats CWD as the project (run from the repo root). Each run (including `--json`) stamps `.loop/deps-audit.last` with a timestamp so a weekly heartbeat, if this repo has one, can throttle re-runs.
+If `CLAUDE_PROJECT_DIR` isn't set, it treats CWD as the project. Check the installed command's actual
+write behavior before invoking it: versions that stamp `.loop/deps-audit.last` (including `--json`)
+would change the audited repository. Use a verified non-writing mode or a necessary isolated fixture
+whose outputs cannot affect audited resources; otherwise inspect permitted manifests directly and
+report unavailable coverage. An explicit no-write-anywhere request also rules out temporary fixtures,
+clones and caches. Do not invent a
+`--no-stamp` flag or broaden a source-only audit into reading global settings/session history.
+`--deep` may create needed isolated disposable clones within the investigation unless those writes
+are forbidden. `--refresh-provenance` writes a global sidecar and needs that separate scope.
 
 ## What it reads (source of truth)
 
@@ -62,14 +72,20 @@ If `CLAUDE_PROJECT_DIR` isn't set, it treats CWD as the project (run from the re
 ## Maintenance workflow (recommended)
 
 1. **Weekly**: when a heartbeat nudges, run `/deps-audit` (fast) as a sweep.
-2. **Update**: `🟠` (zero local edits) is safe to bulk-update via `npx skills update -g`. For `🟡`, eyeball the real patch first, then do a 3-way merge (`~/.agents/.skill-provenance.json`'s `installBaseCommit` is the merge base).
+2. **Update proposal**: `🟠` (zero local edits) is a compatibility candidate, not authorization to
+   update every global skill. Review the exact targets; apply only explicitly authorized updates.
+   For `🟡`, inspect the real patch and propose a 3-way merge using the recorded install base.
    → **Run `--refresh-provenance` right after updating** to reset the fast staleness verdict (skip it and the next fast run will false-flag as stale again). Deep self-corrects its base off `updatedAt`, so a stale sidecar doesn't break it.
 3. **Cleanup**: confirmed removal candidates (disabled-and-unused plugins, skills unused for 90d+) go through user approval before `npx skills remove -g -y <name…>` / `claude plugin uninstall <plugin>`. Destructive, so never auto-delete — back up the lock file first. Refresh provenance after removing.
-4. **gstack**: if it's behind, run `/gstack-upgrade` (if this repo's owner uses gstack).
-5. If this repo's owner tracks skill/plugin maintenance notes in some external memory or notes tool, divergence strategy and past corrections are worth logging there — specific skill names rot too fast to be worth hardcoding into this file.
+4. **gstack**: if behind, propose its documented upgrade; execute only within explicit update scope.
+5. Return maintenance notes in the requested report. Writing external memory/notes needs explicit
+   authorization; a useful insight does not authorize storing it elsewhere.
 
 ## Discipline
 
-- **Read-only reporter.** This skill never deletes or updates anything — it only produces the judgment inputs. Removal and updates require human approval.
+- **Reporter by default.** Complete the judgment inputs without installing/updating/removing plugins.
+  A separately authorized maintenance action follows its exact target scope. Preserve the installed
+  command's real side-effect limits above. Read-only forbids stamps/sidecar changes in audited or live
+  resources; needed isolated disposable clones and test outputs are allowed unless expressly forbidden.
 - **Provenance never touches the lock file** — it lives in a separate sidecar (`~/.agents/.skill-provenance.json`). A skills.sh reinstall overwriting the lock file doesn't affect it.
 - Fail-open: if `gh`, the network, or a file is missing, it reports what it can without crashing.

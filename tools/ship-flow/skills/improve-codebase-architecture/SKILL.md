@@ -3,6 +3,8 @@ name: improve-codebase-architecture
 description: Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in docs/adr/. Use when the user wants to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable and AI-navigable.
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # Improve Codebase Architecture
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
@@ -54,7 +56,7 @@ For each candidate, the same template as before, but rendered as a card:
 
 - **Files** — which files/modules are involved
 - **Problem** — why the current architecture is causing friction
-- **Solution** — plain English description of what would change
+- **Solution** — plain-language description in `outputLanguage` of what would change
 - **Benefits** — explained in terms of locality and leverage, and how tests would improve
 - **Before / After diagram** — side-by-side, custom-drawn, illustrating the shallowness and the deepening
 - **Recommendation strength** — one of `Strong`, `Worth exploring`, `Speculative`, rendered as a badge
@@ -67,7 +69,12 @@ End the report with a **Top recommendation** section: which candidate you'd tack
 
 See [HTML-REPORT.md](HTML-REPORT.md) for the full HTML scaffold, diagram patterns, and styling guidance.
 
-Do NOT propose interfaces yet. After the file is written, ask the user: "Which of these would you like to explore?"
+For an exploration request, return the concrete opportunity report before asking for a missing
+choice. If the caller already selected an opportunity or authorized its bounded implementation, reuse
+that scope and continue. A read-only repository review may create the requested isolated temporary
+HTML report without editing the repo. If the user forbids all writes or that artifact write, return
+the report in the conversation. Interface design follows the selected scope; exploration alone is not implementation
+or publication authorization.
 
 ### 3. Grilling loop
 

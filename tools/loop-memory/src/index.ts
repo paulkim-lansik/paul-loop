@@ -60,3 +60,6 @@ export {
 } from './ops';
 export { signContent, signingKeyFromEnv, verifySignature } from './provenance';
 export * as schema from './schema/index';
+
+export { bindStore, repositoryIdentity, MemoryError, type StoreContext } from './store';
+export { signNote, verifyNote } from './provenance';

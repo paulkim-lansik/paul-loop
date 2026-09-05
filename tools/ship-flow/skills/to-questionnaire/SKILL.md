@@ -4,6 +4,8 @@ description: Turn a decision you can't fully answer into a questionnaire for som
 disable-model-invocation: true
 ---
 
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
+
 # To Questionnaire
 
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from

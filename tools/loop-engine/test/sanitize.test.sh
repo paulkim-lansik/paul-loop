@@ -82,10 +82,10 @@ grep -q hunter2 "$DIR/t8.log" || fail "T8: LOOP_SANITIZE_OFF=1 must leave the lo
 
 # T9: lessons 대칭 배선 — 저장 JSON에 시크릿 부재 AND 같은 원문 서명 재-record가 같은 키에 적중(count=2).
 LDIR="$DIR/ls"
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --fix "export PASSWORD=hunterX99 후 재시도" --verified --lessons "$LDIR" >/dev/null || fail "T9: record #1 failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --fix "export PASSWORD=hunterX99 후 재시도" --verified --lessons "$LDIR" >/dev/null || fail "T9: record #1 failed"
 grep -rq abc123xyz "$LDIR" && fail "T9: signature secret persisted in the lessons store"
 grep -rq hunterX99 "$LDIR" && fail "T9: fix secret persisted in the lessons store"
-ROUT="$(node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --verified --lessons "$LDIR")" || fail "T9: record #2 failed"
+ROUT="$(node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: boom token=abc123xyz") --verified --lessons "$LDIR")" || fail "T9: record #2 failed"
 printf '%s' "$ROUT" | grep -q 'count=2' || fail "T9: same raw signature must hit the same key (record/recall symmetry): $ROUT"
 
 # T10: 리뷰 회귀 — assertion operand·진단 어휘 보존 (lessons 서명 불변식·loop-fix stall 오탐 방지).
@@ -137,7 +137,7 @@ fi
 
 # T16: lessons --signature-file 분기(loop-fix 정본 경로)도 살균 대칭 — 저장 JSON에 시크릿 부재.
 printf 'FAIL: boom token=sigfileleak77\n' > "$DIR/sig.txt"
-node "$LESSONS" record --signature-file "$DIR/sig.txt" --verified --lessons "$DIR/ls2" >/dev/null || fail "T16: record via signature-file failed"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file "$DIR/sig.txt" --verified --lessons "$DIR/ls2" >/dev/null || fail "T16: record via signature-file failed"
 grep -rq sigfileleak77 "$DIR/ls2" && fail "T16: signature-file secret persisted in the lessons store"
 
 # T17: 값 자체가 시크릿인 모양(키 없이 맨몸으로 착지한 자격증명).

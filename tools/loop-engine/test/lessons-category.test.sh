@@ -16,7 +16,7 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
-L() { node "$LESSONS" "$@" --lessons "$DIR"; }
+L() { node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" "$@" --lessons "$DIR"; }
 
 # 1) record with no --category defaults to engineering.
 L record --signature-file <(printf '%s\n' "FAIL: flaky ci runner timed out") --verified --title "ci timeout" >/dev/null \

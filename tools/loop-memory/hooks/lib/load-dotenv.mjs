@@ -65,6 +65,7 @@ export const ALLOWED_KEYS = Object.freeze([
   // connection
   'LOOP_DATABASE_URL',
   'LOOP_EMBED_PROVIDER',
+  'LOOP_EMBED_MODEL',
   // recall tuning — numeric thresholds, no behaviour switch
   'LOOP_RECALL_MAX_DISTANCE',
   'LOOP_KNOWLEDGE_MAX_DISTANCE',

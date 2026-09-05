@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import type { Pool } from 'pg';
 import type { LoopDb } from './client';
 import type { Embedder } from './embedding';
 import { addNote, noop, type RecallHit, softDeleteNote, toVectorLiteral, updateNote } from './ops';
 import { memoryNote } from './schema/memory';
+import { signNote, verifyNote } from './provenance';
+import { storeContext, MemoryError, sha256 } from './store';
+import { assertEmbedder, memoryNoteColumns } from './ops';
+import { sanitizeMemory } from '../hooks/lib/privacy.mjs';
 
 /**
  * META 지식 코퍼스 → loop-memory 졸업 (ADR-0033).
@@ -53,7 +57,7 @@ export function sha8(s: string): string {
 // 후계" 같은 산문이 있어도 오탐하지 않게(0000-template 지정자: 제안됨·승인됨·폐기됨·대체됨).
 const SUPERSEDED_RE = /^\**\s*(폐기|대체|superseded|deprecated)/i;
 // 서두의 `- **상태**: <값>` 한 줄.
-const STATUS_RE = /^-\s*\*\*상태\*\*\s*:\s*(.+)$/m;
+const STATUS_RE = /^(?:-\s*)?\*\*(?:상태|status)\*\*\s*:\s*(.+)$/im;
 // 1번째 줄 `# ADR-NNNN: <제목>`.
 const TITLE_RE = /^#\s+ADR-\S+:\s*(.+)$/m;
 // 정확히 `## ` 섹션 헤딩(### 하위섹션은 매칭 안 됨 → 부모 본문에 흡수).
@@ -224,6 +228,7 @@ export function parseContextChunks(markdown: string): KnowledgeChunk[] {
 }
 
 export interface KnowledgeSyncResult {
+  incomplete?: true;
   added: number;
   updated: number;
   deleted: number;
@@ -234,6 +239,7 @@ export interface KnowledgeSyncResult {
 }
 
 const HASH_PREFIX = 'hash:';
+const opaqueKey = (tag: string, key: string) => `${tag}:${sha256(key)}`;
 const noteKeywords = (chunk: KnowledgeChunk): string[] => [
   chunk.key,
   `${HASH_PREFIX}${chunk.hash}`,
@@ -283,9 +289,12 @@ export async function syncKnowledge(
   pool: Pool,
   embedder: Embedder,
   tag: string,
-  desired: KnowledgeChunk[],
+  desiredSource: KnowledgeChunk[] | (() => KnowledgeChunk[] | null),
   source?: string,
 ): Promise<KnowledgeSyncResult> {
+  const ctx = storeContext(db, true);
+  assertEmbedder(db, embedder);
+  if (!/^kb:[a-zA-Z0-9_:-]+$/.test(tag)) throw new MemoryError('knowledge_source_invalid');
   const client = await pool.connect();
   try {
     const lock = await client.query<{ locked: boolean }>(
@@ -302,17 +311,22 @@ export async function syncKnowledge(
     }
 
     try {
+      // Filesystem adapters pass a reader, never a pre-lock snapshot. Arrays remain an explicit
+      // caller-supplied snapshot API; they do not establish freshness of an external source.
+      const snapshot = typeof desiredSource === 'function' ? desiredSource() : desiredSource;
+      if (snapshot === null) return { added: 0, updated: 0, deleted: 0, noop: 0, incomplete: true };
+      if (snapshot.some(c => c.tag !== tag) || new Set(snapshot.map(c => c.key)).size !== snapshot.length) throw new MemoryError('knowledge_source_invalid');
+      const desired = snapshot.map(c => { const content = sanitizeMemory(c.content); return { ...c, content, hash: sha256(content) }; });
       const stored = await db
-        .select({ id: memoryNote.id, keywords: memoryNote.keywords })
+        .select(memoryNoteColumns())
         .from(memoryNote)
-        .where(and(isNull(memoryNote.deletedAt), sql`${tag} = any(${memoryNote.tags})`));
+        .where(and(isNull(memoryNote.deletedAt), eq(memoryNote.corpus, tag), eq(memoryNote.ownerId, ctx.owner)));
 
-      const byKey = new Map<string, { id: string; hash: string }>();
+      const byKey = new Map<string, { id: string; hash: string; valid: boolean }>();
       for (const n of stored) {
-        const key = n.keywords.find((k) => !k.startsWith(HASH_PREFIX));
-        const hash =
-          n.keywords.find((k) => k.startsWith(HASH_PREFIX))?.slice(HASH_PREFIX.length) ?? '';
-        if (key) byKey.set(key, { id: n.id, hash });
+        const key = n.sourceKey;
+        const hash = n.contentHash;
+        if (key) byKey.set(key, { id: n.id, hash, valid: verifyNote(n, ctx) });
       }
 
       const result: KnowledgeSyncResult = { added: 0, updated: 0, deleted: 0, noop: 0 };
@@ -324,11 +338,11 @@ export async function syncKnowledge(
       const toNoop: string[] = [];
 
       for (const chunk of desired) {
-        desiredKeys.add(chunk.key);
-        const existing = byKey.get(chunk.key);
+        desiredKeys.add(opaqueKey(tag, chunk.key));
+        const existing = byKey.get(opaqueKey(tag, chunk.key));
         if (!existing) {
           toAdd.push(chunk);
-        } else if (existing.hash === chunk.hash) {
+        } else if (existing.hash === chunk.hash && existing.valid) {
           toNoop.push(existing.id);
         } else {
           toUpdate.push({ chunk, noteId: existing.id });
@@ -343,6 +357,11 @@ export async function syncKnowledge(
         ...toUpdate.map((u) => u.chunk.content),
       ];
       const embeddings = embedTargets.length > 0 ? await embedder.embedBatch(embedTargets) : [];
+      if (embeddings.length !== embedTargets.length) throw new MemoryError('embedding_batch_count_mismatch');
+      for (const v of embeddings) {
+        if (v.length !== embedder.dimensions) throw new MemoryError('embedding_dimensions_mismatch');
+        toVectorLiteral(v);
+      }
 
       // 3차: 실제 쓰기 — 사전 계산된 임베딩을 넘겨 addNote/updateNote가 재임베드하지 않게(ops.ts).
       // 노트별 개별 auto-commit(트랜잭션 아님) — 12s 타임아웃에 잘려도 그때까지 커밋분은 살아남는다.
@@ -352,7 +371,8 @@ export async function syncKnowledge(
           content: chunk.content,
           keywords: noteKeywords(chunk),
           // 수렴 대상 네임스페이스(tag)로 저장 — chunk.tag가 아니라 tag로 불변식을 구조적으로 보장.
-          tags: [tag],
+          tags: [tag], corpus: tag, sourceKey: opaqueKey(tag, chunk.key),
+          provenance: signNote(chunk.content, tag, opaqueKey(tag, chunk.key), ctx),
           context: chunk.context,
           embedding: embeddings[ei++],
           source,
@@ -362,6 +382,7 @@ export async function syncKnowledge(
       for (const { chunk, noteId } of toUpdate) {
         await updateNote(db, embedder, noteId, {
           content: chunk.content,
+          provenance: signNote(chunk.content, tag, opaqueKey(tag, chunk.key), ctx),
           keywords: noteKeywords(chunk),
           context: chunk.context,
           embedding: embeddings[ei++],
@@ -391,6 +412,15 @@ export async function syncKnowledge(
 }
 
 // 파싱 제외: 템플릿·인덱스.
+function sourceText(path: string): string {
+  if (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink()) throw new MemoryError('source_symlink');
+  return readFileSync(path, 'utf8');
+}
+function validateParsed(text: string, chunks: KnowledgeChunk[], retired = false) {
+  if (!chunks.length && text.trim() && !retired && !text.includes('<!-- loop-memory: empty -->')) throw new MemoryError('source_format_unrecognized');
+  return chunks;
+}
+
 const SKIP_FILES = new Set(['0000-template.md', 'README.md']);
 
 /**
@@ -404,17 +434,23 @@ export async function graduateKnowledge(
   adrDir: string,
   source?: string,
 ): Promise<KnowledgeSyncResult> {
-  const desired: KnowledgeChunk[] = [];
-  for (const f of readdirSync(adrDir)) {
-    if (!f.endsWith('.md') || SKIP_FILES.has(f)) continue;
-    const adrId = f.match(/^(\d+)/)?.[1];
-    if (!adrId) continue;
-    desired.push(...parseAdrChunks(readFileSync(join(adrDir, f), 'utf8'), adrId));
-  }
-  // 안전장치: 빈 결과는 잘못 가리킨 디렉토리일 개연이 크다 → 전체 코퍼스를 지우지 않고 no-op.
-  // (실 ADR 디렉토리는 항상 비-폐기 ADR을 하나 이상 낸다. 진짜 전량 삭제는 이 경로로 하지 않는다.)
-  if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, ADR_TAG, desired, source);
+  storeContext(db, true);
+  return syncKnowledge(db, pool, embedder, ADR_TAG, () => {
+    const desired: KnowledgeChunk[] = [];
+    const files = readdirSync(adrDir);
+    let parsed = 0;
+    for (const f of files) {
+      if (!f.endsWith('.md') || SKIP_FILES.has(f)) continue;
+      const adrId = f.match(/^(\d+)/)?.[1];
+      if (!adrId) continue;
+      parsed++;
+      const text = sourceText(join(adrDir, f));
+      desired.push(...validateParsed(text, parseAdrChunks(text, adrId), SUPERSEDED_RE.test(text.match(STATUS_RE)?.[1] ?? '')));
+    }
+    if (files.length && !parsed) return null;
+    // A parsed empty authoritative snapshot retracts its owner-scoped corpus.
+    return desired;
+  }, source);
 }
 
 /**
@@ -429,9 +465,11 @@ export async function graduateContext(
   contextPath: string,
   source?: string,
 ): Promise<KnowledgeSyncResult> {
-  const desired = parseContextChunks(readFileSync(contextPath, 'utf8'));
-  if (desired.length === 0) return { added: 0, updated: 0, deleted: 0, noop: 0 };
-  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, desired, source);
+  storeContext(db, true);
+  return syncKnowledge(db, pool, embedder, CONTEXT_TAG, () => {
+    const text = sourceText(contextPath);
+    return validateParsed(text, parseContextChunks(text));
+  }, source);
 }
 
 export interface GraduateMarkdownDirResult extends KnowledgeSyncResult {
@@ -455,27 +493,27 @@ export async function graduateMarkdownDir(
   // 무관한 별개 파라미터. 이름 충돌에 주의.
   source?: string,
 ): Promise<GraduateMarkdownDirResult> {
-  const desired: KnowledgeChunk[] = [];
+  storeContext(db, true);
   const skipped: { file: string; reason: string }[] = [];
-  for (const f of readdirSync(dir)) {
-    if (f.startsWith('.')) continue; // 진짜 숨김파일(.gitkeep 등) — 소스 후보조차 아님, 스킵 사유 불필요
-    if (!f.endsWith('.md')) {
-      const reason = f.toLowerCase().endsWith('.html')
-        ? 'HTML — 텍스트 추출 미구현(BAC-355 범위: 명시 제외)'
-        : '.md 아님(미지원 확장자)';
-      skipped.push({ file: f, reason });
-      continue;
+  const result = await syncKnowledge(db, pool, embedder, tag, () => {
+    const desired: KnowledgeChunk[] = [];
+    for (const f of readdirSync(dir)) {
+      if (f.startsWith('.')) continue; // 진짜 숨김파일(.gitkeep 등) — 소스 후보조차 아님, 스킵 사유 불필요
+      if (!f.endsWith('.md')) {
+        const reason = f.toLowerCase().endsWith('.html')
+          ? 'HTML — 텍스트 추출 미구현(BAC-355 범위: 명시 제외)'
+          : '.md 아님(미지원 확장자)';
+        skipped.push({ file: f, reason });
+        continue;
+      }
+      const docId = f.replace(/\.md$/, '');
+      const text = sourceText(join(dir, f));
+      desired.push(...validateParsed(text, parseMarkdownChunks(text, tag, docId, `${sourceLabel}/${f}`)));
     }
-    const docId = f.replace(/\.md$/, '');
-    desired.push(
-      ...parseMarkdownChunks(readFileSync(join(dir, f), 'utf8'), tag, docId, `${sourceLabel}/${f}`),
-    );
-  }
-  // 안전장치: graduateKnowledge/graduateContext와 동일(빈 결과 → no-op, 전체 삭제 방지).
-  const result =
-    desired.length === 0
-      ? { added: 0, updated: 0, deleted: 0, noop: 0 }
-      : await syncKnowledge(db, pool, embedder, tag, desired, source);
+    if (!desired.length && skipped.length) return null;
+    // Missing paths throw; a present empty directory is an authoritative empty snapshot.
+    return desired;
+  }, source);
   return { ...result, skipped };
 }
 
@@ -493,19 +531,15 @@ export async function recallKnowledge(
   k = 5,
   tags: string | string[] = KNOWLEDGE_TAGS,
 ): Promise<RecallHit[]> {
-  const literal = toVectorLiteral(await embedder.embed(query));
+  const ctx = assertEmbedder(db, embedder);
+  const literal = toVectorLiteral(await embedder.embed(sanitizeMemory(query, 2048)));
   const distance = sql<number>`${memoryNote.embedding} <=> ${literal}::vector`;
   const tagList = Array.isArray(tags) ? tags : [tags];
-  // drizzle의 sql`` 템플릿에 JS 배열을 직접 꽂으면 단일 배열 파라미터가 아니라 콤마로 펼쳐진 개별
-  // 파라미터가 되어(`&& ($2,$3,$4)::text[]`) 무효 SQL이 된다(실측: "cannot cast type record to
-  // text[]"). 대신 이미 검증된 단일-태그 패턴(`tag = any(tags)`, syncKnowledge와 동일)을 태그 개수만큼
-  // or()로 묶는다 — 새 바인딩 방식 없이 기존에 검증된 조각만 재사용.
-  const tagFilter = or(...tagList.map((t) => sql`${t} = any(${memoryNote.tags})`));
-  const rows = await db
-    .select({ id: memoryNote.id, content: memoryNote.content, distance })
-    .from(memoryNote)
-    .where(and(isNull(memoryNote.deletedAt), sql`${memoryNote.embedding} is not null`, tagFilter))
-    .orderBy(distance)
-    .limit(k);
-  return rows.map((r) => ({ id: r.id, content: r.content, distance: Number(r.distance) }));
+  if (tagList.length === 0) return [];
+  const tagFilter = or(...tagList.map(t => eq(memoryNote.corpus, t)));
+  const rows = await db.select({ ...memoryNoteColumns(), distance }).from(memoryNote)
+    .where(and(isNull(memoryNote.deletedAt), eq(memoryNote.ownerId, ctx.owner), eq(memoryNote.embeddingId, ctx.embeddingId), sql`${memoryNote.embedding} is not null`, tagFilter))
+    .orderBy(distance);
+  return rows.filter(r => verifyNote(r, ctx)).slice(0, k)
+    .map(r => ({ id: r.id, content: sanitizeMemory(r.content), distance: Number(r.distance) }));
 }

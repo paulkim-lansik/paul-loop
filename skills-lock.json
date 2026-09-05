@@ -6,7 +6,7 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/ask-matt/SKILL.md",
       "localPath": "tools/ship-flow/skills/ask-paul/SKILL.md",
-      "computedHash": "aed70b7d9c7259898e4e8d36a9cb76dcddda8d14fb937e76226e9d54da7fd000",
+      "computedHash": "b2abba5a688824c9774948a9a72850c0ebd2ea2983e64fd6cd277024f8da88d2",
       "fork": {
         "reason": "Rewritten, not ported: upstream routes over ~15 skills this plugin does not ship. Receiving upstream's body would fill it with handoffs to nothing. Renamed ask-matt -> ask-paul in ship-flow 0.9.0 because the body shares no text with upstream and the old name misdescribed what it routes over; the entry stays here to keep tracking upstream's version as a source of ideas, not of text.",
         "since": "2026-08-26"
@@ -17,7 +17,7 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/code-review/SKILL.md",
       "localPath": "tools/ship-flow/skills/code-review/SKILL.md",
-      "computedHash": "8165690e080c18771f7f49ceab5538b60da664d3fd01300c0776f597bb6beeef",
+      "computedHash": "cc5879fa4b71dd0b90ce8e3c79aa8450d49e87e2039b6f1010279abafe4469a1",
       "fork": {
         "reason": "Upstream's only substantive change to this skill deletes the line that makes the two reviews run as parallel sub-agents. Receiving it would collapse the Standards/Spec split this plugin relies on.",
         "since": "2026-08-26"
@@ -28,42 +28,42 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/codebase-design/SKILL.md",
       "localPath": "tools/ship-flow/skills/codebase-design/SKILL.md",
-      "computedHash": "478866d41822f210685c8acad6a86462af89f35ef82b19fe7a81467f9f183069"
+      "computedHash": "dc921a272da24b0fbdc1b12552f4a3bce28211ed785fab775792878c5348cc1b"
     },
     "diagnosing-bugs": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/diagnosing-bugs/SKILL.md",
       "localPath": "tools/ship-flow/skills/diagnosing-bugs/SKILL.md",
-      "computedHash": "2ace385e831ecbaae349831a9efea33368ff7787248ba4dd68731b8d52f8e6ec"
+      "computedHash": "5eeb6ce4031a18e5da2155bc2d89d6a4dba469d522fccf7e34b35448a49b60be"
     },
     "domain-modeling": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/domain-modeling/SKILL.md",
       "localPath": "tools/ship-flow/skills/domain-modeling/SKILL.md",
-      "computedHash": "90d8e079de92a5077328f4f29d98c1d9e1f43d4da4189776981240cd2792af71"
+      "computedHash": "269d0d25f458bbcfbd6d4fe385259dd6727c4b32f5eb9bfa4565d702e060bf6e"
     },
     "grill-me": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/grill-me/SKILL.md",
       "localPath": "tools/ship-flow/skills/grill-me/SKILL.md",
-      "computedHash": "808b83a4336b4d4a1c233dcb4ce0e60f8db2a9b2ced6646f10b59b801e296d06"
+      "computedHash": "983ed6268220e9123235d32e8a9ee293d64e23fdf8a2c8e167b47be664b73a44"
     },
     "grill-with-docs": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/grill-with-docs/SKILL.md",
       "localPath": "tools/ship-flow/skills/grill-with-docs/SKILL.md",
-      "computedHash": "be41caac46da81a851746d9e6a0ac75cc6ebc036895419d573cc91b54df9669c"
+      "computedHash": "d7bbe701c957144fa9e44a2dd39dd5131fe427200c39b98775ae8b3c9a34ea94"
     },
     "grilling": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/grilling/SKILL.md",
       "localPath": "tools/ship-flow/skills/grilling/SKILL.md",
-      "computedHash": "b77d869a1fe53d6860f79c9f8bf33e2aa6a2600fb601d1ed2f0489776b73cf5d",
+      "computedHash": "454a59878eda3ee3c5954087d897fa4fa618f3c948130998fefc2d44608b1ff0",
       "fork": {
         "reason": "Upstream asks the whole frontier in one numbered round; this plugin asks one question at a time, which the user requires. Receiving upstream's body would invert the behaviour.",
         "since": "2026-08-26"
@@ -74,42 +74,42 @@
       "sourceType": "github",
       "skillPath": "skills/productivity/handoff/SKILL.md",
       "localPath": "tools/ship-flow/skills/handoff/SKILL.md",
-      "computedHash": "b066f740c9e36430ebae7f053b653baa9e73cb94a950629e6dee9a14cc448bc5"
+      "computedHash": "f287057ff3e06014b3166b92ad4b7e68a5e963dc9b3e90e5eb1a1cbbd5c369d4"
     },
     "improve-codebase-architecture": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
       "localPath": "tools/ship-flow/skills/improve-codebase-architecture/SKILL.md",
-      "computedHash": "650ad8eef813699ee0755e29977506555e50300810ae2fc0d275fe49d6664dad"
+      "computedHash": "11d66fafb0e89601e5f7d2ee0e2de76230f96a34afd75f18c244b22a09fafab2"
     },
     "prototype": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/prototype/SKILL.md",
       "localPath": "tools/ship-flow/skills/prototype/SKILL.md",
-      "computedHash": "64fa22fdec7999ad4f79a5eab34728e9c01b7284220f865619da2f84e838693f"
+      "computedHash": "c8b66cd1861bb8ce03392d64634ade7671f7b4bb79eef9d0bbea944e6eb308b7"
     },
     "research": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/research/SKILL.md",
       "localPath": "tools/ship-flow/skills/research/SKILL.md",
-      "computedHash": "9457b776bb277766ac90f4555a0c8243eb6936400df167cd1a2153983a0358dd"
+      "computedHash": "bb396a13d1d461c750036fe57811cdc54e774dac7bafab970b72399e8ecf9170"
     },
     "resolving-merge-conflicts": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/resolving-merge-conflicts/SKILL.md",
       "localPath": "tools/ship-flow/skills/resolving-merge-conflicts/SKILL.md",
-      "computedHash": "7267fd5520a306de0cce48e58edd7135c162032c1da671ce404cef5b68848040"
+      "computedHash": "c5e4d5370ec591e987197fc372e613ad150d547aae5433cd5ca7bc73971b8735"
     },
     "setup": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/setup-matt-pocock-skills/SKILL.md",
       "localPath": "tools/ship-flow/skills/setup/SKILL.md",
-      "computedHash": "740b738af95d218136ff1ea5bc0b268845dd8b04ea1e2b45f59a85f832d4924d",
+      "computedHash": "773c195aa7df4d646dad55db65157e66ca9cc39eced764d511c91a870b9240fa",
       "fork": {
         "reason": "Deliberate divergence: this one configures the plugin; upstream's configures a tracker, labels and doc layout.",
         "since": "2026-08-26"
@@ -120,21 +120,21 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/tdd/SKILL.md",
       "localPath": "tools/ship-flow/skills/tdd/SKILL.md",
-      "computedHash": "0109d66ade46a375753e9559645c712dda3fecddd65def22de23737a07e234e1"
+      "computedHash": "b3a81f52a4dd08f41106112b88b67b16eaf0ff869af91526584a319c91253941"
     },
     "teach": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/teach/SKILL.md",
       "localPath": "tools/ship-flow/skills/teach/SKILL.md",
-      "computedHash": "ba80af06455a5946251a7f2f7f862f582a88f535490c7326d7d990030219ebad"
+      "computedHash": "185fec9ada6e9803a6e5c6da4bb9831c7c0a74dfb6ddd6d8383637022eb4c299"
     },
     "to-issues": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/to-tickets/SKILL.md",
       "localPath": "tools/ship-flow/skills/to-issues/SKILL.md",
-      "computedHash": "81efbfe5517ea057400baeccb4ec024ee8436adec4f85d76b3df748acdc043fa",
+      "computedHash": "807f28260abf9bc81f0e4de253556225a65f596eac53a71b02048725eece2c4d",
       "fork": {
         "reason": "Renamed and extended with tracker/project resolution. Upstream's to-tickets has no tracker layer.",
         "since": "2026-08-26"
@@ -145,7 +145,7 @@
       "sourceType": "github",
       "skillPath": "skills/engineering/to-spec/SKILL.md",
       "localPath": "tools/ship-flow/skills/to-prd/SKILL.md",
-      "computedHash": "456b2601c3f6200729680eb5f347540003affa37fd9d6400e5d9cd78f85d1cd0",
+      "computedHash": "b5bbd7dd9a177993239df3cd8cb666d340bda9a490667f283e89664dc0af6589",
       "fork": {
         "reason": "Renamed and extended: this plugin writes a PRD and creates a dedicated tracker project. Upstream's to-spec is a narrower artifact.",
         "since": "2026-08-26"
@@ -156,42 +156,42 @@
       "sourceType": "github",
       "skillPath": "skills/productivity/to-questionnaire/SKILL.md",
       "localPath": "tools/ship-flow/skills/to-questionnaire/SKILL.md",
-      "computedHash": "8aedcfdd46c5922e0894959eb3fd9e5cc49a767f43eb09aedb4f77e1bfe9e88f"
+      "computedHash": "02c1032b52eaf253031a255c98c79864450c7f766666f28cb27d397ab546ed6d"
     },
     "triage": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/triage/SKILL.md",
       "localPath": "tools/ship-flow/skills/triage/SKILL.md",
-      "computedHash": "dca18bd2780268fea736e5a0bfc667d6c3c272744f34b6ea2aef6d4beeed3ada"
+      "computedHash": "694d0229193d6f679a0a0bf11d64b5ce4c339a1b192b812aff9f1f641c7b71d2"
     },
     "wait-what": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/wait-what/SKILL.md",
       "localPath": "tools/ship-flow/skills/wait-what/SKILL.md",
-      "computedHash": "d546b80c04d05cc508c6f3728ca505627b9ea1e4e1e7a078f611679115dabf28"
+      "computedHash": "39b8a0e2857670d84c6fc820aec35a6b24d052f736c09e576942abb21b4e4f3d"
     },
     "wayfinder": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/wayfinder/SKILL.md",
       "localPath": "tools/ship-flow/skills/wayfinder/SKILL.md",
-      "computedHash": "5a4ec3b4fbd6eb676f2bfbfc9043a0caa96933dc78d1987fd695cb6f7553eb2f"
+      "computedHash": "f05a8be61d2ae41bc2fa6270793e08fd68da857cadd3e3b3df1811d8a1f2c84b"
     },
     "wizard": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/wizard/SKILL.md",
       "localPath": "tools/ship-flow/skills/wizard/SKILL.md",
-      "computedHash": "80719cee91d7f2be254b42ee9d0efa72cbbef03be1f55c3a646567e6d484594e"
+      "computedHash": "49889c14cc11f58457eaa9afd171c3ea08798d95f2a80a67d14972207bafad83"
     },
     "write-a-skill": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/writing-for-agents/SKILL.md",
       "localPath": "tools/ship-flow/skills/write-a-skill/SKILL.md",
-      "computedHash": "77ef9f9b1c1ffd6615d1ed12874395b183b3c78b5b69368eaaf29c9f5f307eaa",
+      "computedHash": "6d9a5795282256bf73de2a2d60fba174d6821daa82d58abf9df8125ca7a921a8",
       "fork": {
         "reason": "Upstream renamed and rewrote this as writing-for-agents: a principles document covering skills, AGENTS.md and CLAUDE.md, where this is a procedure for producing one skill. Its trigger now fires on editing CLAUDE.md, which this plugin's constitution gates behind a PR (ADR-0061). Kept as the narrower procedure deliberately; specific sections may still be backported one at a time.",
         "since": "2026-08-26"

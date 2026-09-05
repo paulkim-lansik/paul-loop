@@ -1,11 +1,12 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './helpers/postgres-fixture';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createLoopDb, LOOP_DATABASE_URL } from '../src/client';
+import { createLoopDb, LOOP_DATABASE_URL } from './helpers/postgres-fixture';
 import { stubEmbedder } from '../src/embedding';
-import { addNote, softDeleteNote } from '../src/ops';
+import { softDeleteNote } from '../src/ops';
+import { addNote } from './helpers/postgres-fixture';
 import { memoryNote } from '../src/schema/memory';
 
 // 통합(docker pgvector): `loop-memory stats` CLI를 서브프로세스로 굴려, loop-doctor가 의존하는 --json

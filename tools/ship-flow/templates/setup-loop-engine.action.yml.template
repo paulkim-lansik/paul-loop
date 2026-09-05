@@ -23,9 +23,19 @@ runs:
   steps:
     - shell: bash
       run: |
+        set -euo pipefail
+        setup_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/paul-loop.XXXXXXXX")
+        # Keep successful clones for later steps; on failure remove only this invocation's directory.
+        trap 'rm -rf "$setup_dir"' ERR
         git clone --depth 1 --branch loop-engine--{{LOOP_ENGINE_TAG}} \
-          https://github.com/reach0908/paul-loop.git /tmp/paul-loop-loop-engine
-        echo "LOOP_ENGINE_PATH=/tmp/paul-loop-loop-engine/tools/loop-engine" >> "$GITHUB_ENV"
+          https://github.com/reach0908/paul-loop.git "$setup_dir/engine"
         git clone --depth 1 --branch ship-flow--{{SHIP_FLOW_TAG}} \
-          https://github.com/reach0908/paul-loop.git /tmp/paul-loop-ship-flow
-        echo "SHIP_FLOW_PATH=/tmp/paul-loop-ship-flow/tools/ship-flow" >> "$GITHUB_ENV"
+          https://github.com/reach0908/paul-loop.git "$setup_dir/ship"
+        # Validate the actual artifacts before exporting executable paths to subsequent steps.
+        LOOP_RUNTIME=shell LOOP_ENGINE_PATH="$setup_dir/engine/tools/loop-engine" \
+          node "$setup_dir/engine/tools/loop-engine/bin/plugin-path.mjs" resolve loop-engine
+        LOOP_RUNTIME=shell SHIP_FLOW_PATH="$setup_dir/ship/tools/ship-flow" \
+          node "$setup_dir/engine/tools/loop-engine/bin/plugin-path.mjs" resolve ship-flow
+        echo "LOOP_RUNTIME=shell" >> "$GITHUB_ENV"
+        echo "LOOP_ENGINE_PATH=$setup_dir/engine/tools/loop-engine" >> "$GITHUB_ENV"
+        echo "SHIP_FLOW_PATH=$setup_dir/ship/tools/ship-flow" >> "$GITHUB_ENV"

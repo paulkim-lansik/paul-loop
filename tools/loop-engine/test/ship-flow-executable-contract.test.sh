@@ -123,4 +123,89 @@ grep -qi 'BCP-47' "$SETUP" \
   || fail "setup/SKILL.md must record outputLanguage as a BCP-47 tag — a free-text language name has several spellings and stops being matchable"
 echo "PASS: setup/SKILL.md interviews for and records outputLanguage as a BCP-47 tag"
 
+# F8: every entry point resolves the same authorization contract (without becoming another skill).
+for f in "$SF"/skills/*/SKILL.md "$SF"/agents/*.md; do
+  grep -q 'AUTHORIZATION.md' "$f" || fail "missing shared authorization contract: $f"
+done
+[ -f "$SF/skills/AUTHORIZATION.md" ] || fail "shared authorization contract is missing"
+
+# F9: execute the publisher's documented example with isolated fake commands. These checks exercise
+# dependency failures and literal bytes; they do not contact a remote or modify the shared checkout.
+python3 - "$SF" <<'PYTEST' || exit 1
+import json, os, pathlib, re, subprocess, sys, tempfile
+sf = pathlib.Path(sys.argv[1])
+source = (sf / 'agents/publisher.md').read_text()
+blocks = re.findall(r'```bash\n(.*?)\n```', source, re.S)
+assert len(blocks) == 1, 'publisher must have one unambiguous executable example'
+script = blocks[0]
+# The fixture logs argv and exact body bytes before an injected failure.
+stub = r"""#!/usr/bin/env python3
+import json, os, pathlib, sys
+args = sys.argv[1:]
+name = pathlib.Path(sys.argv[0]).name
+entry = {'command': name, 'args': args}
+if '--body-file' in args:
+    entry['body'] = pathlib.Path(args[args.index('--body-file') + 1]).read_text()
+with open(os.environ['CALL_LOG'], 'a') as f:
+    f.write(json.dumps(entry) + '\n')
+mode = os.environ['MODE']
+if name == 'git':
+    assert args[:3] == ['push', '-u', 'origin'], args
+    sys.exit(17 if mode == 'push-fail' else 0)
+if args[:2] == ['pr', 'create']:
+    if mode == 'pr-fail': sys.exit(18)
+    if mode != 'empty-url': print('https://example.invalid/repo/pull/42')
+    sys.exit(0)
+assert args[:2] == ['issue', 'comment'], args
+sys.exit(19 if mode == 'comment-fail' else 0)
+"""
+with tempfile.TemporaryDirectory(prefix='ship-flow-publisher-test-') as td:
+    root = pathlib.Path(td)
+    bin_dir = root / 'bin'; bin_dir.mkdir()
+    for name in ('git', 'gh'):
+        tool = bin_dir / name; tool.write_text(stub); tool.chmod(0o700)
+    cases = [
+        ('success', 0, ['git', 'gh', 'gh']),
+        ('push-fail', 17, ['git']),
+        ('pr-fail', 18, ['git', 'gh']),
+        ('empty-url', 1, ['git', 'gh']),
+        ('comment-fail', 19, ['git', 'gh', 'gh']),
+        ('empty-branch', 2, []), ('multiline-title', 2, []),
+        ('option-branch', 2, []), ('missing-body', 2, []), ('existing-result', 2, []),
+    ]
+    for mode, expected_code, commands in cases:
+        work = root / mode; work.mkdir()
+        handoff = work / 'handoff with spaces'; handoff.mkdir()
+        # Delimiter-looking prose, quotes, newlines and command substitutions remain inert data.
+        title = 'fix: "literal" $(touch PWNED) `touch ALSO_PWNED`'
+        body = 'Korean: 한글\nEOF\n$(touch PWNED)\n`touch ALSO_PWNED`\n"quoted"\n'
+        comment = 'reviewed literal comment\nEOF\n$(touch PWNED)\n'
+        values = {'branch.txt': 'codex/fix', 'base.txt': 'main', 'pr-title.txt': title,
+                  'issue.txt': '9', 'pr-body.txt': body, 'issue-comment.txt': comment}
+        if mode == 'empty-branch': values['branch.txt'] = ''
+        if mode == 'option-branch': values['branch.txt'] = '--mirror'
+        if mode == 'multiline-title': values['pr-title.txt'] = 'first\nsecond'
+        for name, value in values.items(): (handoff / name).write_text(value)
+        if mode == 'missing-body': (handoff / 'pr-body.txt').unlink()
+        if mode == 'existing-result': (handoff / 'issue-comment-final.txt').write_text('prior result')
+        log = work / 'calls.jsonl'
+        env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+                   HANDOFF_DIR=str(handoff), CALL_LOG=str(log), MODE=mode)
+        result = subprocess.run(['bash', '-c', script], cwd=work, env=env, capture_output=True, text=True)
+        calls = [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+        assert result.returncode == expected_code, (mode, result.returncode, result.stderr)
+        assert [x['command'] for x in calls] == commands, (mode, calls)
+        assert not (work / 'PWNED').exists() and not (work / 'ALSO_PWNED').exists(), mode
+        assert (handoff / 'issue-comment.txt').read_text() == comment, mode
+        if len(calls) >= 2:
+            args = calls[1]['args']
+            assert args[args.index('--title') + 1] == title, (mode, args)
+            assert calls[1]['body'] == body, mode
+        if len(calls) == 3:
+            assert calls[2]['body'] == comment + '\n\nPR: https://example.invalid/repo/pull/42\n', mode
+        if mode in ('success', 'comment-fail'):
+            assert 'https://example.invalid/repo/pull/42' in result.stdout, mode
+        print('PASS: publisher documented sequence ' + mode)
+PYTEST
+
 exit 0

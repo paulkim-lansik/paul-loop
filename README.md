@@ -1,6 +1,6 @@
 # paul-loop
 
-A Claude Code plugin marketplace for a self-improving dev loop harness.
+A verifier-driven development harness: a common shell/Node core, Claude Code plugins, and reproducibly generated Codex adapters.
 
 ## Why
 
@@ -21,17 +21,17 @@ the ceiling invariant (`loop-engine`) without also adopting an opinionated deliv
 (`ship-flow`) or a semantic-memory database (`loop-memory`). Install only what you're going to use —
 `claude plugin details <name>` shows the projected per-plugin token cost before you decide.
 
-> **Status: M1 (public release in progress).** Explicit semver (`0.2.0`), tagged with `claude plugin
-> tag` on release. Pre-`1.0`, so breaking changes are still possible between minor versions — pin a
-> version if that matters to you. See [Milestones](#milestones).
+> **Source versions:** loop-engine **0.15.0**, ship-flow **0.11.0**, loop-memory **0.7.0**.
+> These are source versions, not an assertion about installed caches or published tags. Pre-1.0
+> minor versions can change contracts. See [runtime compatibility and migration](docs/runtime-compatibility.md).
 
 ## What's in `loop-engine`
 
-The only plugin shipped so far. It has no opinions about *how* you deliver work — no issue tracker
+The common execution core. It has no opinions about *how* you deliver work — no issue tracker
 integration, no delivery skill, no memory database — only the verify/fix/remember mechanics
 underneath one. All commands below live in `tools/loop-engine/bin/` and are automatically added to
-`PATH` once the plugin is loaded (the official plugin spec registers `bin/` for you — no manual
-`PATH` wiring).
+`PATH` by Claude Code when the plugin loads. Codex and plain shell consumers use an explicit
+`pluginBinPrefix` or absolute paths; do not assume native PATH registration there.
 
 ### `verdict-run.sh` — wrap any verify command in a machine-readable contract
 
@@ -169,10 +169,10 @@ grep-shaped `.loop/lessons` directory, a `UserPromptSubmit` hook embeds the curr
 injects the lessons (and, if configured, ADR/glossary/research knowledge) that are semantically
 closest to it.
 
-Two hooks do the work, both fail-open (a missing key, a down database, or a timeout is always a
-silent no-op, never a blocked prompt or a broken session):
+Two hook programs handle three events. Optional memory failures do not block a prompt or session;
+liveness records distinguish missing configuration, empty results, and failed work:
 
-- **`SessionStart` → `graduate`** — copies verified lessons from `.loop/lessons` (loop-engine's own
+- **`SessionStart` / `SessionEnd` → `graduate`** — copies verified lessons from `.loop/lessons` (loop-engine's own
   convention) into the pgvector store, idempotently (already-graduated lessons are skipped by id).
 - **`UserPromptSubmit` → `recall`** — embeds the prompt, pulls the semantically-closest verified
   lessons (and configured knowledge, if any) back out, and injects them as `<past-lessons
@@ -186,9 +186,10 @@ interactively via `/plugin configure loop-memory@paul-loop`:
 |---|---|---|
 | `openai_api_key` / `gemini_api_key` | no (but you need at least one) | `sensitive: true` — stored in the OS keychain / `~/.claude/.credentials.json`, never in `settings.json`. Without either key both hooks no-op. |
 | `loop_database_url` | no | Defaults to `postgresql://postgres:postgres@localhost:5434/loop_memory` — this plugin's `docker-compose.yml` matches that default (`docker compose up -d --wait` from `tools/loop-memory/`). |
-| `loop_memory_signing_key` | no | HMAC-SHA256 secret. Without it, lesson writes are unsigned and lesson recall stays fail-closed (returns nothing) — see "Threat model" below. `sensitive: true`. |
+| `loop_memory_signing_key` | no | HMAC-SHA256 key required for store writes and recall, including knowledge. Missing configuration fails closed — see "Threat model" below. `sensitive: true`. |
 | `loop_dotenv_path` | no | Repo-relative (or absolute) dotenv-shaped file the hooks read **before** their key gate. Default `.loop/.env`. See "Keys that live in a `.env`" below. |
 | `loop_adr_dir` / `loop_context_file` / `loop_research_dir` / `loop_design_dir` | no | Optional *knowledge* corpus sources (separate from lessons) — a directory of `# ADR-NNNN: Title`-headed decision docs, a single `**Term**:`-chunked glossary file, and two `##`-section-chunked doc directories, respectively. Unset = that source is skipped entirely; nothing is assumed about your repo's docs unless you point at them. |
+| `loop_embed_provider` / `loop_embed_model` | no | Explicit provider/model selection; provider is required when both API keys are set. Identity changes require deliberate reindexing. |
 | `loop_recall_max_distance` / `loop_knowledge_max_distance` | no | Cosine-distance cutoffs (0=identical..2=opposite) for the lessons and knowledge corpora respectively — a hit farther than this is dropped instead of injected. **Embedder-dependent**, calibrate for your provider/corpus; the code default (0.65) is a loose safety net if left unset. |
 
 ### Keys that live in a `.env`
@@ -209,8 +210,12 @@ hooks load a dotenv-shaped file themselves, before that gate:
 - **Best-effort**: a missing/unreadable file, or a non-git directory, leaves the env untouched and
   the hooks fall back to their normal fail-open no-op.
 
-Every key in the file is loaded, not just the ones with a matching `userConfig` option — so
-`LOOP_EMBED_PROVIDER` and friends reach the CLI from the file too.
+Only the allowlist is loaded: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `LOOP_MEMORY_SIGNING_KEY`,
+`LOOP_DATABASE_URL`, `LOOP_EMBED_PROVIDER`, `LOOP_EMBED_MODEL`, `LOOP_RECALL_MAX_DISTANCE`, and
+`LOOP_KNOWLEDGE_MAX_DISTANCE`. Shell control variables and guard-off switches are ignored.
+The CLI and hooks share precedence: explicit session env (including an empty value) > Claude
+`userConfig` bridge > allowlisted file. Codex uses explicit env/file configuration; its package does
+not claim Claude's native configuration UI or secret storage.
 
 ### Liveness — proving the hooks actually fired
 
@@ -240,9 +245,11 @@ resolved dotenv path, or an error message.
 Read it back with a command that needs neither the database nor a key:
 
 ```bash
-loop-memory liveness              # human-readable
-loop-memory liveness --json       # for a health check
-loop-memory liveness --assert     # exit 1 only if recall has NOT fired in the last 20 runs
+# Resolve the actual memory artifact first; no bare `loop-memory` executable is shipped.
+MEMORY_ROOT=$(node "$LOOP_ENGINE_PATH/bin/plugin-path.mjs" resolve loop-memory)
+node "$MEMORY_ROOT/dist/cli.js" liveness --root "$PWD"
+node "$MEMORY_ROOT/dist/cli.js" liveness --root "$PWD" --json
+node "$MEMORY_ROOT/dist/cli.js" liveness --root "$PWD" --assert
 ```
 
 `--assert` deliberately treats self-gating and honest misses as evidence of life — a check that
@@ -257,13 +264,16 @@ appending to.
 
 A persistent, semantically-searched memory store is a stored-prompt-injection target: anything that
 can write a convincing-looking note can get it replayed into a future session as "context". The
-`graduate` hook only ever writes lessons that `loop-engine`'s `lessons.mjs` already marked
-*verified* (a real verifier confirmed the fix), and — if `loop_memory_signing_key` is set — signs
-each one with HMAC-SHA256. `recall` refuses (fail-closed) any lesson note whose signature doesn't
-verify, so a write path that doesn't know the secret (a stray `INSERT`, a different code path
-calling the store's `addNote` directly) can produce rows that sit in the table but never surface in
-recall. The knowledge corpus (ADR/glossary/research/design) isn't signed — it's expected to come
-only from tracked, reviewed repo docs, not runtime writes.
+`graduate` path validates lesson evidence and source state before ingestion. Store notes carry an
+HMAC envelope binding repository owner, corpus, source, embedding identity and content hash.
+This applies to knowledge as well as lessons. Missing keys, incompatible ownership/embedding
+identity and invalid signatures fail closed. Older unsigned or differently bound rows need a
+reviewed migration/reindex; they are not silently adopted.
+
+A valid HMAC establishes the configured store write path, not that a lesson is true. Processes with
+the signing key can produce signatures. Evidence receipts are local guardrails and must match the
+current workspace; they are not cryptographic proof of independent evaluation. Recalled content
+remains explicitly untrusted context.
 
 ### CLI
 
@@ -282,7 +292,21 @@ Both `graduate` and `recall` refuse to run against a stub embedder by default if
 checks) — a store built with a real embedder queried with a stub one returns results that look
 valid but are meaningless, not an empty/obviously-wrong result.
 
-## Install
+## Runtime capabilities
+
+| Capability | Claude Code | Generated Codex | Plain shell / other agents |
+|---|---|---|---|
+| Verify/fix, risk, lesson and evidence CLI | Common core | Common core | Common core |
+| Skills | Native | Agent Skills with a visible runtime contract | Instructions only |
+| Separate review agents | Native agent definitions | Role skills plus reviewed project-agent templates | Caller supplies isolation |
+| Workflow JS | Native host feature when enabled | Documented equivalent fallback where independence and gates are preserved | Caller supplies a driver |
+| Protection / Stop hooks | Requires enabled host hooks | Requires host hook trust; patch paths adapted, `ask` becomes `deny` | No automatic host hooks |
+| Native hard cancellation | Host capability, not attested | Not claimed | Caller responsibility |
+
+Generated packages and fixture passes do not prove installation, activation, trust, isolation, or
+live end-to-end behavior. See [the detailed matrix and test boundaries](docs/runtime-compatibility.md).
+
+## Install (Claude Code)
 
 ```bash
 claude plugin marketplace add reach0908/paul-loop
@@ -292,6 +316,20 @@ claude plugin install loop-memory@paul-loop --config openai_api_key=sk-...
 # (or configure interactively later, inside a session: /plugin configure loop-memory@paul-loop)
 claude plugin enable loop-memory@paul-loop
 ```
+
+## Generate reviewable runtime packages
+
+```bash
+node scripts/refresh-skill-lock.mjs --check
+node scripts/generate-runtime-packages.mjs
+node scripts/generate-runtime-packages.mjs --check
+```
+
+This writes only `build/runtime-packages/`: separate Claude/Codex marketplace roots, native
+manifests, adapters, role templates, dependency metadata, and a content/mode inventory with source
+provenance. It neither installs nor trusts anything. Existing `zine-codex` derivatives stay separate.
+Follow the [explicit resolver and migration contract](docs/runtime-compatibility.md#installation-resolution)
+before using an artifact; package version equality alone does not establish runtime equality.
 
 ## Try it without installing anything
 
@@ -319,7 +357,7 @@ tools/loop-engine/
 tools/ship-flow/                  # delivery-loop skills — see the plugin's own skills/ for docs
 tools/loop-memory/
   .claude-plugin/plugin.json      # this plugin's manifest — defaultEnabled:false, userConfig schema
-  hooks/                          # SessionStart (graduate) + UserPromptSubmit (recall), plus hooks.json
+  hooks/                          # SessionStart/SessionEnd (graduate), UserPromptSubmit (recall)
   hooks/lib/                      # helpers the hooks import (dotenv loader) — plain JS, no deps
   src/                            # TypeScript source (drizzle schema, CLI, embedder seam)
   dist/cli.js                     # committed, dependency-free esbuild bundle — what hooks actually run
@@ -338,12 +376,15 @@ path stayed.
 - **Public.** M0 removed everything that only made sense inside the origin monorepo: one hook with
   an external import, tests that assert on that repo's own CI/hook wiring, and a fixture file that
   carried real (if scrubbed-of-secrets) PR titles and file paths from a production codebase. What's
-  left runs standalone — `tools/loop-engine/test/run.sh` is 15/15 green with nothing outside this
-  repo. The repository itself flipped private → public in M1.
-- CI (`.github/workflows/`) runs `gitleaks` and the self-test suite + `claude plugin validate
-  --strict` on every push to `main` for `loop-engine`; `loop-memory` has its own workflow (unit
-  tests + manifest validation — the docker-gated integration suite is a local/manual check, not a
-  required CI gate, the same restraint the plugin's origin repo applies to its own equivalent).
+  left is intended to run standalone. Current checks, not the historical migration test count,
+  determine whether the current source passes.
+- CI runs engine regressions, memory unit/type checks, committed bundle drift checks and schema
+  validation. Packaging portability covers Linux/macOS and Node 22/24; Claude schema checks use
+  2.1.261 plus a latest-version canary. Generated Codex packages have contract/adapter fixtures;
+  no model-backed native E2E run is implied. Docker integration remains a separate check.
+- `tag on publish` depends on engine, memory, runtime and secret-scan jobs for the same event SHA,
+  with write permission confined to the tag job on main. It pushes only newly created tag refs.
+  Editing these workflows does not run a release or establish the remote's branch protection.
 - **Versioning: explicit semver, not a floating SHA channel.** Claude Code's own version-resolution
   order (see [Plugins reference § Version management](https://code.claude.com/docs/en/plugins-reference#version-management))
   falls back to "update whenever the resolved commit changes" only when `version` is omitted from
@@ -352,7 +393,8 @@ path stayed.
   plugins with stable release cycles". M1 is the latter. It also resolves a real tooling conflict:
   `claude plugin validate --strict` (wired into CI above) treats a missing `version` as a hard error,
   not just a warning — so "omit version" and "keep `--strict` in CI" cannot both hold. Bump `version`
-  in `plugin.json` on every release and tag it with `claude plugin tag`.
+  in `plugin.json` and the catalog for a release; the dependent tag workflow creates missing
+  `<plugin>--v<version>` tags after validation. Updating an installed plugin is a separate action.
 
 ## Milestones
 

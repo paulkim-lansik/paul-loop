@@ -55,12 +55,20 @@ never parsed as shell; the command line only ever carries a path.
    using the Write tool.
 3. Hand `ship-flow:publisher` the file paths plus the exact commands to run.
 
+Include the user's authorization record, exact worktree/repository and head/base/destination,
+completed gate evidence, and dependencies between actions. Do not publish from a read/draft request.
+Put branch/base/issue identifiers in literal data files too; never insert their contents into shell
+source. The publisher's example keeps assignments and their uses in one call and stops on failure.
+The original comment file is immutable; a separately authorized URL append uses a new final file.
+
 Commands use the CLI's own file flags where they exist — `gh pr create --body-file <path>`,
 `gh issue comment --body-file <path>` — and `"$(cat <path>)"` interpolated into a **double-quoted**
-variable where they don't. `agents/publisher.md`'s "What you do" section carries the exact form and
+variable where they don't. `agents/publisher.md`'s "File-based execution" section carries the exact form and
 the same reasoning from the executing side.
 
-The same rule covers the retry path. A `--force-with-lease` push after a rebase is still an external
-action taken by a session holding untrusted-input history, so it goes through `ship-flow:publisher`
-too, with the branch name passed as a literal value and interpolated only inside double quotes —
-never bare, never through a heredoc.
+The same rule covers recovery. A `--force-with-lease` push still goes through `ship-flow:publisher`.
+The Builder checks uncertain remote outcomes read-only, preserves successful steps, and sends only
+unfinished authorized actions. A changed head/base invalidates the affected reviewed publication/merge
+approval bound to the old revision, not authorization for necessary implementation edits within scope.
+A confirmed no-effect failure of the same exact authorized action needs no ceremonial reapproval.
+Return command-by-command status; a PR URL is not success for a failed required tracker comment.

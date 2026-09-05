@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 // SessionStart hook — graduates verified file lessons (.loop/lessons, loop-engine's convention) into
 // loop-memory's pgvector semantic layer, so the UserPromptSubmit recall hook sees a fresh corpus.
-// Idempotent (already-graduated lessons are skipped via the lesson id's `lesson:<id>` keyword).
+// Idempotent by signed source identity, content hash and the current signing key.
 //
 // ⚠️ FAIL-OPEN: always exit 0, no context injection (silent sync only). No key / pgvector down → no-op.
 // Self-gating: without an embedding key, this does not sync at all (avoids poisoning the store with
 // stub vectors).
 //
-// Debug: LOOP_GRADUATE_DEBUG=1 logs the child process's exit code/stderr to
+// Debug: LOOP_GRADUATE_DEBUG=1 logs only the child process's exit status to
 // `${CLAUDE_PLUGIN_DATA}/graduate-debug.log` (fail-open hides child failures otherwise) — opt-in,
 // default-off.
 //
-// Liveness (paul-loop issue #35): *always on*, one JSONL line per firing into loop-engine's session
+// Liveness (paul-loop issue #35): one JSONL line per firing, except frozen/off mode, into the session
 // run ledger (`.loop/runs/<run-id>.jsonl`, type `memory.graduate`) — see hooks/lib/liveness.mjs.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadDotenv } from './lib/load-dotenv.mjs';
+import { runtimeEnv } from './lib/runtime-env.mjs';
+import { parseOutcome } from './lib/cli-outcome.mjs';
 import { errorCode, recordLiveness } from './lib/liveness.mjs';
 
 const env = process.env;
@@ -26,6 +27,7 @@ const dataDir = env.CLAUDE_PLUGIN_DATA || pluginRoot;
 const startedAt = Date.now();
 
 function dbg(msg) {
+  if (env.LOOP_LEARNING_OFF === '1' || env.LOOP_MEMORY_RECALL_ONLY === '1' || env.LOOP_MEMORY_OFF === '1') return;
   if (env.LOOP_GRADUATE_DEBUG !== '1') return;
   try {
     appendFileSync(join(dataDir, 'graduate-debug.log'), `${new Date().toISOString()} ${msg}\n`);
@@ -56,7 +58,7 @@ const live = {
   dotenv: false,
 };
 
-/** Single exit point — every path out of this hook leaves exactly one ledger line. */
+/** Single exit point — records an outcome when the evaluation/privacy flags permit bookkeeping. */
 function done(outcome, reason) {
   live.outcome = outcome;
   live.reason = reason;
@@ -75,24 +77,7 @@ function done(outcome, reason) {
 // Bridges Claude Code's userConfig injection (CLAUDE_PLUGIN_OPTION_<KEY> — hooks can't use
 // ${user_config.KEY} substitution, per the plugins spec) into the plain env var names the CLI
 // itself reads, so the CLI stays plugin-agnostic and also works for a bare shell invocation.
-const childEnv = { ...env };
-for (const [pluginOpt, plain] of [
-  ['CLAUDE_PLUGIN_OPTION_OPENAI_API_KEY', 'OPENAI_API_KEY'],
-  ['CLAUDE_PLUGIN_OPTION_GEMINI_API_KEY', 'GEMINI_API_KEY'],
-  ['CLAUDE_PLUGIN_OPTION_LOOP_DATABASE_URL', 'LOOP_DATABASE_URL'],
-  ['CLAUDE_PLUGIN_OPTION_LOOP_MEMORY_SIGNING_KEY', 'LOOP_MEMORY_SIGNING_KEY'],
-  ['CLAUDE_PLUGIN_OPTION_LOOP_DOTENV_PATH', 'LOOP_DOTENV_PATH'],
-]) {
-  if (!childEnv[plain] && env[pluginOpt]) childEnv[plain] = env[pluginOpt];
-}
-// Then the repo's gitignored dotenv file, for keys neither the session env nor userConfig supplied
-// (Claude Code passes hooks the session process env only — it does not read .env files, so a key that
-// lives solely in .env would hit the no-key gate below and no-op silently). Runs *after* the bridge
-// above so the file never overrides an explicit export or userConfig value.
-const dotenv = loadDotenv(projectDir, childEnv.LOOP_DOTENV_PATH, childEnv);
-dbg(dotenv ? `dotenv: loaded ${dotenv}` : 'dotenv: none found');
-// Boolean only — the resolved path can be absolute, outside the repo, and is by definition where the
-// secrets are.
+const { env: childEnv, dotenv } = runtimeEnv(projectDir, env);
 live.dotenv = !!dotenv;
 // Source tag (paul-loop issue #35) — self-reported, good-faith metadata for observability/debugging,
 // NOT a security or forgery-proof signal. Anyone with shell access can run `node dist/cli.js graduate`
@@ -106,11 +91,14 @@ childEnv.LOOP_MEMORY_SOURCE = 'hook';
 live.key = !!(childEnv.OPENAI_API_KEY || childEnv.GEMINI_API_KEY);
 
 try {
+  if (env.LOOP_MEMORY_OFF === '1') done('skipped', 'memory_off');
+  if (env.LOOP_LEARNING_OFF === '1') done('skipped', 'learning_off');
+  if (env.LOOP_MEMORY_RECALL_ONLY === '1') done('skipped', 'memory_recall_only');
   if (env.LOOP_RECALL_OFF === '1') done('skipped', 'recall_off');
   if (!live.key) done('skipped', 'no_embedding_key');
 
   const cli = join(pluginRoot, 'dist', 'cli.js');
-  const args = [cli, 'graduate', '--lessons', join(projectDir, '.loop', 'lessons')];
+  const args = [cli, 'graduate', '--json', '--lessons', join(projectDir, '.loop', 'lessons')];
   // Knowledge-corpus sources (ADR dir / glossary file / research dir / design dir) are opt-in via
   // plugin userConfig — omitted entirely (not defaulted to any path) unless the consuming repo
   // configures them, since these paths and their markdown conventions (`# ADR-NNNN: Title` headers,
@@ -128,16 +116,19 @@ try {
   // null on timeout/signal — kept distinct from a real exit code rather than flattened.
   live.cli_status = typeof res.status === 'number' ? res.status : null;
   if (res.status !== 0) {
-    // stderr goes to the opt-in debug log only. It is the CLI's own prose, but it can quote a
-    // connection URL, so it must not reach the ledger.
-    dbg(`cli status=${res.status} stderr=${String(res.stderr ?? '').slice(0, 500)}`);
+    // Do not log stderr: even a failed DB/provider can quote credentials or source text.
+    dbg(`cli status=${res.status}`);
     done('error', 'cli_failed');
   }
-  dbg('cli status=0 ok');
+  dbg('cli status=0');
+  const result = parseOutcome(res.stdout, 'graduate');
+  if (!result || result.outcome === 'error') done('error', 'cli_protocol_error');
+  if (result.outcome !== 'synced') done(result.outcome === 'locked' ? 'skipped' : result.outcome,
+    result.outcome === 'locked' ? 'lock_busy' : result.outcome === 'partial' ? 'partial_sync' : 'worktree_read_only');
   // Intentionally silent on success — refreshes the store without cluttering session context.
   done('synced', 'ok');
 } catch (e) {
-  dbg(`catch: ${e?.message ?? String(e)}`);
+  dbg('exception');
   live.error_code = errorCode(e); // code only, never the message (it can embed credentials)
   done('error', 'exception'); /* fail-open */
 }

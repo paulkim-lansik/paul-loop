@@ -20,10 +20,11 @@
 // `unverifiedOverCap` and the drop is log()'d — the authoring reference's "no silent caps" rule,
 // because a truncated review that looks complete is worse than one that says what it skipped.
 //
-// Note on what is deliberately NOT done here: the refutation votes are not routed to a cheaper model
-// or a lower effort tier. They are the verifier, and this plugin's whole premise is that the verifier
-// is the ceiling — a cheaper skeptic is exactly how a plausible-but-wrong finding survives. Bound the
-// QUANTITY of verification, never its quality.
+// Model choice follows measured verifier capability. Inherit the caller's evaluated model;
+// price alone is neither evidence of quality nor permission to lower verification standards.
+// args.maxAgentCalls (default 64), maxConcurrency (4), budgetMs (300000) bound dispatch.
+// In-flight cancellation is owned by the host adapter; late output is rejected here.
+// A host without cancellation must disclose that limit rather than claim a hard kill.
 //
 // args (all required — domains are task-specific, this workflow does not guess a default set):
 //   { target: '<what is being reviewed — one sentence>',
@@ -73,10 +74,11 @@ const FINDER_SCHEMA = {
 const VERDICT_SCHEMA = {
   type: 'object',
   properties: {
-    refuted: { type: 'boolean', description: 'true means this verifier judged the finding does not actually hold' },
+    status: { type: 'string', enum: ['confirmed', 'refuted', 'inconclusive'] },
+    evidence: { type: 'string', description: 'Concrete command/file observation supporting the vote' },
     reason: { type: 'string' },
   },
-  required: ['refuted', 'reason'],
+  required: ['status', 'reason', 'evidence'],
 }
 
 const VOTES_PER_FINDING = 3
@@ -117,71 +119,81 @@ function capForVerification(findings, domainKey) {
   return kept
 }
 
+// One queue across finders, votes and the critic: nested fan-out cannot multiply concurrency.
+const positive = (value, fallback, name) => {
+  if (value === undefined) return fallback
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer`)
+  return value
+}
+const maxAgentCalls = positive(parsedArgs.maxAgentCalls, 64, 'maxAgentCalls')
+const maxConcurrency = positive(parsedArgs.maxConcurrency, 4, 'maxConcurrency')
+const deadline = Date.now() + positive(parsedArgs.budgetMs, 300000, 'budgetMs')
+let calls = 0, active = 0
+const queue = [], incompleteCalls = []
+async function boundedAgent(prompt, options) {
+  if (active >= maxConcurrency) await new Promise(resolve => queue.push(resolve))
+  else active++
+  try {
+    if (Date.now() >= deadline || calls >= maxAgentCalls) {
+      incompleteCalls.push({ label: options.label, status: 'not_run', reason: 'budget exhausted' })
+      return null
+    }
+    calls++
+    const result = await agent(prompt, options)
+    if (Date.now() >= deadline) {
+      incompleteCalls.push({ label: options.label, status: 'inconclusive', reason: 'late result' })
+      return null
+    }
+    if (result == null) incompleteCalls.push({ label: options.label, status: 'inconclusive', reason: 'missing result' })
+    return result
+  } catch (e) {
+    incompleteCalls.push({ label: options.label, status: 'inconclusive', reason: String(e) })
+    return null
+  } finally {
+    const next = queue.shift()
+    if (next) next(); else active--
+  }
+}
+const coverage = []
 phase('Find')
 const perDomain = await pipeline(
   parsedArgs.domains,
-  d =>
-    agent(
-      `Target: ${parsedArgs.target}\n\nDomain: ${d.key}\n${d.prompt}\n\nOnly record something as a finding if you actually observed it by reading a file or running a command — don't assert from inference. This investigation is read-only.`,
+  async d => {
+    const r = await boundedAgent(
+      `Target: ${parsedArgs.target}\n\nDomain: ${d.key}\n${d.prompt}\n\nOnly record findings you observed by reading a file or running a command. This investigation is read-only.`,
       { label: `find:${d.key}`, phase: 'Find', schema: FINDER_SCHEMA }
-    ).then((r) => (r?.findings ?? []).map((f) => ({ ...f, domain: d.key }))),
-  (domainFindings, d) =>
-    parallel(
-      capForVerification(domainFindings, d.key).map((f) => () =>
-        parallel(
-          Array.from({ length: VOTES_PER_FINDING }, () => () =>
-            agent(
-              `Try to refute this finding (default to refuted=true if uncertain): "${f.title}" — ${f.detail}${f.file ? ` (${f.file})` : ''}\n\nTarget: ${parsedArgs.target}. Actually check it (Read/Bash) before judging.`,
-              { label: `verify:${f.domain}:${f.title.slice(0, 40)}`, phase: 'Verify', schema: VERDICT_SCHEMA }
-            )
-          )
-        ).then((votes) => {
-          // A vote can be null (skipped, or an agent/API error) — that does not count as a refutation.
-          // Three outcomes, matching the deep-research workflow's own convention:
-          //   survives   — valid votes >= REFUTATIONS_REQUIRED and refuting votes below that
-          //   isRefuted  — refuting votes >= REFUTATIONS_REQUIRED (genuinely refuted on the merits)
-          //   otherwise  — unverified: too few valid votes (most verifier agents errored) — an
-          //                infrastructure failure is not read as a refutation
-          const valid = votes.filter(Boolean)
-          const refutedVotes = valid.filter((v) => v.refuted).length
-          const survives = valid.length >= REFUTATIONS_REQUIRED && refutedVotes < REFUTATIONS_REQUIRED
-          const isRefuted = refutedVotes >= REFUTATIONS_REQUIRED
-          return { ...f, survives, isRefuted, refutations: valid }
-        })
-      )
     )
+    const valid = Array.isArray(r?.findings) && r.findings.every(f => typeof f?.title === 'string' && typeof f.detail === 'string' && Object.hasOwn(SEVERITY_RANK, f.severity))
+    coverage.push({ domain: d.key, status: valid ? 'complete' : 'incomplete' })
+    return valid ? r.findings.map(f => ({ ...f, domain: d.key })) : []
+  },
+  (domainFindings, d) => parallel(capForVerification(domainFindings, d.key).map(f => async () => {
+    const votes = await parallel(Array.from({ length: VOTES_PER_FINDING }, () => () => boundedAgent(
+      `Check this finding skeptically: "${f.title}" — ${f.detail}${f.file ? ` (${f.file})` : ''}\nTarget: ${parsedArgs.target}. Read files or run commands. Return confirmed or refuted only with concrete evidence. Uncertainty or unavailable evidence is inconclusive.`,
+      { label: `verify:${f.domain}:${f.title.slice(0, 40)}`, phase: 'Verify', schema: VERDICT_SCHEMA }
+    )))
+    const valid = votes.filter(v => ['confirmed', 'refuted'].includes(v?.status) && typeof v.evidence === 'string' && v.evidence.trim() && typeof v.reason === 'string' && v.reason.trim())
+    const confirms = valid.filter(v => v.status === 'confirmed').length
+    const refutes = valid.filter(v => v.status === 'refuted').length
+    const status = confirms >= REFUTATIONS_REQUIRED ? 'confirmed' : refutes >= REFUTATIONS_REQUIRED ? 'refuted' : 'inconclusive'
+    return { ...f, status, survives: status === 'confirmed', isRefuted: status === 'refuted', refutations: votes }
+  }))
 )
-
 const allFindings = perDomain.flat().filter(Boolean)
-const confirmed = allFindings.filter((f) => f.survives)
-const refuted = allFindings.filter((f) => f.isRefuted)
-const unverified = allFindings.filter((f) => !f.survives && !f.isRefuted)
-log(
-  `${allFindings.length} findings — ${confirmed.length} confirmed, ${refuted.length} refuted, ${unverified.length} unverified (infra failure)`
-)
-
+const confirmed = allFindings.filter(f => f.status === 'confirmed')
+const refuted = allFindings.filter(f => f.status === 'refuted')
+const unverified = allFindings.filter(f => f.status === 'inconclusive')
+log(`${allFindings.length} findings — ${confirmed.length} confirmed, ${refuted.length} refuted, ${unverified.length} unverified`)
 phase('Completeness')
-const completeness = await agent(
-  `Below is the result of an adversarial review of "${parsedArgs.target}" (${parsedArgs.domains.length} domains, ${confirmed.length} findings that survived majority-vote verification):
-
-${JSON.stringify(confirmed.map(({ title, detail, file, domain }) => ({ title, detail, file, domain })))}
-
-Domains covered: ${parsedArgs.domains.map((d) => d.key).join(', ')}
-${unverifiedOverCap.length ? `\nNOT verified — ${unverifiedOverCap.length} finding(s) exceeded the per-domain verification cap (${maxVerifiedPerDomain}) and never got a verifier. Treat these as open, not as cleared:\n${JSON.stringify(unverifiedOverCap.map(({ title, file, domain, severity }) => ({ title, file, domain, severity })))}` : ''}
-
-Critique what's missing — domains/angles not covered, claims that went unverified, sources not read.
-Propose concretely what the next round should look at — no generic advice, be specific to this target.`,
+const completeness = await boundedAgent(
+  `Review target: ${parsedArgs.target}\nCoverage by required domain: ${JSON.stringify(coverage)}\nConfirmed: ${JSON.stringify(confirmed)}\nRefuted: ${JSON.stringify(refuted)}\nInconclusive: ${JSON.stringify(unverified)}\nNot verified due to cap: ${JSON.stringify(unverifiedOverCap)}\nIncomplete calls: ${JSON.stringify(incompleteCalls)}\nCritique missing evidence and angles, with concrete next checks. Never treat incomplete domains or inconclusive findings as cleared.`,
   { phase: 'Completeness', label: 'completeness-critic' }
 )
-
+const criticComplete = typeof completeness === 'string' && completeness.trim().length > 0
+if (!criticComplete && !incompleteCalls.some(c => c.label === 'completeness-critic')) incompleteCalls.push({ label: 'completeness-critic', status: 'inconclusive', reason: 'invalid critic output' })
 return {
   target: parsedArgs.target,
-  confirmed,
-  refuted,
-  unverified,
-  // Distinct from `unverified` (verification RAN but too few votes came back): these never got a
-  // verifier at all because the per-domain cap stopped at them. Different fact, different field.
-  unverifiedOverCap,
-  maxVerifiedPerDomain,
-  completeness,
+  status: coverage.every(d => d.status === 'complete') && !unverified.length && !unverifiedOverCap.length && !incompleteCalls.length && criticComplete ? 'complete' : 'incomplete',
+  confirmed, refuted, unverified, unverifiedOverCap, maxVerifiedPerDomain, completeness, coverage, incompleteCalls,
+  budget: { maxAgentCalls, calls, maxConcurrency, deadline, exceeded: Date.now() >= deadline || incompleteCalls.some(c => c.reason === 'budget exhausted'), cancellation: 'host-adapter' },
 }

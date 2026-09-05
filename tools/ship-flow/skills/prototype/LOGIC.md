@@ -19,7 +19,8 @@ Before writing code, write down what state model and what question you're protot
 
 ### 2. Pick the language
 
-Use whatever the host project uses. If the project has no obvious runtime (e.g. a docs repo), ask.
+Use whatever the host project uses. If the project has no obvious runtime, choose an available lightweight one for an authorized
+reversible prototype and state the choice; ask only when runtime constraints change the outcome.
 
 Match the project's existing conventions for tooling — don't add a new package manager or runtime just for the prototype.
 
@@ -36,7 +37,8 @@ The right shape depends on the question:
 
 Pick whichever shape best fits the question being asked, *not* whichever is easiest to wire to a TUI. Keep it pure: no I/O, no terminal code, no `console.log` for control flow. The TUI imports it and calls into it; nothing flows the other direction.
 
-This is what makes the prototype useful past its own lifetime. When the question's been answered, the validated reducer / machine / function set can be lifted into the real module — the TUI shell gets deleted.
+This is what makes the prototype useful past its own lifetime. When the question's been answered, the validated logic informs a separately authorized production change with real tests and review.
+Remove only owned throwaway files within cleanup scope; a prototype verdict is not release approval.
 
 ### 4. Build the smallest TUI that exposes the state
 

@@ -55,20 +55,22 @@ case "$SCENARIO" in
     ;;
 
   loop-fix-verified-lesson-on-success)
-    # 계약: verify가 FAIL -> PASS로 수렴하면(loop-fix.sh:372-376, Phase 3), --lessons 디렉터리에
-    # verified:true인 lesson 파일이 기록되어야 한다. fixer는 ':'(no-op) — 여기선 verify 자체가
-    # 호출 횟수로 상태 전이하는 fixture라 fixer 개입이 불필요하다(다른 loop-fix 테스트와 동일 패턴).
+    # Stable verifier receipts must surround an actual Git-visible implementation fix.
+    # A flaky verifier that changes its own counter is not a verified lesson.
+    printf '.loop/\nlessons/\n' > .gitignore
+    printf 'wrong\n' > value
     cat > fake-verify.sh <<'FIXTURE'
 #!/bin/sh
-n=$(cat n 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > n
-if [ "$n" -eq 1 ]; then
-  echo "FAILED tier0-fixture > first attempt fails on purpose"
+if [ "$(cat value)" != correct ]; then
+  echo "FAILED tier0-fixture > implementation value must be correct"
   exit 1
 fi
 echo ok
-exit 0
 FIXTURE
-    "$LOOPFIX" --verify 'sh fake-verify.sh' --fix ':' --lessons lessons --max-iter 3 >/dev/null 2>&1
+    git init -q
+    git add .gitignore value fake-verify.sh
+    git -c user.name=tier0 -c user.email=tier0@localhost -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm fixture
+    "$LOOPFIX" --verify 'sh fake-verify.sh' --fix 'printf "correct\n" > value' --lessons lessons --max-iter 3 >/dev/null 2>&1
     code=$?
     echo "EXIT_CODE=$code"
     echo "--- lessons files ---"

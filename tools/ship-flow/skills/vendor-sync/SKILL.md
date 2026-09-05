@@ -1,7 +1,9 @@
 ---
 name: vendor-sync
-description: Compare this repo's vendored skills against their upstream project, apply only the safe backports, and record what was deliberately not applied. Use when checking for upstream drift, when a vendor-sync heartbeat nudges, or when the user asks whether vendored skills are current.
+description: Compare this repo's vendored skills against upstream and report drift; apply bounded backports only when authorized. Use when checking for upstream drift, when a vendor-sync heartbeat nudges, or when the user asks whether vendored skills are current.
 ---
+
+Follow the [shared authorization and completion contract](../AUTHORIZATION.md) before this procedure.
 
 # vendor-sync — upstream drift for vendored skills
 
@@ -39,6 +41,15 @@ this round starts: **it means the local copy was edited since the last reconcili
 inference. (The older heuristic — counting commits touching the file — is a fallback for repos whose
 lock predates the hash being enforced.)
 
+## Scope first
+
+A request to check currency or an ordinary reminder is inspect/report scope. It does not authorize
+editing audited skills, stamping their state, committing or publishing a PR. Necessary isolated
+disposable comparison fixtures or temporary reports are allowed unless those writes are forbidden.
+A saved automation prompt may explicitly
+authorize a bounded apply/stamp mode; use its actual scope. In apply mode, preserve deliberate forks
+and complete the authorized backports without re-asking for the same work. Merge stays separately gated.
+
 ## Step 0 — the cheap check, always first
 
 ```bash
@@ -50,7 +61,8 @@ lock predates the hash being enforced.)
 
 One of four:
 
-- `UNKNOWN` — `gh` unauthenticated or network failure. Report it and stop. Do not retry (fail-open).
+- `UNKNOWN` — unavailable authentication/network evidence. Report the gap; a bounded read-only
+  diagnostic or transient retry is allowed. Do not report unchanged or stamp an unknown result.
 - `UNCHANGED <sha>` — no upstream commits since the last check. **Go straight to Step 3** and report in
   one line. The deep comparison is skipped, and skipping it is the point.
 - `FIRST_RUN <sha>` — no state file in this repo. Go to Step 1.
@@ -87,25 +99,26 @@ user-invoked/model-invoked split, so new and renamed skills can be triaged witho
    against the skills this repo already has and its actual stack and conventions (read its `CLAUDE.md`
    / `CONTEXT.md`). Recommend adopt / hold / unnecessary. **Do not install it in this round.**
 
-**A skill whose classification is genuinely unclear is dropped from the candidate list, not guessed
-at.** Upstream path reorganisation produces convincing false positives; do not downgrade an unclear
+**A skill whose classification is unclear stays explicitly unresolved in the report, excluded from
+automatic application.** Upstream path reorganisation produces convincing false positives; do not downgrade an unclear
 case to either "clean" or "stale".
 
 ### 1d. Compare in parallel
 
-Dispatch one sub-agent per skill for classes 2 and 3, and for any class-1 skill that is heavily used or
-locally edited. Give each agent: the absolute local path, an instruction to find the real local edits
+Where delegation is available and authorized, dispatch one sub-agent per skill for classes 2 and 3,
+and for any class-1 skill that is heavily used or locally edited. Otherwise compare directly. Give each agent: the absolute local path, an instruction to find the real local edits
 since vendoring, and the upstream fetch:
 
 ```bash
 gh api repos/<source>/contents/<upstream-path> --jq '.content' | base64 -d
 ```
 
-Each returns, **read-only, no file edits**: (a) local customisations that must survive, (b) upstream
+Each returns, **read-only with no edits to audited files** (needed isolated disposable comparison
+fixtures are allowed unless forbidden): (a) local customisations that must survive, (b) upstream
 improvements worth taking, (c) differences that don't matter, (d) a recommendation — replace / apply
 in part / ignore.
 
-### 1e. Apply only what is safe
+### 1e. Propose, or apply within authorized scope
 
 - Pure additions that don't collide with local customisation (a new checklist item, a new subsection).
 - No renames. No new file dependencies — if upstream's change requires a file this repo doesn't have,
@@ -116,9 +129,11 @@ in part / ignore.
   handoff to nothing — or worse, a handoff to behaviour the repo explicitly rejected.
 - Anything touching a `fork` entry: report, never apply.
 
-Follow this repo's own git procedure (`CLAUDE.md` / `ship-flow.config.json` — branch model, worktree
-isolation, base branch). **One commit per skill** so a reviewer can revert one without the rest. Open
-the PR and **stop — a human merges.**
+In report mode return the concrete proposed changes without editing. In apply mode, follow the
+caller's assigned worktree and repository procedure. Update each changed `computedHash` in
+`skills-lock.json` before verification and publication; coordinate the final bytes with a concurrent
+lock owner. If commits are authorized, prefer one per skill. Open a PR only within publication scope;
+otherwise return the verified local patch. A human approves any merge of the reviewed PR/head/base.
 
 The PR body must carry all four:
 
@@ -132,16 +147,18 @@ added or removed. If it doesn't, skip this silently.
 
 ## Step 2 — report
 
-Post the PR link plus counts (applied / held / new candidates) in the conversation as well.
+Return the report or actual PR link plus counts (proposed/applied, held, unresolved, new candidates).
+Distinguish a finished inspection from incomplete evidence or failed requested publication.
 
-## Step 3 — stamp, always last
+## Step 3 — optional authorized bookkeeping, last
 
 ```bash
 {{pluginBinPrefix}}mattpocock-skills-sync-check.mjs --stamp <the sha checked this round>
 ```
 
-**Stamp even when the round ended at `UNCHANGED`** — "nothing changed" is still a completed check. Skip
-this and the heartbeat keeps nudging forever, because the timer never moved.
+Stamp only if the request/saved automation authorizes local check-state updates and the check
+completed successfully, including `UNCHANGED`. Explicit read-only requests never stamp. If a partial
+comparison or an earlier failure prevented completion, report it without advancing the check timer.
 
-When a skill's local copy was edited this round, update its `computedHash` in `skills-lock.json` in the
-same PR. Leaving it stale turns the enforced hash back into the decorative field it replaced.
+Hash reconciliation belongs in the same authorized patch as the skill edits, before verification;
+stamping is separate bookkeeping and does not prove the changes passed checks or were published.

@@ -37,6 +37,10 @@ function runCli(args: string[], env: NodeJS.ProcessEnv) {
 function noKeyEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
+    LOOP_EMBED_PROVIDER: '',
+    LOOP_EMBED_MODEL: '',
+    LOOP_MEMORY_SIGNING_KEY: '',
+    LOOP_DOTENV_PATH: '/nonexistent-loop-fixture.env',
     OPENAI_API_KEY: '',
     GEMINI_API_KEY: '',
     LOOP_DATABASE_URL: 'postgresql://postgres:postgres@127.0.0.1:1/nope',
@@ -94,4 +98,26 @@ describe('cli — embedder fail-closed gate (ADR-0062 decision 9)', () => {
     },
     TEST_TIMEOUT_MS,
   );
+});
+
+
+describe('CLI identity and evaluation policy before DB access', () => {
+  it.each([
+    [{ LOOP_EMBED_PROVIDER: 'openai', GEMINI_API_KEY: 'fixture-gemini' }, 'embedding_provider_key_missing'],
+    [{ OPENAI_API_KEY: 'fixture-openai', GEMINI_API_KEY: 'fixture-gemini' }, 'embedding_provider_ambiguous'],
+    [{ LOOP_EMBED_PROVIDER: 'typo', OPENAI_API_KEY: 'fixture-openai' }, 'embedding_provider_invalid'],
+    [{ LOOP_MEMORY_OFF: '1' }, 'memory_off'],
+  ])('fails closed with typed outcome %s', (vars, reason) => {
+    const r = runCli(['recall', '--query', 'fixture', '--json'], { ...noKeyEnv(), ...vars });
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({ schema_version: 1, command: 'recall', outcome: 'error', reason });
+  }, TEST_TIMEOUT_MS);
+  it.each(['LOOP_LEARNING_OFF', 'LOOP_MEMORY_RECALL_ONLY'])('%s blocks CLI mutation before DB', flag => {
+    for (const cmd of ['graduate', 'record-recall']) {
+      const r = runCli([cmd, '--json'], { ...noKeyEnv(), [flag]: '1' });
+      expect(r.status).toBe(1);
+      expect(JSON.parse(r.stdout).outcome).toBe('error');
+      expect(r.stderr).toMatch(/learning_off|memory_recall_only/);
+    }
+  }, TEST_TIMEOUT_MS);
 });

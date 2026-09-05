@@ -55,14 +55,18 @@ performance (`max_ms`), semantic (`semantic` via `--judge`).
 ```bash
 bin/eval-gate.sh --dataset <dir|file.jsonl> --target "<cmd>" [--k N] \
   [--min-pass-at-k F] [--min-pass-caret-k F] \
-  [--baseline <file>] [--update-baseline] [--judge "<cmd>"]
+  [--baseline <file> --target-id <model-config-version>] [--update-baseline] \
+  [--judge "<cmd>" --judge-id <grader-version>]
 ```
 
 - `--target` runs once per trial: case `input` on **stdin**, output on **stdout**, exit code
   observed. Per-trial env: `EVAL_TRIAL` (1..k), `EVAL_CASE_ID`.
 - `--judge` (optional) grades `semantic` assertions — a **separate** evaluator (generator ≠
   evaluator): output on stdin, criterion in `EVAL_CRITERION`, exit 0 = pass. Omit it and semantic
-  assertions are skipped (with a NOTE).
+  assertions fail unless `--allow-skip-semantic` explicitly permits skipping. A case containing
+  only skipped or disabled assertions is rejected; `exit_zero:false` and empty arrays do not grade anything.
+- `--budget-ms` bounds the full target/judge run (default 300000 ms), including subprocess groups.
+  Late results, cancellation and unrun trials are not successful observations.
 - Defaults are strict: `--k 1`, `--min-pass-at-k 1.0`, `--min-pass-caret-k 1.0`.
 
 ## Gating & regression
@@ -72,15 +76,18 @@ The gate **fails** (VERDICT FAIL, exit 1) if any of:
 - `pass^k < --min-pass-caret-k`
 - a `--baseline` is given and current `pass@k`/`pass^k` dropped below it (a **regression**).
 
-`--update-baseline` records current metrics to the baseline file (commit it). Later PRs are gated
-against it — the regression gate. Run the full suite on a schedule (nightly) and a sample per PR;
-full LLM-judged suites every PR are uneconomical (research nuance).
+`--update-baseline` records metrics with `operation_status: recorded` and a separate `quality_status`.
+It **returns FAIL/exit 1 intentionally**: recording is not a quality gate. Inspect the baseline and
+rerun without that flag for gate evidence. This changes the older RECORD-always-PASS behavior.
+Baselines now require schema v2, a stable `--target-id`, and `--judge-id` when a judge is used.
+Missing baselines and mismatched dataset contents, trial count, target/judge identities, grader
+implementation or semantic-skip policy fail closed. Regenerate an old baseline explicitly after review.
 
 ## Composition
 
 `eval-gate` emits the [Verdict Contract](verdict-contract.md), so:
-- **CI:** the exit code blocks merge — run the gate command as a step under `.github/workflows/`
-  (no committed workflow yet; add one when a golden dataset lands).
+- **CI:** the exit code blocks the job; required branch checks must be configured separately to
+  block merge. The deterministic tier-0 suite is already exercised by the engine self-test workflow.
 - **Loop:** `loop-fix.sh --verify "bin/eval-gate.sh --dataset ... --target ..."` drives a fix loop
   whose ground truth is the eval gate itself.
 
@@ -112,3 +119,10 @@ Regression-locked by `test/eval-gate-tier0.test.sh` (part of `test/run.sh`). One
 by #9 ("증거 무결성 계약"): #9 only fails closed when `--verified` is combined with a hand-typed
 `--signature` and no `--signature-file` — unverified records (this case's scenario) are explicitly
 out of scope for that change, so no update is needed here once #9 lands.
+
+## Agent behavior and held-out evaluation
+
+The tier-0 fixtures prove engine contracts. For actual model/runtime behavior, use
+[the isolated agent evaluation driver](agent-evaluation.md) with an explicit runtime adapter and
+an independent grader that checks artifacts and observed actions. Its 20 regression scenarios
+come from the audit failures; they are evaluation inputs, not claims of native execution or efficacy.

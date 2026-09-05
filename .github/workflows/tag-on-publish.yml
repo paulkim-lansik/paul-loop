@@ -24,12 +24,31 @@ on:
     branches: [main]
   workflow_dispatch: # backfill: re-run against main to tag whatever is currently missing
 
-# Least privilege: this job writes tags and nothing else.
+# All validators use this event's SHA. Only the dependent tagging job receives write scope.
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
 
 jobs:
+  engine:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/loop-engine-test.yml
+  memory:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/loop-memory-test.yml
+  runtime:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/runtime-packages.yml
+  secrets-scan:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/gitleaks.yml
   tag:
+    needs: [engine, memory, runtime, secrets-scan]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +78,7 @@ jobs:
           [ -n "$sources" ] || { echo "::error::no plugins found in marketplace.json"; exit 1; }
 
           created=0
+          new_refs=()
           while IFS= read -r src; do
             [ -n "$src" ] || continue
             manifest="${src#./}/.claude-plugin/plugin.json"
@@ -89,6 +109,7 @@ jobs:
             fi
             echo "+ ${tag} -> ${SHA}"
             git tag "$tag" "$SHA"
+            new_refs+=("refs/tags/$tag")
             created=$((created + 1))
           # Herestring, not a pipe: a pipe would run the loop in a subshell, where `created` and any
           # `exit 1` above would be discarded — the loop would look like it ran and found nothing.
@@ -100,5 +121,5 @@ jobs:
           fi
           # One push for all new tags. Never --force: an existing tag is left exactly as it was
           # (the `rev-parse` skip above), so a released version can't be silently repointed.
-          git push origin --tags
+          git push origin "${new_refs[@]}"
           echo "created ${created} tag(s)"

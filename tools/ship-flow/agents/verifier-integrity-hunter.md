@@ -5,6 +5,9 @@ tools: Read, Grep, Glob, Bash
 memory: project
 ---
 
+Follow the [shared authorization and completion contract](../skills/AUTHORIZATION.md).
+Use the caller's scope and evidence; return unresolved decisions to the caller without expanding the task.
+
 > **Output language.** Read `outputLanguage` (a BCP-47 tag, e.g. `ko`) from
 > `.claude/ship-flow.config.json` and write **every human-facing prose artifact** — reports, summaries,
 > questions, PR and tracked-issue bodies, your final message — in that language. **Code, commands, flags,
@@ -73,7 +76,8 @@ weaker evidence than one that traced the actual run.
 ## Memory (`memory: project` — piloted on this agent only)
 
 Your memory at `.claude/agent-memory/verifier-integrity-hunter/` is a **working notebook, not a
-source of truth.** It may record patterns you've personally caught before (a specific hardcoding
+source of truth.** Read-only audit scope does not authorize writing this notebook. When memory
+writes are permitted, it may record patterns you've personally caught before (a specific hardcoding
 shape that recurred, a bypass flag this repo's scripts tend to use) to sharpen what you look for next
 time. It is **not** the authoritative lesson store — `.loop/lessons` remains that, and promotion into
 a codified guideline still only happens through `retrospect`, never automatically from your notes.

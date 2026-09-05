@@ -23,12 +23,12 @@ fail() { echo "FAIL: $1"; exit 1; }
 DIR="$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp -d failed"
 trap 'rm -rf "$DIR"' EXIT
 
-node "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --verified --fix "reboot the widget" --title "widget boot fix" --lessons "$DIR" >/dev/null \
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" record --signature-file <(printf '%s\n' "FAIL: widget exploded at boot") --verified --fix "reboot the widget" --title "widget boot fix" --lessons "$DIR" >/dev/null \
   || fail "record failed"
 
 # 1) HIT: stdout has the lesson, stderr is silent (no noise on the success path).
 OUT="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
-node "$LESSONS" recall --signature "FAIL: widget exploded at boot" --lessons "$DIR" >"$OUT" 2>"$ERR"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" recall --signature "FAIL: widget exploded at boot" --lessons "$DIR" >"$OUT" 2>"$ERR"
 rc=$?
 [ "$rc" = "0" ] || fail "recall hit must exit 0; got rc=$rc"
 grep -q "widget boot fix" "$OUT" || fail "recall hit must print the lesson title: $(cat "$OUT")"
@@ -38,7 +38,7 @@ rm -f "$OUT" "$ERR"
 # 2) MISS (no lesson for this signature): stdout empty + exit 0 (unchanged contract), stderr has the
 #    normalized signature key + a semantic-recall routing hint (ADR-0062).
 OUT="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
-node "$LESSONS" recall --signature "FAIL: gadget fizzled at shutdown" --lessons "$DIR" >"$OUT" 2>"$ERR"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" recall --signature "FAIL: gadget fizzled at shutdown" --lessons "$DIR" >"$OUT" 2>"$ERR"
 rc=$?
 [ "$rc" = "0" ] || fail "recall miss must still exit 0; got rc=$rc"
 [ -s "$OUT" ] && fail "recall miss must NOT write to stdout (loop-fix pipes this through unchanged): $(cat "$OUT")"
@@ -49,7 +49,7 @@ rm -f "$OUT" "$ERR"
 # 3) MISS via --category mismatch: same silent-stdout/exit-0 contract, stderr names the key + mismatch —
 #    but NOT the semantic-recall hint (the signature DID match; this isn't the "wrong store" case above).
 OUT="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"; ERR="$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")" || fail "mktemp failed"
-node "$LESSONS" recall --signature "FAIL: widget exploded at boot" --category domain --lessons "$DIR" >"$OUT" 2>"$ERR"
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" recall --signature "FAIL: widget exploded at boot" --category domain --lessons "$DIR" >"$OUT" 2>"$ERR"
 rc=$?
 [ "$rc" = "0" ] || fail "recall category-miss must exit 0; got rc=$rc"
 [ -s "$OUT" ] && fail "recall category-miss must NOT write to stdout: $(cat "$OUT")"
@@ -60,7 +60,7 @@ rm -f "$OUT" "$ERR"
 
 # 4) `--top` is GONE (deleted, not renamed) — must now be an unknown-arg usage error (exit 2).
 rc=0
-node "$LESSONS" recall --signature "FAIL: widget exploded at boot" --top 1 --lessons "$DIR" >/dev/null 2>/dev/null || rc=$?
+node "$HERE/helpers/lessons-fixture.mjs" "$LESSONS" recall --signature "FAIL: widget exploded at boot" --top 1 --lessons "$DIR" >/dev/null 2>/dev/null || rc=$?
 [ "$rc" = "2" ] || fail "recall --top must now be rejected as an unknown arg (exit 2); got rc=$rc"
 
 echo "PASS: lessons recall — miss hints on stderr only (key + semantic-recall routing), hit stays silent, --top removed"

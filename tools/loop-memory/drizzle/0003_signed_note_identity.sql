@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "memory_note_owner_source_active_idx" ON "memory_note" USING btree ("owner_id","corpus","source_key") WHERE "memory_note"."deleted_at" is null and "memory_note"."source_key" <> '';

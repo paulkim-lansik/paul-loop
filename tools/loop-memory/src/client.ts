@@ -9,11 +9,11 @@ export type LoopDb = NodePgDatabase<typeof schema>;
 export const LOOP_DATABASE_URL =
   process.env.LOOP_DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5434/loop_memory';
 
-export function createLoopDb(connectionString: string = LOOP_DATABASE_URL): {
+export function createLoopDb(connectionString: string = process.env.LOOP_DATABASE_URL || LOOP_DATABASE_URL): {
   db: LoopDb;
   pool: Pool;
 } {
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({ connectionString, connectionTimeoutMillis: 3000, statement_timeout: 5000 });
   const db = drizzle(pool, { schema });
   return { db, pool };
 }

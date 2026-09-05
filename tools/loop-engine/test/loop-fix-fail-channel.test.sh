@@ -89,6 +89,12 @@ fi
 echo "FAILED src/example.test.ts > count-and-verify fail-channel test"
 exit 1
 EOF
+# Verified learning now requires stable Git-target receipts. Keep this fixture's original
+# FAIL-to-PASS/count-merge assertions and provide a real local target, with no remote or API.
+printf '.loop/\nlessons/\n' > .gitignore
+git init -q
+git add .gitignore fake-verify.sh
+git -c user.name=Fixture -c user.email=fixture@local commit -qm initial
 # 1회차: 절대 수렴 못 함(no-op fix) — MAX-ITER로 끝나며 unverified lesson count=1 기록.
 "$LOOPFIX" --verify 'sh fake-verify.sh' --fix ':' --max-iter 2 --stall 5 --lessons lessons >/dev/null 2>&1
 [ "$(lessons_file_count lessons)" -eq 1 ] || fail "case5: expected exactly 1 lesson after first (unconverged) run"
@@ -111,13 +117,12 @@ grep -q '"verified": true' "$f2" || fail "case5: expected verified to flip true 
 C="$WORK/c6"; mkdir -p "$C"; cd "$C" || fail "cd c6"
 cat > fake-verify.sh <<'EOF'
 #!/bin/sh
-sleep 1
 echo "FAILED src/example.test.ts > budget fail-channel test"
 exit 1
 EOF
-# sleep 1 이 iter1에서 이미 --budget-sec 1을 넘겨 STALLED보다 먼저 BUDGET으로 끊긴다
-# (infra-exempt.test.sh case 7과 같은 패턴).
-"$LOOPFIX" --verify 'sh fake-verify.sh' --fix ':' --budget-sec 1 --max-iter 10 --lessons lessons >/dev/null 2>&1
+# Hard deadlines now stop RUNNING commands: finish a real FAIL first, then exhaust the budget
+# in the fixer. The assertions still require exactly one unverified lesson from that complete FAIL.
+"$LOOPFIX" --verify 'sh fake-verify.sh' --fix 'sleep 10' --budget-sec 3 --max-iter 10 --lessons lessons >/dev/null 2>&1
 code=$?
 [ "$code" -eq 1 ] || fail "case6: expected exit 1 via BUDGET, got $code"
 grep -q "done: BUDGET" .loop/history.log || fail "case6: expected the loop to hit BUDGET"

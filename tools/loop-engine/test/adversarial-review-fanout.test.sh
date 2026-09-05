@@ -51,7 +51,7 @@ async function agent(prompt, opts = {}) {
   if (phase === "Verify") {
     calls.verify++;
     verifyOpts.push(opts);
-    return { refuted: false, reason: "r" };
+    return { status: "confirmed", reason: "reproduced", evidence: "read x.ts and ran fixture" };
   }
   calls.other++;
   return "text";
@@ -113,7 +113,7 @@ const src = fs.readFileSync(process.argv[1], "utf8").replace(/^export const meta
 let verify = 0;
 async function agent(prompt, opts = {}) {
   if (opts.phase === "Find") return { findings: Array.from({ length: 12 }, (_, i) => ({ title: `f${i}`, detail: "d", severity: "major" })) };
-  if (opts.phase === "Verify") { verify++; return { refuted: false, reason: "r" }; }
+  if (opts.phase === "Verify") { verify++; return { status: "confirmed", reason: "reproduced", evidence: "read x.ts and ran fixture" }; }
   return "text";
 }
 const parallel = (t) => Promise.all(t.map((x) => x()));

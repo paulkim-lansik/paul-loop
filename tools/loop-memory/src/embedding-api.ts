@@ -1,11 +1,11 @@
 import type { Embedder } from './embedding';
+import { sanitizeMemory } from '../hooks/lib/privacy.mjs';
 
 /**
  * 외부 임베딩 API 임베더 (OpenAI / Gemini). `Embedder` 시맨의 실사용 구현.
  *
- * 왜 외부 API인가(ADR-0023 후속): dev 루프 메모리엔 *환자 데이터가 없고* 개발 교훈만 담기므로
- * 데이터 유출 위험이 무의미하다 → 로컬 모델의 무거운 의존성 없이 외부 API가 합리적. SDK 없이 `fetch`로
- * 직접 호출해 패키지를 가볍게 유지한다(드라이즈/pg 외 의존 추가 X).
+ * External embeddings receive sanitized text. This is still data egress: arbitrary confidential prose
+ * cannot be classified by redaction. See HARDENING.md; disable memory for sensitive projects.
  *
  * 차원: 기본 384 = `memory_note.embedding` 컬럼과 일치. 두 프로바이더 모두 384 단축을 지원한다
  * (OpenAI `dimensions`, Gemini `outputDimensionality`). **항상 L2 정규화** — OpenAI는 이미 단위벡터지만
@@ -43,6 +43,7 @@ const KEY_ENV: Record<EmbedProvider, string> = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 function l2normalize(v: number[]): number[] {
+  if (!v.every(Number.isFinite) || !v.some(x => x !== 0)) throw new Error('embedding vector invalid');
   const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
   return v.map((x) => x / norm);
 }
@@ -86,7 +87,7 @@ async function embedOpenAI(
     timeoutMs,
     'openai embeddings',
   );
-  if (!res.ok) throw new Error(`openai embeddings ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`openai embeddings HTTP ${res.status}`);
   const json = (await res.json()) as { data?: { embedding?: number[] }[] };
   const vec = json.data?.[0]?.embedding;
   if (!vec) throw new Error('openai embeddings: missing data[0].embedding');
@@ -112,7 +113,7 @@ async function embedGemini(
     timeoutMs,
     'gemini embedContent',
   );
-  if (!res.ok) throw new Error(`gemini embedContent ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`gemini embedContent HTTP ${res.status}`);
   const json = (await res.json()) as { embedding?: { values?: number[] } };
   const vec = json.embedding?.values;
   if (!vec) throw new Error('gemini embedContent: missing embedding.values');
@@ -143,7 +144,7 @@ async function embedBatchOpenAI(
     timeoutMs,
     'openai embeddings(batch)',
   );
-  if (!res.ok) throw new Error(`openai embeddings(batch) ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`openai embeddings(batch) HTTP ${res.status}`);
   const json = (await res.json()) as { data?: { embedding?: number[]; index?: number }[] };
   const data = json.data;
   if (!data || data.length !== texts.length) {
@@ -185,7 +186,7 @@ async function embedBatchGemini(
     timeoutMs,
     'gemini batchEmbedContents',
   );
-  if (!res.ok) throw new Error(`gemini batchEmbedContents ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`gemini batchEmbedContents HTTP ${res.status}`);
   const json = (await res.json()) as { embeddings?: { values?: number[] }[] };
   const embeddings = json.embeddings;
   if (!embeddings || embeddings.length !== texts.length) {
@@ -209,17 +210,19 @@ export function apiEmbedder(opts: ApiEmbedderOptions = {}): Embedder {
     );
   }
   const dimensions = opts.dimensions ?? 384;
-  const model = opts.model ?? DEFAULT_MODEL[provider];
+  const model = opts.model ?? process.env.LOOP_EMBED_MODEL ?? DEFAULT_MODEL[provider];
+  if (!model.trim() || model !== model.trim() || !Number.isInteger(dimensions) || dimensions <= 0) throw new Error('embedding identity invalid');
   const apiKey = opts.apiKey ?? process.env[KEY_ENV[provider]];
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
     dimensions,
+    identity: `${provider}:${model}:l2-v1:${dimensions}`,
     async embed(text: string): Promise<number[]> {
       if (!apiKey) throw new Error(`apiEmbedder: missing API key (set ${KEY_ENV[provider]})`);
       const call: Call = { apiKey, model, dimensions, timeoutMs };
       const raw =
-        provider === 'openai' ? await embedOpenAI(text, call) : await embedGemini(text, call);
+        provider === 'openai' ? await embedOpenAI(sanitizeMemory(text), call) : await embedGemini(sanitizeMemory(text), call);
       if (raw.length !== dimensions) {
         throw new Error(
           `apiEmbedder: ${provider} returned ${raw.length} dims, expected ${dimensions} (memory_note.embedding mismatch)`,
@@ -235,7 +238,7 @@ export function apiEmbedder(opts: ApiEmbedderOptions = {}): Embedder {
       // MAX_BATCH_SIZE 단위로 나눠 순차 요청 — 서브배치끼리는 순차(레이트리밋 방어), 서브배치 *안*은
       // 프로바이더 배치 엔드포인트가 병렬로 처리(그게 배치의 요점).
       for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
-        const slice = texts.slice(i, i + MAX_BATCH_SIZE);
+        const slice = texts.slice(i, i + MAX_BATCH_SIZE).map((text) => sanitizeMemory(text));
         const raw =
           provider === 'openai'
             ? await embedBatchOpenAI(slice, call)
