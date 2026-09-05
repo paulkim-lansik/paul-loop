@@ -19,7 +19,10 @@ const hostJson = (host, args, project) => JSON.parse(execFileSync(host, args, { 
 export function readLock(project) {
   project = realpathSync(project);
   const candidates = ['.codex', '.claude'].map(dir => join(project, dir, 'paul-loop.lock.json'));
-  const matches = candidates.filter(path => { try { return statSync(path).isFile(); } catch { return false; } });
+  const matches = candidates.filter(path => {
+    try { return statSync(path).isFile(); }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  });
   if (matches.length !== 1) throw new Error('exactly one .codex/.claude paul-loop.lock.json is required');
   const path = matches[0], bytes = readFileSync(path), lock = JSON.parse(bytes);
   if (!inside(project, realpathSync(path))) throw new Error('lock escapes project');
